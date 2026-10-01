@@ -3,7 +3,10 @@ name = "dynamisbench"
 version = "0.0.0"
 description = "DynamisBench — scientific core, execution boundaries, and local application API."
 requires-python = ">=3.12,<3.13"
-dependencies = []
+# Pydantic v2 is the validated semantic representation of the domain model. It is the
+# only runtime dependency: the scientific core stays engine-independent and free of
+# numerical/IO infrastructure (DB-1.2, RES-228).
+dependencies = ["pydantic>=2.12.0"]
 
 [project.scripts]
 dbench = "dynamisbench.cli:main"
