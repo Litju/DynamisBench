@@ -21,9 +21,9 @@ discarded them. What *is* part of meaning is preserved exactly:
   decides which collections are order-insensitive and it decides it at validation
   time: a keyed collection is stored in canonical key order and rejects duplicate keys,
   so two authorings of one set arrive here already identical. A genuinely ordered
-  field — a rotation sequence, a credibility hierarchy, an initial-condition list —
-  keeps its authored order and keeps its identity with it. Canonicalisation must not
-  quietly redefine domain semantics, so the reordering rule lives in the domain layer
+  field — a rotation sequence, a credibility hierarchy, a list of notes, a command
+  line — keeps its authored order and keeps its identity with it. Canonicalisation must
+  not quietly redefine domain semantics, so the reordering rule lives in the domain layer
   where it is reviewed as domain, not here where it would be invisible.
 * **A path is not content.** Nothing here reads the filesystem, the clock, the
   environment, or a random source, so no artifact of the machine that produced a digest
