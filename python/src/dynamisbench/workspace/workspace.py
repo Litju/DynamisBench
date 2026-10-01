@@ -1,0 +1,393 @@
+"""Roots, declared locations, and the side-effect-free open of a workspace.
+
+This module is the workspace *model*: two independent scientific roots plus an optional
+non-scientific one, the declared location of every persistence class, the portable name
+each location is known by, and the read-only open of a workspace. Safe resolution of
+references inside those locations belongs to :mod:`dynamisbench.workspace.paths`.
+
+**A logical reference is not a filesystem path.** Every location this module describes
+carries two things that must never be confused: a :class:`LogicalReference`, which is a
+portable class-and-segments name with no machine-specific content, and an absolute
+``Path``, which is where that name happens to live right now. The split is the reason an
+otherwise identical workspace keeps every artifact's RES-229 semantic digest when it is
+moved, renamed, or served from a different drive: only the ``Path`` changes. Absolute
+paths, drive letters, UNC prefixes, home directories, usernames, and the name of the
+workspace root directory are operational state and are not hashed, because hashing them
+would make a benchmark's identity depend on where the machine happened to keep it.
+
+**The roots are trusted; the references are not.** A root is a configuration decision by
+the person running the workbench, so it is normalised once — made absolute and resolved
+so that its real target, not a link to it, is the authorised directory — and then
+required to be an existing directory. Everything a caller later supplies is a
+*reference*, and references are untrusted input handled by
+:mod:`dynamisbench.workspace.paths`. Keeping that line sharp is what stops this
+abstraction from becoming the unrestricted filesystem access the architecture forbids:
+the only thing a caller can ask for is a location inside a declared class, and the only
+way to obtain a path that will be opened is a resolution that has already proved
+containment.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from os import PathLike
+from pathlib import Path
+
+from dynamisbench.workspace.authority import (
+    CLASS_LOCATION_SEGMENTS,
+    CLASS_SEMANTICS,
+    SOURCE_CATEGORY_SEGMENTS,
+    ClassSemantics,
+    PersistenceClass,
+    SourceCategory,
+    WorkspaceError,
+    WorkspaceRootError,
+)
+
+__all__ = [
+    "LogicalReference",
+    "Workspace",
+    "WorkspaceLocation",
+    "WorkspaceReport",
+    "WorkspaceRoots",
+    "open_workspace",
+]
+
+
+def _normalise_root(path: PathLike[str], label: str) -> Path:
+    """Make a declared root absolute and resolve it to its real target.
+
+    Resolution happens once, here, for two reasons. It makes the authorised directory the
+    directory the root actually names, so a root that is itself a symlink or junction
+    cannot later be re-pointed at somewhere else and inherit the authorisation; and it
+    gives containment checks a canonical target to compare against.
+    """
+    try:
+        return Path(path).expanduser().resolve()
+    except (OSError, RuntimeError) as error:
+        raise WorkspaceRootError(f"the {label} cannot be resolved: {error}") from error
+
+
+def _require_directory(path: Path, label: str) -> Path:
+    if not path.is_dir():
+        raise WorkspaceRootError(f"the {label} is not an existing directory: {path}")
+    return path
+
+
+def _disjoint(left: Path, right: Path) -> bool:
+    return not (left == right or left.is_relative_to(right) or right.is_relative_to(left))
+
+
+def class_location_segments(persistence_class: PersistenceClass) -> tuple[str, ...]:
+    """Return the directory segments a persistence class occupies under its root.
+
+    :raises WorkspaceError: for a value that is not a declared class, so that a caller
+        passing an unrecognised name from an API boundary is refused rather than handed
+        a location nobody defined.
+    """
+    try:
+        return CLASS_LOCATION_SEGMENTS[persistence_class]
+    except KeyError:
+        raise WorkspaceError(f"unknown persistence class: {persistence_class!r}") from None
+
+
+def class_semantics(persistence_class: PersistenceClass) -> ClassSemantics:
+    """Return the authority contract of a persistence class.
+
+    :raises WorkspaceError: for a value that is not a declared class.
+    """
+    try:
+        return CLASS_SEMANTICS[persistence_class]
+    except KeyError:
+        raise WorkspaceError(f"unknown persistence class: {persistence_class!r}") from None
+
+
+def source_category_segments(category: SourceCategory) -> tuple[str, ...]:
+    """Return the directory segments a source-authority category occupies.
+
+    :raises WorkspaceError: for a value that is not a declared category.
+    """
+    try:
+        return SOURCE_CATEGORY_SEGMENTS[category]
+    except KeyError:
+        raise WorkspaceError(f"unknown source category: {category!r}") from None
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceRoots:
+    """The three roots a workspace is described by, validated.
+
+    ``source`` and ``evidence`` are the two scientific roots and must be distinct
+    directories. They may nest — a repository that keeps its evidence in a gitignored
+    subtree is a legitimate layout — but they are never the same directory, because a
+    single directory cannot be both version-controlled authority and mutable execution
+    space. ``user_state`` is optional and must be disjoint from both, in either
+    direction: product preferences may not live inside scientific authority and may not
+    contain it, so that no cleanup routine scoped to product state can reach an evidence
+    bundle and no preference file can end up contributing to an artifact's identity.
+    """
+
+    source: Path
+    evidence: Path
+    user_state: Path | None = None
+
+    def __post_init__(self) -> None:
+        source = _require_directory(_normalise_root(self.source, "source root"), "source root")
+        evidence = _require_directory(
+            _normalise_root(self.evidence, "evidence root"), "evidence root"
+        )
+        if source == evidence:
+            raise WorkspaceRootError(
+                f"the source root and the evidence root must be different directories, "
+                f"but both resolve to {source}"
+            )
+        user_state: Path | None = None
+        if self.user_state is not None:
+            user_state = _require_directory(
+                _normalise_root(self.user_state, "user state root"), "user state root"
+            )
+            for label, root in (("source", source), ("evidence", evidence)):
+                if not _disjoint(user_state, root):
+                    raise WorkspaceRootError(
+                        f"the user state root must be outside scientific authority, but "
+                        f"{user_state} and the {label} root {root} overlap"
+                    )
+        object.__setattr__(self, "source", source)
+        object.__setattr__(self, "evidence", evidence)
+        object.__setattr__(self, "user_state", user_state)
+
+
+@dataclass(frozen=True, slots=True)
+class LogicalReference:
+    """A portable name for a location inside a persistence class.
+
+    The name is the class's own directory segments followed by whatever is beneath them,
+    spelled with ``/`` and carrying nothing about the machine: no leading separator, no
+    drive, no ``..``, no root directory name. It is what may be stored in a read model,
+    sent to an API, or compared across workspaces.
+
+    Its purpose is to be the thing that does *not* change when a workspace moves. Two
+    workspaces at different absolute paths give byte-identical ``text`` for the same
+    artifact, which is what allows an artifact's semantic digest to be independent of
+    where it lives. The empty reference is the class's own location, and ``text`` for it
+    is the empty string; :attr:`is_root` distinguishes that from a missing name.
+    """
+
+    persistence_class: PersistenceClass
+    parts: tuple[str, ...] = ()
+
+    @property
+    def text(self) -> str:
+        """The reference as a portable ``/``-separated string."""
+        return "/".join(self.parts)
+
+    @property
+    def is_root(self) -> bool:
+        """Whether this reference names the class's own location rather than a child."""
+        return not self.parts
+
+    def __str__(self) -> str:
+        return self.text
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceLocation:
+    """One declared location: what it is, what it is called, and where it is.
+
+    ``reference`` is the portable name and ``path`` is the resolved absolute location.
+    ``path`` is a *declared* location, not a checked one: use
+    :meth:`dynamisbench.workspace.workspace.Workspace.resolve` for any path that will be
+    opened, so that containment is proved rather than assumed. The authority flags come
+    from :func:`class_semantics` so that a caller asking "may this be deleted and
+    regenerated?" reads the same answer here as anywhere else.
+    """
+
+    persistence_class: PersistenceClass
+    reference: LogicalReference
+    root: Path
+    path: Path
+    semantics: ClassSemantics
+    source_category: SourceCategory | None = None
+
+    @property
+    def authoritative(self) -> bool:
+        """Whether losing this location would lose scientific authority."""
+        return self.semantics.authoritative
+
+    @property
+    def mutable(self) -> bool:
+        """Whether execution or the application may write here."""
+        return self.semantics.mutable
+
+    @property
+    def disposable(self) -> bool:
+        """Whether the contents can be rebuilt or recomputed instead of preserved."""
+        return self.semantics.disposable
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceReport:
+    """A read-only description of which declared locations currently exist.
+
+    Produced by :meth:`Workspace.inspect`, which touches nothing: it stats the declared
+    locations and returns what it found. The report is the honest answer to "is this
+    workspace set up yet", and answering it must not be the act of setting it up.
+    """
+
+    roots: WorkspaceRoots
+    locations: tuple[WorkspaceLocation, ...]
+    source_locations: tuple[WorkspaceLocation, ...]
+    existing_classes: frozenset[PersistenceClass]
+    existing_sources: frozenset[SourceCategory]
+
+    @property
+    def missing_classes(self) -> tuple[PersistenceClass, ...]:
+        """Declared persistence classes whose location does not exist yet."""
+        return tuple(
+            location.persistence_class
+            for location in self.locations
+            if location.persistence_class not in self.existing_classes
+        )
+
+    @property
+    def missing_sources(self) -> tuple[SourceCategory, ...]:
+        """Declared source categories whose directory does not exist yet."""
+        return tuple(
+            category for category in SourceCategory if category not in self.existing_sources
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class Workspace:
+    """An opened workspace: two independent scientific roots and a declared layout.
+
+    Construct one with :func:`open_workspace` rather than directly, so the roots are
+    validated. Everything a workspace exposes is a *declared* location derived from the
+    roots and the layout tables; nothing here creates, removes, or writes anything, and
+    no method hands out a path for I/O.
+    """
+
+    roots: WorkspaceRoots
+
+    @property
+    def source_root(self) -> Path:
+        """The absolute, resolved source root holding version-controlled authority."""
+        return self.roots.source
+
+    @property
+    def evidence_root(self) -> Path:
+        """The absolute, resolved evidence root holding everything a run produces."""
+        return self.roots.evidence
+
+    @property
+    def user_state_root(self) -> Path | None:
+        """The absolute, resolved product-preference root, when one was declared."""
+        return self.roots.user_state
+
+    @property
+    def evidence_is_inside_source(self) -> bool:
+        """Whether the evidence root sits within the source root.
+
+        Permitted — a repository may keep its evidence in a gitignored subtree — but it
+        is worth a surface reporting, because it means evidence files are inside the
+        working tree and a careless clean or a broad ignore rule can take them.
+        """
+        return self.roots.evidence.is_relative_to(self.roots.source)
+
+    def location(self, persistence_class: PersistenceClass) -> WorkspaceLocation:
+        """Return the declared location of a persistence class.
+
+        :raises WorkspaceError: for a class that is not declared.
+        :raises WorkspaceRootError: for :attr:`PersistenceClass.USER_STATE` when this
+            workspace declared no user state root, because inventing a preferences
+            location would put product state somewhere the caller did not choose.
+        """
+        segments = class_location_segments(persistence_class)
+        if persistence_class is PersistenceClass.SOURCE_AUTHORITY:
+            root = self.roots.source
+        elif persistence_class is PersistenceClass.USER_STATE:
+            if self.roots.user_state is None:
+                raise WorkspaceRootError(
+                    "this workspace declares no user state root, so it has no "
+                    f"{PersistenceClass.USER_STATE.value} location"
+                )
+            root = self.roots.user_state
+        else:
+            root = self.roots.evidence
+        return WorkspaceLocation(
+            persistence_class=persistence_class,
+            reference=LogicalReference(persistence_class, segments),
+            root=root,
+            path=root.joinpath(*segments),
+            semantics=class_semantics(persistence_class),
+        )
+
+    def source_location(self, category: SourceCategory) -> WorkspaceLocation:
+        """Return the declared location of a source-authority category.
+
+        :raises WorkspaceError: for a category that is not declared.
+        """
+        segments = source_category_segments(category)
+        root = self.roots.source
+        return WorkspaceLocation(
+            persistence_class=PersistenceClass.SOURCE_AUTHORITY,
+            reference=LogicalReference(PersistenceClass.SOURCE_AUTHORITY, segments),
+            root=root,
+            path=root.joinpath(*segments),
+            semantics=class_semantics(PersistenceClass.SOURCE_AUTHORITY),
+            source_category=category,
+        )
+
+    def inspect(self) -> WorkspaceReport:
+        """Describe which declared locations exist, without changing anything.
+
+        Only the declared locations are stat'ed. No directory is created, no file is
+        read, and no state is cached, so calling this on a workspace that has never been
+        initialized leaves that workspace exactly as uninitialised as it was.
+        """
+        locations = tuple(
+            self.location(persistence_class)
+            for persistence_class in PersistenceClass
+            if persistence_class is not PersistenceClass.USER_STATE
+            or self.roots.user_state is not None
+        )
+        source_locations = tuple(self.source_location(category) for category in SourceCategory)
+        return WorkspaceReport(
+            roots=self.roots,
+            locations=locations,
+            source_locations=source_locations,
+            existing_classes=frozenset(
+                location.persistence_class for location in locations if location.path.is_dir()
+            ),
+            existing_sources=frozenset(
+                category
+                for category, location in zip(SourceCategory, source_locations, strict=True)
+                if location.path.is_dir()
+            ),
+        )
+
+
+def open_workspace(
+    source_root: PathLike[str],
+    evidence_root: PathLike[str],
+    *,
+    user_state_root: PathLike[str] | None = None,
+) -> Workspace:
+    """Open an existing workspace without modifying anything.
+
+    Reads the declared roots, resolves them, checks they are distinct directories, and
+    returns the workspace. It creates no directory, writes no file, and reads no
+    artifact, so opening a workspace is safe to do speculatively, repeatedly, or merely to
+    decide whether the workspace is the one the user meant.
+
+    :raises WorkspaceRootError: if either scientific root is missing or is not a
+        directory, if they resolve to the same directory, or if a declared user state
+        root is missing or overlaps scientific authority.
+    """
+    return Workspace(
+        WorkspaceRoots(
+            source=Path(source_root),
+            evidence=Path(evidence_root),
+            user_state=None if user_state_root is None else Path(user_state_root),
+        )
+    )
