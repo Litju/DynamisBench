@@ -29,12 +29,18 @@ from dynamisbench.domain.spec.identifiers import (
     BenchmarkId,
     BenchmarkRef,
     Comparator,
+    EnvironmentId,
+    EnvironmentRef,
+    FactorId,
     MetricId,
     QuantityId,
     RealizationId,
+    RealizationRef,
     ReferenceId,
     ScenarioId,
+    StudyId,
     SUTId,
+    SUTRef,
     VersionClause,
     VersionSpecifier,
 )
@@ -79,6 +85,15 @@ from dynamisbench.domain.spec.scenarios import (
     QuantityAssignment,
     ScenarioDefinition,
 )
+from dynamisbench.domain.spec.studies import (
+    FactorRole,
+    FactorTarget,
+    FactorTargetKind,
+    PointValue,
+    StudyDefinition,
+    UncertaintyFactorDefinition,
+    UniformRange,
+)
 from dynamisbench.domain.spec.sut import (
     SUTDefinition,
     SUTInterface,
@@ -89,6 +104,28 @@ from dynamisbench.domain.spec.sut import (
 
 EXACT = Comparator.EXACT
 AT_LEAST = Comparator.GREATER_THAN_OR_EQUAL
+
+ENGINE_NATIVE_TOKENS = (
+    "mjmodel",
+    "mjdata",
+    "qpos",
+    "qvel",
+    "qacc",
+    "simtk",
+    "opensim",
+    "statevector",
+    "statespace",
+    "observation_space",
+    "actuator",
+    "geom_rgba",
+    "multibody",
+)
+"""Engine-native type and field names that must never appear in a domain payload.
+
+An engine's *name* is legitimate authority: a realization may be called
+``rl.mujoco.loaded-cmj`` and an environment ``env.mujoco.x86-64``. An engine's
+*types* are not, and none of these tokens may reach a public domain interface.
+"""
 
 
 def specifier(*clauses: tuple[Comparator, str]) -> VersionSpecifier:
@@ -389,3 +426,72 @@ def benchmark_release(**overrides: Any) -> BenchmarkRelease:
     }
     values.update(overrides)
     return BenchmarkRelease(**values)
+
+
+def factor_target(
+    kind: FactorTargetKind = FactorTargetKind.REALIZATION, parameter: str = "contact-stiffness"
+) -> FactorTarget:
+    return FactorTarget(kind=kind, identifier="rl.mujoco.loaded-cmj", parameter=parameter)
+
+
+def uncertainty_factor(**overrides: Any) -> UncertaintyFactorDefinition:
+    """A minimal valid varied factor."""
+    values: dict[str, Any] = {
+        "factor_id": FactorId("f.contact-stiffness"),
+        "label": "Contact stiffness scale",
+        "description": "Multiplier applied to the realization's contact stiffness.",
+        "role": FactorRole.FACTOR,
+        "quantity": QuantityId("q.foot.vertical_force"),
+        "target": factor_target(),
+        "distribution": UniformRange(lower=0.8, upper=1.2),
+    }
+    values.update(overrides)
+    return UncertaintyFactorDefinition(**values)
+
+
+def controlled_factor(**overrides: Any) -> UncertaintyFactorDefinition:
+    """A minimal valid controlled variable: a factor held at one value."""
+    values: dict[str, Any] = {
+        "factor_id": FactorId("f.gravity"),
+        "label": "Gravitational acceleration",
+        "description": "Held at standard gravity for every run in the study.",
+        "role": FactorRole.CONTROLLED,
+        "quantity": QuantityId("q.jump.height"),
+        "target": factor_target(parameter="gravity"),
+        "distribution": PointValue(value=9.80665),
+    }
+    values.update(overrides)
+    return UncertaintyFactorDefinition(**values)
+
+
+def study_definition(**overrides: Any) -> StudyDefinition:
+    """A minimal valid study over frozen, separately versioned authority."""
+    values: dict[str, Any] = {
+        "study_id": StudyId("study.contact-stiffness-sensitivity"),
+        "version": "1.0.0",
+        "label": "Contact stiffness sensitivity",
+        "description": "How sensitive canonical jump height is to contact stiffness.",
+        "research_question": "How much does jump height depend on contact stiffness?",
+        "analysis_plan": (
+            "Aggregate per-replicate canonical jump height, then report the mean and "
+            "half-range across seeds."
+        ),
+        "replicates": 3,
+        "benchmarks": (benchmark_ref(),),
+        "realizations": (
+            RealizationRef(identifier=RealizationId("rl.mujoco.loaded-cmj"), version="1.0.0"),
+        ),
+        "systems_under_test": (SUTRef(identifier=SUTId("sut.baseline-0"), version="1.0.0"),),
+        "environments": (
+            EnvironmentRef(identifier=EnvironmentId("env.mujoco.x86-64"), version="1.0.0"),
+        ),
+        "required_capabilities": (
+            capability_requirement(Capability.FORWARD_DYNAMICS),
+            capability_requirement(Capability.STATE_SNAPSHOT),
+        ),
+        "factors": (uncertainty_factor(), controlled_factor()),
+        "outcomes": ("q.jump.height",),
+        "seeds": (11, 12, 13),
+    }
+    values.update(overrides)
+    return StudyDefinition(**values)

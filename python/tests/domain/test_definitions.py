@@ -39,6 +39,7 @@ from dynamisbench.domain.spec.sut import (
 )
 
 from .factories import (
+    ENGINE_NATIVE_TOKENS,
     benchmark_release,
     capability_requirement,
     event,
@@ -48,21 +49,6 @@ from .factories import (
     scenario_definition,
     sut_definition,
     sut_provenance,
-)
-
-ENGINE_NATIVE_TOKENS = (
-    "mjmodel",
-    "mjdata",
-    "qpos",
-    "qvel",
-    "qacc",
-    "simtk",
-    "opensim",
-    "statevector",
-    "observation_space",
-    "gym",
-    "actuator",
-    "geom_rgba",
 )
 
 
@@ -390,7 +376,7 @@ def test_the_credibility_hierarchy_must_ascend_the_ladder() -> None:
     ]
 
 
-def test_a_release_never_serialises_an_engine_native_token() -> None:
+def test_a_release_never_serialises_an_engine_native_type() -> None:
     payload = benchmark_release().model_dump_json().lower()
     realization_payload = realization_definition().model_dump_json().lower()
     for token in ENGINE_NATIVE_TOKENS:
