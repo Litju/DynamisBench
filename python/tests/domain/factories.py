@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from dynamisbench.domain.spec.benchmark import BenchmarkRelease, CredibilityLevel
 from dynamisbench.domain.spec.capability import (
     Capability,
     CapabilityDeclaration,
@@ -25,11 +26,15 @@ from dynamisbench.domain.spec.environment import (
     EnvironmentRequirement,
 )
 from dynamisbench.domain.spec.identifiers import (
+    BenchmarkId,
+    BenchmarkRef,
     Comparator,
     MetricId,
     QuantityId,
+    RealizationId,
     ReferenceId,
     ScenarioId,
+    SUTId,
     VersionClause,
     VersionSpecifier,
 )
@@ -57,10 +62,29 @@ from dynamisbench.domain.spec.quantities import (
     TimeBasisKind,
     UncertaintyMetadata,
 )
+from dynamisbench.domain.spec.realizations import (
+    AssetReference,
+    ConfigurationEntry,
+    NormalizationTransform,
+    RealizationDefinition,
+    RealizationQuantityMapping,
+)
 from dynamisbench.domain.spec.references import (
     ReferenceDefinition,
     ReferenceOrigin,
     VerificationCategory,
+)
+from dynamisbench.domain.spec.scenarios import (
+    EventDefinition,
+    QuantityAssignment,
+    ScenarioDefinition,
+)
+from dynamisbench.domain.spec.sut import (
+    SUTDefinition,
+    SUTInterface,
+    SUTInterfaceKind,
+    SUTKind,
+    SUTProvenance,
 )
 
 EXACT = Comparator.EXACT
@@ -214,3 +238,154 @@ def reference_definition(
 
 def axis_convention() -> AxisConvention:
     return AxisConvention(order=("x", "y", "z"), sense=RotationSense.INTRINSIC)
+
+
+def quantity_assignment(
+    quantity: str = "q.foot.vertical_force",
+    value: float = 0.0,
+    unit: str = "N",
+) -> QuantityAssignment:
+    return QuantityAssignment(
+        quantity=QuantityId(quantity), value=value, unit=CanonicalUnit(expression=unit)
+    )
+
+
+def event(event_id: str = "takeoff", **overrides: Any) -> EventDefinition:
+    values: dict[str, Any] = {
+        "event_id": event_id,
+        "label": event_id.replace("-", " ").title(),
+        "expected_time_s": 0.3,
+        "tolerance_s": 0.005,
+    }
+    values.update(overrides)
+    return EventDefinition(**values)
+
+
+def scenario_definition(scenario_id: str = "sc.loaded-cmj", **overrides: Any) -> ScenarioDefinition:
+    """A minimal valid scenario: a bounded case with declared initial conditions."""
+    values: dict[str, Any] = {
+        "scenario_id": ScenarioId(scenario_id),
+        "version": "1.0.0",
+        "label": "Loaded countermovement jump",
+        "description": "Countermovement jump executed from a loaded standing posture.",
+        "duration_s": 2.0,
+        "initial_conditions": (quantity_assignment(),),
+        "events": (event("takeoff"),),
+        "required_capabilities": (capability_requirement(Capability.FORWARD_DYNAMICS),),
+    }
+    values.update(overrides)
+    return ScenarioDefinition(**values)
+
+
+def sut_provenance(**overrides: Any) -> SUTProvenance:
+    values: dict[str, Any] = {
+        "repository": "org/zero-sot-sqp",
+        "ref": "refs/tags/v1.2.0",
+        "resolved_commit": "1f2e3d4c5b6a",
+    }
+    values.update(overrides)
+    return SUTProvenance(**values)
+
+
+def sut_definition(sut_id: str = "sut.baseline-0", **overrides: Any) -> SUTDefinition:
+    """A minimal valid system under test."""
+    values: dict[str, Any] = {
+        "sut_id": SUTId(sut_id),
+        "version": "1.0.0",
+        "label": "Baseline 0 controller",
+        "description": "Baseline controller used to qualify the realization.",
+        "kind": SUTKind.CONTROLLER,
+        "interface": SUTInterface(
+            kind=SUTInterfaceKind.SUBPROCESS,
+            command=("python", "-m", "baseline_controller"),
+        ),
+        "provenance": sut_provenance(),
+    }
+    values.update(overrides)
+    return SUTDefinition(**values)
+
+
+def quantity_mapping(quantity: str = "q.foot.vertical_force") -> RealizationQuantityMapping:
+    return RealizationQuantityMapping(
+        quantity=QuantityId(quantity),
+        source="force_sensor_foot",
+        transform=NormalizationTransform(name="sensor-nearest", version="1.0.0"),
+    )
+
+
+def benchmark_ref(benchmark_id: str = "db.lcmj20", version: str = "1.0.0") -> BenchmarkRef:
+    return BenchmarkRef(identifier=BenchmarkId(benchmark_id), version=version)
+
+
+def realization_definition(
+    realization_id: str = "rl.mujoco.loaded-cmj", **overrides: Any
+) -> RealizationDefinition:
+    """A minimal valid realization with no engine-native object in sight."""
+    values: dict[str, Any] = {
+        "realization_id": RealizationId(realization_id),
+        "version": "1.0.0",
+        "label": "MuJoCo realization of the loaded countermovement jump",
+        "description": "Executable implementation of the benchmark in MuJoCo.",
+        "benchmark": benchmark_ref(),
+        "engine": engine_binding(),
+        "capabilities": (
+            capability_declaration(Capability.FORWARD_DYNAMICS),
+            capability_declaration(Capability.STATE_SNAPSHOT),
+        ),
+        "quantity_mappings": (quantity_mapping(),),
+        "engine_configuration": (ConfigurationEntry(name="integrator", value="implicitfast"),),
+        "assets": (
+            AssetReference(
+                asset_id="subject-model",
+                path="models/realization/subject.xml",
+                description="Segment geometry and inertia of the modelled subject.",
+                sha256="0" * 64,
+            ),
+        ),
+        "known_discrepancies": (
+            "Contact stiffness is not calibrated against the reference plate.",
+        ),
+    }
+    values.update(overrides)
+    return RealizationDefinition(**values)
+
+
+def jump_height_quantity() -> QuantityDefinition:
+    return quantity_definition(
+        quantity_id="q.jump.height",
+        label="Jump height",
+        description="Apex height of the centre of mass above its standing value.",
+        dimension=PhysicalDimension(length=1),
+        unit=CanonicalUnit(expression="m"),
+        sign_convention=SignConvention(positive_direction="upward from the standing value"),
+        body_inclusion=BodyInclusion(included=("com",), aggregation=CompositeAggregation.SINGLE),
+        sampling=SamplingSemantics(kind=SamplingKind.IRREGULAR),
+        time_basis=TimeBasis(kind=TimeBasisKind.RELATIVE_TO_START),
+        uncertainty=UncertaintyMetadata(
+            characterization="expected to be dominated by marker placement variability"
+        ),
+    )
+
+
+def benchmark_release(**overrides: Any) -> BenchmarkRelease:
+    """A minimal valid benchmark release with internally consistent authority."""
+    values: dict[str, Any] = {
+        "benchmark_id": BenchmarkId("db.lcmj20"),
+        "version": "1.0.0",
+        "label": "Benchmark Family 001 — loaded countermovement jump",
+        "description": "A loaded countermovement jump benchmark for human-movement models.",
+        "intended_use": "Comparative assessment of human-movement models on a jump task.",
+        "intended_non_use": "Not a clinical assessment and not a fatigue or injury model.",
+        "conceptual_model": "A planar sagittal multi-segment subject on a rigid force plate.",
+        "claim_ceiling": "Relative model comparison within the stated applicability domain.",
+        "quantities": (quantity_definition(), jump_height_quantity()),
+        "scenarios": (scenario_definition(),),
+        "metrics": (metric_definition(),),
+        "references": (reference_definition(),),
+        "credibility_hierarchy": (
+            CredibilityLevel.BENCHMARK_REFERENCE_CASE,
+            CredibilityLevel.COMPLETE_SYSTEM,
+        ),
+    }
+    values.update(overrides)
+    return BenchmarkRelease(**values)
