@@ -31,6 +31,7 @@ PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
 
 BOUNDARIES = (
     "domain.spec",
+    "identity",
     "execution",
     "adapters",
     "planning",
