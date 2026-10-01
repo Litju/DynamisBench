@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "DB-1.1 bootstrap: the desktop shell requests no Tauri permissions. Permissions are granted by the issue that introduces the sidecar or filesystem access.",
+  "windows": ["main"],
+  "permissions": []
+}

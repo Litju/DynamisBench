@@ -1,0 +1,44 @@
+[project]
+name = "dynamisbench"
+version = "0.0.0"
+description = "DynamisBench — scientific core, execution boundaries, and local application API."
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[project.scripts]
+dbench = "dynamisbench.cli:main"
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.168.3",
+    "pyright>=1.1.414",
+    "pytest>=9.1.1",
+    "ruff>=0.16.9",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.1,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "N", "UP", "W"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["dynamisbench"]
+
+[tool.pyright]
+include = ["src", "tests"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.12"
+typeCheckingMode = "standard"

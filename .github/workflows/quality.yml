@@ -1,0 +1,108 @@
+name: quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: python (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+      # Each runner resolves its own platform environment; nothing is shared with
+      # the Windows working tree (ADR-023).
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version-file: python/.python-version
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --frozen
+      - name: Lint (Ruff)
+        run: uv run ruff check .
+      - name: Format check (Ruff)
+        run: uv run ruff format --check .
+      - name: Type check (Pyright)
+        run: uv run pyright
+      - name: Test (pytest + Hypothesis)
+        run: uv run pytest
+        env:
+          HYPOTHESIS_PROFILE: ci
+
+  frontend:
+    name: frontend (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Type check (tsc)
+        run: pnpm run typecheck
+      - name: Test (Vitest)
+        run: pnpm run test
+      - name: Build (Vite)
+        run: pnpm run build
+
+  desktop:
+    name: desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            pkg-config \
+            wget
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build the workbench (Tauri frontendDist)
+        run: pnpm run build
+      - name: Build the Tauri desktop shell
+        run: cargo build --locked --manifest-path apps/desktop/src-tauri/Cargo.toml

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "DynamisBench",
+  "version": "0.0.0",
+  "identifier": "org.dynamisbench.workbench",
+  "build": {
+    "beforeDevCommand": {
+      "cwd": "../..",
+      "script": "dev:workbench"
+    },
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": {
+      "cwd": "../..",
+      "script": "build"
+    },
+    "frontendDist": "../../apps/workbench/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "DynamisBench",
+        "width": 1280,
+        "height": 800
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"]
+  }
+}
