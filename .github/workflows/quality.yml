@@ -1,38 +1,121 @@
+# ADR-024: full DynamisBench qualification is authoritative only on dedicated
+# self-hosted runners. A GitHub-hosted result is never a qualification, and an
+# unavailable required runner leaves its gate queued. There is deliberately no
+# hosted fallback label, matrix entry, or substitute job in this file.
+#
+# Trust boundary: while this workflow has no `pull_request` trigger at all,
+# nothing reachable from an untrusted ref can execute on these runners.
+# Same-repository and fork pull-request handling is added by a separate change
+# that gates every job below on an explicit trust condition.
 name: quality
 
 on:
   push:
     branches: [main]
-  pull_request:
+  workflow_dispatch:
 
+# Read-only token; no build or test job needs write, package, or id-token scope.
 permissions:
   contents: read
 
 concurrency:
-  group: quality-${{ github.ref }}
+  group: quality-authoritative-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  python:
-    name: python (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+  # Records the runner and toolchain identity the rest of this workflow is
+  # qualified against (ADR-024/ADR-009). The record is an artifact, never
+  # runner-local authority.
+  platform-identity:
+    name: platform-identity (${{ matrix.name }})
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        include:
+          - name: windows-x64
+            runs-on: [self-hosted, Windows, X64, dynamisbench]
+          - name: linux-x64
+            runs-on: [self-hosted, Linux, X64, dynamisbench]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Record runner and toolchain identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          {
+            printf '{\n'
+            printf '  "workflow": "quality",\n'
+            printf '  "authoritative": true,\n'
+            printf '  "runner_name": "%s",\n'        "${RUNNER_NAME}"
+            printf '  "runner_os": "%s",\n'          "${RUNNER_OS}"
+            printf '  "runner_arch": "%s",\n'        "${RUNNER_ARCH}"
+            printf '  "runner_temp": "%s",\n'        "${RUNNER_TEMP}"
+            printf '  "repository": "%s",\n'         "${GITHUB_REPOSITORY}"
+            printf '  "ref": "%s",\n'                "${GITHUB_REF}"
+            printf '  "sha": "%s",\n'                "${GITHUB_SHA}"
+            printf '  "kernel": "%s",\n'             "$(uname -a)"
+            printf '  "wsl": %s,\n'                 "$(if grep -qi microsoft /proc/version 2>/dev/null; then echo true; else echo false; fi)"
+            printf '  "python": "%s",\n'             "$(python3 --version 2>&1 || echo absent)"
+            printf '  "uv": "%s",\n'                 "$(uv --version 2>&1 || echo absent)"
+            printf '  "node": "%s",\n'               "$(node --version 2>&1 || echo absent)"
+            printf '  "pnpm": "%s",\n'               "$(pnpm --version 2>&1 || echo absent)"
+            printf '  "rustc": "%s"\n'               "$(rustc --version 2>&1 || echo absent)"
+            printf '}\n'
+          } > evidence/platform-identity.json
+          cat evidence/platform-identity.json
+          {
+            echo "### Authoritative runner identity"
+            echo
+            echo '```json'
+            cat evidence/platform-identity.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: platform-identity-${{ matrix.name }}
+          path: evidence/platform-identity.json
+          if-no-files-found: error
+          retention-days: 90
+
+  python:
+    name: python (${{ matrix.name }})
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            runs-on: [self-hosted, Windows, X64, dynamisbench]
+          - name: linux-x64
+            runs-on: [self-hosted, Linux, X64, dynamisbench]
     defaults:
       run:
         working-directory: python
     steps:
       - uses: actions/checkout@v4
-      # Each runner resolves its own platform environment; nothing is shared with
-      # the Windows working tree (ADR-023).
+        with:
+          persist-credentials: false
+      # Each runner resolves its own platform environment; no .venv, node_modules,
+      # Cargo target, or simulator environment is shared across OSes (ADR-023).
       - uses: astral-sh/setup-uv@v6
         with:
           python-version-file: python/.python-version
           enable-cache: true
       - name: Install locked dependencies
         run: uv sync --frozen
+      - name: Record resolved Python toolchain
+        run: |
+          {
+            echo "python: $(uv run python --version)"
+            echo "uv: $(uv --version)"
+            echo "runner: ${RUNNER_NAME} (${RUNNER_OS}/${RUNNER_ARCH})"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Lint (Ruff)
         run: uv run ruff check .
       - name: Format check (Ruff)
@@ -45,14 +128,21 @@ jobs:
           HYPOTHESIS_PROFILE: ci
 
   frontend:
-    name: frontend (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: frontend (${{ matrix.name }})
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        include:
+          - name: windows-x64
+            runs-on: [self-hosted, Windows, X64, dynamisbench]
+          - name: linux-x64
+            runs-on: [self-hosted, Linux, X64, dynamisbench]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -60,6 +150,13 @@ jobs:
           cache: pnpm
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+      - name: Record resolved frontend toolchain
+        run: |
+          {
+            echo "node: $(node --version)"
+            echo "pnpm: $(pnpm --version)"
+            echo "runner: ${RUNNER_NAME} (${RUNNER_OS}/${RUNNER_ARCH})"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Type check (tsc)
         run: pnpm run typecheck
       - name: Test (Vitest)
@@ -68,14 +165,21 @@ jobs:
         run: pnpm run build
 
   desktop:
-    name: desktop (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: desktop (${{ matrix.name }})
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        include:
+          - name: windows-x64
+            runs-on: [self-hosted, Windows, X64, dynamisbench]
+          - name: linux-x64
+            runs-on: [self-hosted, Linux, X64, dynamisbench]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Install Tauri system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -102,6 +206,15 @@ jobs:
           workspaces: apps/desktop/src-tauri -> target
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+      - name: Record resolved desktop toolchain
+        run: |
+          {
+            echo "node: $(node --version)"
+            echo "pnpm: $(pnpm --version)"
+            echo "rustc: $(rustc --version)"
+            echo "cargo: $(cargo --version)"
+            echo "runner: ${RUNNER_NAME} (${RUNNER_OS}/${RUNNER_ARCH})"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Build the workbench (Tauri frontendDist)
         run: pnpm run build
       - name: Build the Tauri desktop shell
