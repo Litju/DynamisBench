@@ -29,6 +29,7 @@ containment.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from os import PathLike
 from pathlib import Path
@@ -36,6 +37,7 @@ from pathlib import Path
 from dynamisbench.workspace.authority import (
     CLASS_LOCATION_SEGMENTS,
     CLASS_SEMANTICS,
+    INITIALISED_CLASSES,
     SOURCE_CATEGORY_SEGMENTS,
     ClassSemantics,
     PersistenceClass,
@@ -52,6 +54,7 @@ __all__ = [
     "WorkspaceLocation",
     "WorkspaceReport",
     "WorkspaceRoots",
+    "initialize_workspace",
     "open_workspace",
 ]
 
@@ -460,3 +463,119 @@ def open_workspace(
             user_state=None if user_state_root is None else Path(user_state_root),
         )
     )
+
+
+def _requested_categories(sources: Iterable[SourceCategory]) -> tuple[SourceCategory, ...]:
+    """Return the requested source categories deduplicated, in canonical order.
+
+    Deduplication and canonical ordering mean the result does not depend on how the
+    caller happened to list them, so initialising a workspace twice with the same
+    request is the same operation.
+    """
+    requested = list(sources)
+    undeclared = [category for category in requested if not isinstance(category, SourceCategory)]
+    if undeclared:
+        names = ", ".join(sorted(repr(category) for category in undeclared))
+        raise WorkspaceError(f"unknown source categories: {names}")
+    return tuple(category for category in SourceCategory if category in set(requested))
+
+
+def _make_directory(path: Path) -> None:
+    """Create one declared directory, refusing to report a filesystem failure as success."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise WorkspaceRootError(
+            f"cannot create the workspace directory {path}: {error}"
+        ) from error
+
+
+def _refuse_non_directory_root(path: Path, label: str) -> None:
+    """Refuse a root path already occupied by something that is not a directory.
+
+    A root that does not exist yet is normal — that is what initialisation is for — but
+    one that exists as a file can never become a root, so it is settled before anything is
+    created rather than discovered halfway through.
+    """
+    if path.exists() and not path.is_dir():
+        raise WorkspaceRootError(f"the {label} exists but is not a directory: {path}")
+
+
+def initialize_workspace(
+    source_root: RootInput,
+    evidence_root: RootInput,
+    *,
+    user_state_root: RootInput | None = None,
+    sources: Iterable[SourceCategory] = (),
+) -> Workspace:
+    """Explicitly create a workspace's declared mutable structure, then open it.
+
+    This is the only operation in the package that creates directories, and it is explicit
+    by design: opening or inspecting a workspace must never be the hidden cause of a
+    filesystem change, so the caller who wants a workspace to exist says so here and
+    nowhere else. It creates the two roots, the mutable working directories
+    (``.staging``, ``derived``, ``cache``, ``tmp``), and any source categories the caller
+    names — nothing else, so "what does a DynamisBench workspace consist of" has an
+    answer that is a list rather than a convention.
+
+    Every root is validated before anything is created, so a request that cannot produce a
+    valid workspace leaves the filesystem exactly as it found it rather than half-built.
+    Re-running is safe: existing directories are accepted unchanged, so calling it again
+    with an extra category is how a workspace grows.
+
+    Three things are deliberately not created. ``runs/`` is not created, because an empty
+    directory is not sealed evidence and the first authoritative bundle arrives by the
+    atomic promotion DB-1.5 (RES-231) owns. The source categories are not created
+    wholesale, because version-controlled content is added by a repository rather than by
+    an application, so only the categories named here appear. A user state root is never
+    created, because the product owns it and this issue supplies only the boundary that
+    keeps it outside scientific authority.
+
+    :raises WorkspaceRootError: if the two roots would be the same directory, if a
+        declared root cannot be used, or if a directory cannot be created.
+    :raises WorkspaceError: if ``sources`` names anything that is not a source category.
+    """
+    source = _normalise_root(source_root, "source root")
+    evidence = _normalise_root(evidence_root, "evidence root")
+    if source == evidence:
+        raise WorkspaceRootError(
+            f"the source root and the evidence root must be different directories, "
+            f"but both resolve to {source}"
+        )
+    categories = _requested_categories(sources)
+    user_state = _validated_user_state(user_state_root, source, evidence)
+    _refuse_non_directory_root(source, "source root")
+    _refuse_non_directory_root(evidence, "evidence root")
+
+    _make_directory(source)
+    _make_directory(evidence)
+    for persistence_class in INITIALISED_CLASSES:
+        _make_directory(evidence.joinpath(*class_location_segments(persistence_class)))
+    for category in categories:
+        _make_directory(source.joinpath(*source_category_segments(category)))
+
+    return open_workspace(source, evidence, user_state_root=user_state)
+
+
+def _validated_user_state(
+    user_state_root: RootInput | None, source: Path, evidence: Path
+) -> Path | None:
+    """Validate a declared user state root against roots that may not exist yet.
+
+    Product preferences must be outside scientific authority, and that has to be settled
+    before any directory is created: discovering the overlap afterwards would leave a
+    workspace holding preferences inside authority, which is the one thing this
+    separation exists to prevent.
+    """
+    if user_state_root is None:
+        return None
+    user_state = _require_directory(
+        _normalise_root(user_state_root, "user state root"), "user state root"
+    )
+    for label, root in (("source", source), ("evidence", evidence)):
+        if not _disjoint(user_state, root):
+            raise WorkspaceRootError(
+                f"the user state root must be outside scientific authority, but "
+                f"{user_state} and the {label} root {root} overlap"
+            )
+    return user_state

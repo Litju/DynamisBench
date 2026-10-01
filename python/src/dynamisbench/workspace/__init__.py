@@ -68,6 +68,7 @@ from dynamisbench.workspace.workspace import (
     WorkspaceLocation,
     WorkspaceReport,
     WorkspaceRoots,
+    initialize_workspace,
     open_workspace,
 )
 
@@ -88,6 +89,7 @@ __all__ = [
     "WorkspaceReport",
     "WorkspaceRootError",
     "WorkspaceRoots",
+    "initialize_workspace",
     "open_workspace",
     "resolve_within",
     "validate_logical_reference",
