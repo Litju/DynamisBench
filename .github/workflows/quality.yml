@@ -3,14 +3,21 @@
 # unavailable required runner leaves its gate queued. There is deliberately no
 # hosted fallback label, matrix entry, or substitute job in this file.
 #
-# Trust boundary: while this workflow has no `pull_request` trigger at all,
-# nothing reachable from an untrusted ref can execute on these runners.
-# Same-repository and fork pull-request handling is added by a separate change
-# that gates every job below on an explicit trust condition.
+# Trust boundary (ADR-024): every job below is gated so that only trusted refs
+# execute on these persistent runners. Pushes to `main`, manual dispatches, and
+# pull requests whose head repository is this repository are trusted. A pull
+# request from a fork is untrusted: its jobs are skipped, not executed, so fork
+# code never reaches a persistent self-hosted machine. Fork pull requests get the
+# clearly non-authoritative GitHub-hosted checks in `smoke-hosted.yml`.
+#
+# `pull_request_target` is deliberately not used anywhere: it would check out and
+# execute untrusted PR head code on a privileged self-hosted runner.
 name: quality
 
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
@@ -28,6 +35,9 @@ jobs:
   # runner-local authority.
   platform-identity:
     name: platform-identity (${{ matrix.name }})
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 20
     strategy:
@@ -84,6 +94,9 @@ jobs:
 
   python:
     name: python (${{ matrix.name }})
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 60
     strategy:
@@ -129,6 +142,9 @@ jobs:
 
   frontend:
     name: frontend (${{ matrix.name }})
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 60
     strategy:
@@ -166,6 +182,9 @@ jobs:
 
   desktop:
     name: desktop (${{ matrix.name }})
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 120
     strategy:

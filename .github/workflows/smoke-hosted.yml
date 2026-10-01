@@ -1,0 +1,74 @@
+# NON-AUTHORITATIVE (ADR-024).
+#
+# This workflow runs on GitHub-hosted runners. Its result is a cheap
+# bootstrap/smoke signal only. It can NEVER satisfy a DynamisBench qualification,
+# milestone, release, cross-platform determinism, or scientific-evidence gate,
+# and it must never be read as one. Authoritative qualification lives in
+# `quality.yml` on the dedicated self-hosted Windows and Linux runners.
+#
+# It exists so that untrusted fork pull requests still get a fast signal without
+# any fork code executing on a persistent self-hosted machine. Nothing here is a
+# substitute for the self-hosted gates; there is no fallback path in either
+# direction.
+name: smoke (NON-AUTHORITATIVE)
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-non-authoritative-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: smoke (${{ matrix.os }}, NON-AUTHORITATIVE — not a qualification gate)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Declare non-authoritative status
+        run: |
+          {
+            echo "### NON-AUTHORITATIVE smoke check"
+            echo
+            echo "GitHub-hosted runner \`${{ matrix.os }}\`. This result is not a DynamisBench"
+            echo "qualification, milestone, release, cross-platform determinism, or"
+            echo "scientific-evidence gate (ADR-024). Authoritative qualification requires the"
+            echo "dedicated self-hosted Windows/Linux runners exercised by the \`quality\` workflow."
+          } >> "$GITHUB_STEP_SUMMARY"
+      # Bootstrap-only: prove the locked Python environment installs and the
+      # engine-independent package imports. No test suite, no desktop build.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version-file: python/.python-version
+          enable-cache: true
+      - name: Install locked dependencies
+        working-directory: python
+        run: uv sync --frozen
+      - name: Import the engine-independent core
+        working-directory: python
+        run: uv run python -c "import dynamisbench, sys; print(dynamisbench.__version__)"
+      - name: CLI bootstrap
+        working-directory: python
+        run: uv run dbench --version
+      # Bootstrap-only frontend: install the locked workspace and typecheck.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Type check (tsc)
+        run: pnpm run typecheck
