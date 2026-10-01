@@ -126,6 +126,31 @@ def source_category_segments(category: SourceCategory) -> tuple[str, ...]:
         raise WorkspaceError(f"unknown source category: {category!r}") from None
 
 
+def _validated_user_state(
+    user_state_root: RootInput | None, source: Path, evidence: Path
+) -> Path | None:
+    """Validate a declared user state root against roots that may not exist yet.
+
+    Product preferences must be outside scientific authority, and that has to be settled
+    before any directory is created: discovering the overlap afterwards would leave a
+    workspace holding preferences inside authority, which is the one thing this
+    separation exists to prevent. Both roots are checked in both directions, so
+    preferences may neither sit inside authority nor contain it.
+    """
+    if user_state_root is None:
+        return None
+    user_state = _require_directory(
+        _normalise_root(user_state_root, "user state root"), "user state root"
+    )
+    for label, root in (("source", source), ("evidence", evidence)):
+        if not _disjoint(user_state, root):
+            raise WorkspaceRootError(
+                f"the user state root must be outside scientific authority, but "
+                f"{user_state} and the {label} root {root} overlap"
+            )
+    return user_state
+
+
 @dataclass(frozen=True, slots=True)
 class WorkspaceRoots:
     """The three roots a workspace is described by, validated.
@@ -154,17 +179,7 @@ class WorkspaceRoots:
                 f"the source root and the evidence root must be different directories, "
                 f"but both resolve to {source}"
             )
-        user_state: Path | None = None
-        if self.user_state is not None:
-            user_state = _require_directory(
-                _normalise_root(self.user_state, "user state root"), "user state root"
-            )
-            for label, root in (("source", source), ("evidence", evidence)):
-                if not _disjoint(user_state, root):
-                    raise WorkspaceRootError(
-                        f"the user state root must be outside scientific authority, but "
-                        f"{user_state} and the {label} root {root} overlap"
-                    )
+        user_state = _validated_user_state(self.user_state, source, evidence)
         object.__setattr__(self, "source", source)
         object.__setattr__(self, "evidence", evidence)
         object.__setattr__(self, "user_state", user_state)
@@ -555,27 +570,3 @@ def initialize_workspace(
         _make_directory(source.joinpath(*source_category_segments(category)))
 
     return open_workspace(source, evidence, user_state_root=user_state)
-
-
-def _validated_user_state(
-    user_state_root: RootInput | None, source: Path, evidence: Path
-) -> Path | None:
-    """Validate a declared user state root against roots that may not exist yet.
-
-    Product preferences must be outside scientific authority, and that has to be settled
-    before any directory is created: discovering the overlap afterwards would leave a
-    workspace holding preferences inside authority, which is the one thing this
-    separation exists to prevent.
-    """
-    if user_state_root is None:
-        return None
-    user_state = _require_directory(
-        _normalise_root(user_state_root, "user state root"), "user state root"
-    )
-    for label, root in (("source", source), ("evidence", evidence)):
-        if not _disjoint(user_state, root):
-            raise WorkspaceRootError(
-                f"the user state root must be outside scientific authority, but "
-                f"{user_state} and the {label} root {root} overlap"
-            )
-    return user_state
