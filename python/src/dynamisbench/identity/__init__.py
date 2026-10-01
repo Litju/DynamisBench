@@ -15,7 +15,7 @@ Architecture section 7):
 
 A digest supplements the human identifier and never replaces it, so an authoritative
 reference can say ``id: DB-LCMJ20``, ``version: 0.1.0``, and
-``semantic_digest: {algorithm: sha256, value: ...}`` without the hash becoming the
+``semantic_digest: {algorithm: sha256, hex: ...}`` without the hash becoming the
 name.
 
 DB-1.3 (RES-229) implements both digests. Manifests, staging, and sealed evidence
@@ -27,9 +27,31 @@ from dynamisbench.identity.canonical import (
     JsonValue,
     canonical_bytes,
 )
+from dynamisbench.identity.digests import (
+    READ_CHUNK_BYTES,
+    AssetAccessError,
+    AssetDigest,
+    BinarySource,
+    DigestAlgorithm,
+    SemanticDigest,
+    asset_sha256,
+    asset_sha256_of_file,
+    asset_sha256_of_stream,
+    semantic_sha256_of_canonical_bytes,
+)
 
 __all__ = [
+    "READ_CHUNK_BYTES",
+    "AssetAccessError",
+    "AssetDigest",
+    "BinarySource",
     "CanonicalizationError",
+    "DigestAlgorithm",
     "JsonValue",
+    "SemanticDigest",
+    "asset_sha256",
+    "asset_sha256_of_file",
+    "asset_sha256_of_stream",
     "canonical_bytes",
+    "semantic_sha256_of_canonical_bytes",
 ]
