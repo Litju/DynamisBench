@@ -97,10 +97,13 @@ def _regenerate_when_requested(request: pytest.FixtureRequest) -> None:
     """Rewrite the corpus before anything reads it, and only when asked.
 
     Regeneration is opt-in and writes files, so it can never be how a test makes itself
-    pass by accident; the result is always a reviewable diff.
+    pass by accident; the result is always a reviewable diff. The write is performed
+    twice and required to agree, because a regeneration that drifts on its own second
+    pass would leave committed authority nobody can reproduce.
     """
     if request.config.getoption("--update-golden"):
-        _write_corpus()
+        first = _write_corpus()
+        assert first == _write_corpus(), "regenerating the golden corpus is not idempotent"
 
 
 def test_the_corpus_covers_every_valid_domain_document() -> None:
@@ -183,15 +186,6 @@ def test_the_corpus_records_its_own_provenance() -> None:
 
 def test_the_corpus_is_not_trivially_small() -> None:
     assert len(CASES) >= 17
-
-
-def test_regenerating_the_corpus_twice_changes_nothing(request: pytest.FixtureRequest) -> None:
-    """Guards the regeneration switch itself: it must be idempotent, so a regeneration is
-    always visible as a diff against committed authority rather than as drift."""
-    if not request.config.getoption("--update-golden"):
-        pytest.skip("--update-golden was not requested")
-    first = _write_corpus()
-    assert first == _write_corpus()
 
 
 def test_no_committed_case_declares_a_value_that_cannot_be_canonicalised() -> None:
