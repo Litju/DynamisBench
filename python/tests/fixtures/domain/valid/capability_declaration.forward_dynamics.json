@@ -1,0 +1,5 @@
+{
+  "capability": "forward_dynamics",
+  "summary": "realization provides forward_dynamics",
+  "limitations": []
+}

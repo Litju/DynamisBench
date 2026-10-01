@@ -1,0 +1,12 @@
+{
+  "reference_id": "r.published-jump-study",
+  "version": "1.0.0",
+  "label": "Baseline 0 reference",
+  "description": "Reference trajectory for the loaded countermovement jump scenario.",
+  "scenario_id": "sc.loaded-cmj",
+  "category": "model_validation",
+  "origin": "published",
+  "citation": "Doe et al. 2020, J Biomech 51:1-9",
+  "license": "internal research use",
+  "notes": []
+}

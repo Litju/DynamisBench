@@ -1,0 +1,12 @@
+{
+  "engine": "MuJoCo 3",
+  "specifier": {
+    "clauses": [
+      {
+        "comparator": "exact",
+        "version": "3.3.0"
+      }
+    ]
+  },
+  "notes": null
+}

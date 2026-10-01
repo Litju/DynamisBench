@@ -1,0 +1,64 @@
+{
+  "quantity_id": "q.knee.flexion_angle",
+  "version": "1.0.0",
+  "label": "Knee flexion angle",
+  "description": "Sagittal flexion angle of the right knee.",
+  "dimension": {
+    "length": 0,
+    "mass": 0,
+    "time": 0,
+    "electric_current": 0,
+    "temperature": 0,
+    "amount_of_substance": 0,
+    "luminous_intensity": 0
+  },
+  "unit": {
+    "expression": "1"
+  },
+  "frame": {
+    "frame_id": "world",
+    "parent": "global",
+    "axis_labels": [
+      "x",
+      "y",
+      "z"
+    ],
+    "handedness": "right",
+    "description": "Right-handed world frame with the vertical along +z."
+  },
+  "sign_convention": {
+    "positive_direction": "increasing flexion from the standing angle",
+    "notes": []
+  },
+  "time_basis": {
+    "kind": "relative_to_event",
+    "origin": "initial-contact"
+  },
+  "sampling": {
+    "kind": "uniform",
+    "period_s": 0.001,
+    "rate_hz": null,
+    "notes": []
+  },
+  "axis_convention": {
+    "order": [
+      "x",
+      "y",
+      "z"
+    ],
+    "sense": "intrinsic"
+  },
+  "body_inclusion": {
+    "included": [
+      "r-knee"
+    ],
+    "excluded": [],
+    "aggregation": "single",
+    "notes": []
+  },
+  "uncertainty": {
+    "characterization": "expected to be limited by force-plate acquisition noise",
+    "notes": []
+  },
+  "notes": []
+}

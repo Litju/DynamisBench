@@ -1,0 +1,17 @@
+{
+  "metric_id": "m.jump_height.rmse",
+  "version": "1.0.0",
+  "label": "Jump height RMSE",
+  "description": "Root mean square error of canonical jump height.",
+  "quantity": "q.jump.height",
+  "aggregation": {
+    "method": "mean",
+    "window_start_s": 0.0,
+    "window_end_s": 1.0
+  },
+  "criterion": {
+    "operator": "less",
+    "threshold": "small"
+  },
+  "notes": []
+}

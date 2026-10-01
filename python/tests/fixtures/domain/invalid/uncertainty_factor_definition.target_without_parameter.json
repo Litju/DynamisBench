@@ -1,0 +1,17 @@
+{
+  "factor_id": "f.contact-stiffness",
+  "label": "Contact stiffness scale",
+  "description": "Multiplier applied to the realization's contact stiffness.",
+  "role": "factor",
+  "quantity": "q.foot.vertical_force",
+  "target": {
+    "kind": "realization",
+    "identifier": "rl.x"
+  },
+  "distribution": {
+    "kind": "uniform",
+    "lower": 0.8,
+    "upper": 1.2
+  },
+  "notes": []
+}

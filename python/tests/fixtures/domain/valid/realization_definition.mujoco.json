@@ -1,0 +1,92 @@
+{
+  "realization_id": "rl.mujoco.loaded-cmj",
+  "version": "1.0.0",
+  "label": "MuJoCo realization of the loaded countermovement jump",
+  "description": "Executable implementation of the benchmark in MuJoCo.",
+  "benchmark": {
+    "identifier": "db.lcmj20",
+    "version": "1.0.0"
+  },
+  "engine": {
+    "engine": "mujoco",
+    "specifier": {
+      "clauses": [
+        {
+          "comparator": "exact",
+          "version": "3.3.0"
+        }
+      ]
+    },
+    "notes": null
+  },
+  "capabilities": [
+    {
+      "capability": "analysis",
+      "summary": "realization provides analysis",
+      "limitations": []
+    },
+    {
+      "capability": "forward_dynamics",
+      "summary": "realization provides forward_dynamics",
+      "limitations": []
+    },
+    {
+      "capability": "interactive_dynamics",
+      "summary": "realization provides interactive_dynamics",
+      "limitations": []
+    },
+    {
+      "capability": "inverse_dynamics",
+      "summary": "realization provides inverse_dynamics",
+      "limitations": []
+    },
+    {
+      "capability": "state_snapshot",
+      "summary": "realization provides state_snapshot",
+      "limitations": []
+    },
+    {
+      "capability": "trajectory_optimization",
+      "summary": "realization provides trajectory_optimization",
+      "limitations": []
+    }
+  ],
+  "quantity_mappings": [
+    {
+      "quantity": "q.foot.vertical_force",
+      "source": "force_sensor_foot",
+      "transform": {
+        "name": "sensor-nearest",
+        "version": "1.0.0"
+      },
+      "notes": []
+    },
+    {
+      "quantity": "q.jump.height",
+      "source": "force_sensor_foot",
+      "transform": {
+        "name": "sensor-nearest",
+        "version": "1.0.0"
+      },
+      "notes": []
+    }
+  ],
+  "engine_configuration": [
+    {
+      "name": "integrator",
+      "value": "implicitfast"
+    }
+  ],
+  "assets": [
+    {
+      "asset_id": "subject-model",
+      "path": "models/realization/subject.xml",
+      "description": "Segment geometry and inertia of the modelled subject.",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "known_discrepancies": [
+    "Contact stiffness is not calibrated against the reference plate."
+  ],
+  "notes": []
+}

@@ -1,0 +1,18 @@
+{
+  "factor_id": "f.contact-stiffness",
+  "label": "Contact stiffness scale",
+  "description": "Multiplier applied to the realization's contact stiffness.",
+  "role": "factor",
+  "quantity": "q.foot.vertical_force",
+  "target": {
+    "kind": "realization",
+    "identifier": "rl.mujoco.loaded-cmj",
+    "parameter": "contact-stiffness"
+  },
+  "distribution": {
+    "kind": "uniform",
+    "lower": 1.0,
+    "upper": 1.0
+  },
+  "notes": []
+}

@@ -1,0 +1,23 @@
+{
+  "sut_id": "sut.baseline-0",
+  "version": "1.0.0",
+  "label": "Baseline 0 controller",
+  "description": "Baseline controller used to qualify the realization.",
+  "kind": "controller",
+  "interface": {
+    "kind": "subprocess",
+    "command": [
+      "python",
+      "-m",
+      "baseline_controller"
+    ]
+  },
+  "provenance": {
+    "repository": "org/zero-sot-sqp",
+    "ref": "refs/tags/v1.2.0",
+    "resolved_commit": "1f2e3d4c5b6a",
+    "build_digest": null
+  },
+  "required_capabilities": [],
+  "notes": []
+}

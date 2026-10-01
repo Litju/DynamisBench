@@ -1,0 +1,91 @@
+{
+  "study_id": "study.contact-stiffness-sensitivity",
+  "version": "1.0.0",
+  "label": "Contact stiffness sensitivity",
+  "description": "How sensitive canonical jump height is to contact stiffness.",
+  "research_question": "How much does jump height depend on contact stiffness?",
+  "analysis_plan": "Aggregate per-replicate canonical jump height, then report the mean and half-range across seeds.",
+  "replicates": 3,
+  "benchmarks": [
+    {
+      "identifier": "db.lcmj20",
+      "version": "1.0.0"
+    }
+  ],
+  "realizations": [
+    {
+      "identifier": "rl.x",
+      "version": "1.0"
+    }
+  ],
+  "systems_under_test": [
+    {
+      "identifier": "sut.baseline-0",
+      "version": "1.0.0"
+    }
+  ],
+  "environments": [
+    {
+      "identifier": "env.mujoco.x86-64",
+      "version": "1.0.0"
+    }
+  ],
+  "required_capabilities": [
+    {
+      "capability": "forward_dynamics",
+      "essential": true,
+      "rationale": "forward_dynamics is required by this definition"
+    },
+    {
+      "capability": "state_snapshot",
+      "essential": true,
+      "rationale": "state_snapshot is required by this definition"
+    }
+  ],
+  "factors": [
+    {
+      "factor_id": "f.contact-stiffness",
+      "label": "Contact stiffness scale",
+      "description": "Multiplier applied to the realization's contact stiffness.",
+      "role": "factor",
+      "quantity": "q.foot.vertical_force",
+      "target": {
+        "kind": "realization",
+        "identifier": "rl.mujoco.loaded-cmj",
+        "parameter": "contact-stiffness"
+      },
+      "distribution": {
+        "kind": "uniform",
+        "lower": 0.8,
+        "upper": 1.2
+      },
+      "notes": []
+    },
+    {
+      "factor_id": "f.gravity",
+      "label": "Gravitational acceleration",
+      "description": "Held at standard gravity for every run in the study.",
+      "role": "controlled",
+      "quantity": "q.jump.height",
+      "target": {
+        "kind": "realization",
+        "identifier": "rl.mujoco.loaded-cmj",
+        "parameter": "gravity"
+      },
+      "distribution": {
+        "kind": "point",
+        "value": 9.80665
+      },
+      "notes": []
+    }
+  ],
+  "outcomes": [
+    "q.jump.height"
+  ],
+  "seeds": [
+    11,
+    12,
+    13
+  ],
+  "notes": []
+}

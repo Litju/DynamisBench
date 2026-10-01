@@ -1,0 +1,35 @@
+{
+  "environment_id": "env.mujoco.x86-64",
+  "version": "1.0.0",
+  "label": "MuJoCo 3.3.0 on CPython 3.12",
+  "description": "Exact scientific execution environment for the MuJoCo realization.",
+  "requirements": [
+    {
+      "component": "mujoco",
+      "kind": "engine",
+      "specifier": {
+        "clauses": [
+          {
+            "comparator": "greater_than_or_equal",
+            "version": "3.3.0"
+          }
+        ]
+      },
+      "purpose": null
+    },
+    {
+      "component": "mujoco",
+      "kind": "engine",
+      "specifier": {
+        "clauses": [
+          {
+            "comparator": "greater_than_or_equal",
+            "version": "3.3.0"
+          }
+        ]
+      },
+      "purpose": null
+    }
+  ],
+  "notes": []
+}

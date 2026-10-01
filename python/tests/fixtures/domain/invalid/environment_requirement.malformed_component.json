@@ -1,0 +1,13 @@
+{
+  "component": "Python Runtime",
+  "kind": "runtime",
+  "specifier": {
+    "clauses": [
+      {
+        "comparator": "greater_than_or_equal",
+        "version": "3.12"
+      }
+    ]
+  },
+  "purpose": null
+}

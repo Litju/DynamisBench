@@ -1,0 +1,32 @@
+{
+  "scenario_id": "sc.loaded-cmj",
+  "version": "1.0.0",
+  "label": "Loaded countermovement jump",
+  "description": "Countermovement jump executed from a loaded standing posture.",
+  "duration_s": 2.0,
+  "initial_conditions": [
+    {
+      "quantity": "q.foot.vertical_force",
+      "value": 0.0,
+      "unit": {
+        "expression": "m*kg*s^-2"
+      }
+    }
+  ],
+  "events": [
+    {
+      "event_id": "takeoff",
+      "label": "Takeoff",
+      "expected_time_s": 0.3,
+      "notes": []
+    }
+  ],
+  "required_capabilities": [
+    {
+      "capability": "forward_dynamics",
+      "essential": true,
+      "rationale": "forward_dynamics is required by this definition"
+    }
+  ],
+  "notes": []
+}

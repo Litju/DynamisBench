@@ -1,0 +1,48 @@
+{
+  "quantity_id": "q.plate.vertical_force",
+  "version": "1.0.0",
+  "label": "Vertical plate resultant",
+  "description": "Vertical resultant reported by the force plate as a single channel.",
+  "dimension": {
+    "length": 1,
+    "mass": 1,
+    "time": -2,
+    "electric_current": 0,
+    "temperature": 0,
+    "amount_of_substance": 0,
+    "luminous_intensity": 0
+  },
+  "unit": {
+    "expression": "m*kg*s^-2"
+  },
+  "frame": {
+    "frame_id": "plate-line",
+    "parent": "world",
+    "axis_labels": [
+      "vertical"
+    ],
+    "handedness": null,
+    "description": "One dimensional frame along the plate's vertical axis."
+  },
+  "sign_convention": {
+    "positive_direction": "upward",
+    "notes": []
+  },
+  "time_basis": {
+    "kind": "relative_to_start",
+    "origin": null
+  },
+  "sampling": {
+    "kind": "single_sample",
+    "period_s": null,
+    "rate_hz": null,
+    "notes": []
+  },
+  "axis_convention": null,
+  "body_inclusion": null,
+  "uncertainty": {
+    "characterization": "expected to be limited by force-plate acquisition noise",
+    "notes": []
+  },
+  "notes": []
+}

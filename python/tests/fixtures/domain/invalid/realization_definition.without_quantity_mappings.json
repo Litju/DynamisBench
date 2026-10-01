@@ -1,0 +1,53 @@
+{
+  "realization_id": "rl.mujoco.loaded-cmj",
+  "version": "1.0.0",
+  "label": "MuJoCo realization of the loaded countermovement jump",
+  "description": "Executable implementation of the benchmark in MuJoCo.",
+  "benchmark": {
+    "identifier": "db.lcmj20",
+    "version": "1.0.0"
+  },
+  "engine": {
+    "engine": "mujoco",
+    "specifier": {
+      "clauses": [
+        {
+          "comparator": "exact",
+          "version": "3.3.0"
+        }
+      ]
+    },
+    "notes": null
+  },
+  "capabilities": [
+    {
+      "capability": "forward_dynamics",
+      "summary": "realization provides forward_dynamics",
+      "limitations": []
+    },
+    {
+      "capability": "state_snapshot",
+      "summary": "realization provides state_snapshot",
+      "limitations": []
+    }
+  ],
+  "quantity_mappings": [],
+  "engine_configuration": [
+    {
+      "name": "integrator",
+      "value": "implicitfast"
+    }
+  ],
+  "assets": [
+    {
+      "asset_id": "subject-model",
+      "path": "models/realization/subject.xml",
+      "description": "Segment geometry and inertia of the modelled subject.",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "known_discrepancies": [
+    "Contact stiffness is not calibrated against the reference plate."
+  ],
+  "notes": []
+}

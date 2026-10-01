@@ -1,0 +1,57 @@
+{
+  "quantity_id": "q.foot.vertical_force",
+  "version": "1.0.0",
+  "label": "Vertical ground reaction force",
+  "description": "Vertical component of the ground reaction force on the foot.",
+  "dimension": {
+    "length": 1,
+    "mass": 1,
+    "time": -2,
+    "electric_current": 0,
+    "temperature": 0,
+    "amount_of_substance": 0,
+    "luminous_intensity": 0
+  },
+  "unit": {
+    "expression": "newton"
+  },
+  "frame": {
+    "frame_id": "world",
+    "parent": "global",
+    "axis_labels": [
+      "x",
+      "y",
+      "z"
+    ],
+    "handedness": "right",
+    "description": "Right-handed world frame with the vertical along +z."
+  },
+  "sign_convention": {
+    "positive_direction": "upward, away from the supporting surface",
+    "notes": []
+  },
+  "time_basis": {
+    "kind": "relative_to_start",
+    "origin": null
+  },
+  "sampling": {
+    "kind": "uniform",
+    "period_s": null,
+    "rate_hz": 1000.0,
+    "notes": []
+  },
+  "axis_convention": null,
+  "body_inclusion": {
+    "included": [
+      "foot"
+    ],
+    "excluded": [],
+    "aggregation": "single",
+    "notes": []
+  },
+  "uncertainty": {
+    "characterization": "expected to be limited by force-plate acquisition noise",
+    "notes": []
+  },
+  "notes": []
+}

@@ -1,13 +1,16 @@
-"""ADR-001 and ADR-004 gates for the DB-1.1 bootstrap.
+"""ADR-001 and ADR-004 gates for the scientific core.
 
-Two independent guarantees are checked:
+Four independent guarantees are checked:
 
 * no simulator library is imported by importing the core package or any module
-  boundary;
-* no simulator library or control-plane service is declared as a dependency.
+  boundary, including every submodule the domain package discovers at runtime;
+* no simulator library or control-plane service is declared as a dependency;
+* no source file in the core contains a simulator import statement;
+* no boundary required by the architecture authority is missing, so the core cannot
+  silently drop a module.
 
-A third check fails if a boundary required by the architecture authority is missing,
-so the bootstrap cannot silently drop a module.
+The domain submodule set is discovered with ``pkgutil`` rather than listed, so a new
+module added in a later issue is covered by this gate without editing it.
 """
 
 from __future__ import annotations
@@ -60,10 +63,16 @@ FORBIDDEN_ROOT_MODULES = FORBIDDEN_SIMULATOR_MODULES | FORBIDDEN_SERVICE_DEPENDE
 _IMPORT_PROBE = "\n".join(
     [
         "import importlib",
+        "import pkgutil",
         "import sys",
         "import dynamisbench",
         f"for name in {BOUNDARIES!r}:",
         "    importlib.import_module(f'dynamisbench.{name}')",
+        "import dynamisbench.domain",
+        "for module in pkgutil.walk_packages(",
+        "    dynamisbench.domain.__path__, prefix='dynamisbench.domain.'",
+        "):",
+        "    importlib.import_module(module.name)",
         "print('\\n'.join(sorted(sys.modules)))",
     ]
 )
@@ -80,11 +89,45 @@ def loaded_modules_after_core_import() -> frozenset[str]:
     return frozenset(result.stdout.split())
 
 
+@functools.lru_cache(maxsize=1)
+def domain_modules() -> tuple[str, ...]:
+    """Every module the domain package owns, discovered rather than listed."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "\n".join(
+                [
+                    "import pkgutil",
+                    "import dynamisbench.domain",
+                    "names = ['dynamisbench.domain']",
+                    "names += [m.name for m in pkgutil.walk_packages(",
+                    "    dynamisbench.domain.__path__, prefix='dynamisbench.domain.'",
+                    ")]",
+                    "print('\\n'.join(sorted(names)))",
+                ]
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return tuple(result.stdout.split())
+
+
 def test_import_probe_covers_every_required_boundary() -> None:
     loaded = loaded_modules_after_core_import()
     assert "dynamisbench" in loaded
     missing = [boundary for boundary in BOUNDARIES if f"dynamisbench.{boundary}" not in loaded]
     assert not missing
+
+
+def test_import_probe_covers_every_domain_module() -> None:
+    loaded = loaded_modules_after_core_import()
+    modules = domain_modules()
+    assert len(modules) > len(BOUNDARIES)
+    missing = [module for module in modules if module not in loaded]
+    assert not missing, f"the probe did not import {missing}"
 
 
 @given(st.sampled_from(sorted(FORBIDDEN_SIMULATOR_MODULES)))

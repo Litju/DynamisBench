@@ -1,0 +1,204 @@
+{
+  "benchmark_id": "db.lcmj20",
+  "version": "1.0.0",
+  "label": "Benchmark Family 001 \u2014 loaded countermovement jump",
+  "description": "A loaded countermovement jump benchmark for human-movement models.",
+  "intended_use": "Comparative assessment of human-movement models on a jump task.",
+  "intended_non_use": "Not a clinical assessment and not a fatigue or injury model.",
+  "conceptual_model": "A planar sagittal multi-segment subject on a rigid force plate.",
+  "claim_ceiling": "Relative model comparison within the stated applicability domain.",
+  "quantities": [
+    {
+      "quantity_id": "q.foot.vertical_force",
+      "version": "1.0.0",
+      "label": "Vertical ground reaction force",
+      "description": "Vertical component of the ground reaction force on the foot.",
+      "dimension": {
+        "length": 1,
+        "mass": 1,
+        "time": -2,
+        "electric_current": 0,
+        "temperature": 0,
+        "amount_of_substance": 0,
+        "luminous_intensity": 0
+      },
+      "unit": {
+        "expression": "m*kg*s^-2"
+      },
+      "frame": {
+        "frame_id": "world",
+        "parent": "global",
+        "axis_labels": [
+          "x",
+          "y",
+          "z"
+        ],
+        "handedness": "right",
+        "description": "Right-handed world frame with the vertical along +z."
+      },
+      "sign_convention": {
+        "positive_direction": "upward, away from the supporting surface",
+        "notes": []
+      },
+      "time_basis": {
+        "kind": "relative_to_start",
+        "origin": null
+      },
+      "sampling": {
+        "kind": "uniform",
+        "period_s": null,
+        "rate_hz": 1000.0,
+        "notes": []
+      },
+      "axis_convention": null,
+      "body_inclusion": {
+        "included": [
+          "foot"
+        ],
+        "excluded": [],
+        "aggregation": "single",
+        "notes": []
+      },
+      "uncertainty": {
+        "characterization": "expected to be limited by force-plate acquisition noise",
+        "notes": []
+      },
+      "notes": []
+    },
+    {
+      "quantity_id": "q.jump.height",
+      "version": "1.0.0",
+      "label": "Jump height",
+      "description": "Apex height of the centre of mass above its standing value.",
+      "dimension": {
+        "length": 1,
+        "mass": 0,
+        "time": 0,
+        "electric_current": 0,
+        "temperature": 0,
+        "amount_of_substance": 0,
+        "luminous_intensity": 0
+      },
+      "unit": {
+        "expression": "m"
+      },
+      "frame": {
+        "frame_id": "world",
+        "parent": "global",
+        "axis_labels": [
+          "x",
+          "y",
+          "z"
+        ],
+        "handedness": "right",
+        "description": "Right-handed world frame with the vertical along +z."
+      },
+      "sign_convention": {
+        "positive_direction": "upward from the standing value",
+        "notes": []
+      },
+      "time_basis": {
+        "kind": "relative_to_start",
+        "origin": null
+      },
+      "sampling": {
+        "kind": "irregular",
+        "period_s": null,
+        "rate_hz": null,
+        "notes": []
+      },
+      "axis_convention": null,
+      "body_inclusion": {
+        "included": [
+          "com"
+        ],
+        "excluded": [],
+        "aggregation": "single",
+        "notes": []
+      },
+      "uncertainty": {
+        "characterization": "expected to be dominated by marker placement variability",
+        "notes": []
+      },
+      "notes": []
+    }
+  ],
+  "scenarios": [
+    {
+      "scenario_id": "sc.loaded-cmj",
+      "version": "1.0.0",
+      "label": "Loaded countermovement jump",
+      "description": "Countermovement jump executed from a loaded standing posture.",
+      "duration_s": 2.0,
+      "initial_conditions": [
+        {
+          "quantity": "q.foot.vertical_force",
+          "value": 0.0,
+          "unit": {
+            "expression": "m"
+          }
+        }
+      ],
+      "events": [
+        {
+          "event_id": "takeoff",
+          "label": "Takeoff",
+          "expected_time_s": 0.3,
+          "tolerance_s": 0.005,
+          "notes": []
+        }
+      ],
+      "required_capabilities": [
+        {
+          "capability": "forward_dynamics",
+          "essential": true,
+          "rationale": "forward_dynamics is required by this definition"
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "metrics": [
+    {
+      "metric_id": "m.jump_height.rmse",
+      "version": "1.0.0",
+      "label": "Jump height RMSE",
+      "description": "Root mean square error of canonical jump height.",
+      "quantity": "q.jump.height",
+      "aggregation": {
+        "method": "mean",
+        "window_start_s": 0.0,
+        "window_end_s": 1.0
+      },
+      "criterion": {
+        "operator": "less",
+        "threshold": 0.01
+      },
+      "notes": []
+    }
+  ],
+  "references": [
+    {
+      "reference_id": "r.baseline-0",
+      "version": "1.0.0",
+      "label": "Baseline 0 reference",
+      "description": "Reference trajectory for the loaded countermovement jump scenario.",
+      "scenario_id": "sc.loaded-cmj",
+      "category": "model_validation",
+      "origin": "experimental",
+      "citation": null,
+      "license": "internal research use",
+      "notes": []
+    }
+  ],
+  "credibility_hierarchy": [
+    "benchmark_reference_case",
+    "complete_system"
+  ],
+  "requirements": [],
+  "assumptions": [],
+  "applicability_domain": [],
+  "known_discrepancies": [],
+  "uncertainty_expectations": [],
+  "notes": []
+}

@@ -1,0 +1,11 @@
+{
+  "reference_id": "r.baseline-0",
+  "version": "1.0.0",
+  "label": "Baseline 0 reference",
+  "description": "Reference trajectory for the loaded countermovement jump scenario.",
+  "category": "model_validation",
+  "origin": "experimental",
+  "citation": null,
+  "license": "internal research use",
+  "notes": []
+}
