@@ -43,9 +43,11 @@ from dynamisbench.workspace.authority import (
     WorkspaceError,
     WorkspaceRootError,
 )
+from dynamisbench.workspace.paths import resolve_within, validate_logical_reference
 
 __all__ = [
     "LogicalReference",
+    "RootInput",
     "Workspace",
     "WorkspaceLocation",
     "WorkspaceReport",
@@ -53,8 +55,16 @@ __all__ = [
     "open_workspace",
 ]
 
+type RootInput = str | PathLike[str]
+"""Anything :class:`pathlib.Path` accepts as a root.
 
-def _normalise_root(path: PathLike[str], label: str) -> Path:
+A plain string is included because that is what a CLI argument, an environment variable,
+and a configuration file all supply, and because ``os.PathLike`` on its own would make
+the most natural call fail type checking while succeeding at runtime.
+"""
+
+
+def _normalise_root(path: RootInput, label: str) -> Path:
     """Make a declared root absolute and resolve it to its real target.
 
     Resolution happens once, here, for two reasons. It makes the authorised directory the
@@ -185,6 +195,24 @@ class LogicalReference:
     def is_root(self) -> bool:
         """Whether this reference names the class's own location rather than a child."""
         return not self.parts
+
+    def child(self, *segments: str) -> LogicalReference:
+        """Return a reference one level or more below this one.
+
+        The segments go through the same lexical gate as an incoming reference, so a
+        reference built by the platform is never one a request could not have been. That
+        matters because a ``LogicalReference`` may be stored in a read model and handed
+        back later as if it had arrived from outside.
+
+        :raises PathScopeError: if any segment is not a usable name.
+        """
+        return LogicalReference(
+            self.persistence_class,
+            self.parts
+            + validate_logical_reference(
+                "/".join(segments), persistence_class=self.persistence_class
+            ),
+        )
 
     def __str__(self) -> str:
         return self.text
@@ -338,6 +366,47 @@ class Workspace:
             source_category=category,
         )
 
+    def resolve(self, persistence_class: PersistenceClass, logical: str) -> Path:
+        """Resolve a reference inside a persistence class to a path safe to open.
+
+        This is the only method that hands out a path a caller will open, and the only
+        door through which a reference from outside reaches the filesystem. The result is
+        absolute, canonical, and proved to be inside the class's root — so a reference
+        may not address another class, another root, or anywhere at all outside them.
+
+        A reference that does not exist yet resolves successfully; resolution is how a
+        caller names a file it is about to create.
+
+        :raises PathScopeError: if the reference is not a well-formed relative reference
+            or resolves outside the class's root.
+        """
+        location = self.location(persistence_class)
+        return resolve_within(
+            location.path,
+            logical,
+            authorized_roots=(location.root,),
+            persistence_class=persistence_class,
+        )
+
+    def resolve_source(self, category: SourceCategory, logical: str) -> Path:
+        """Resolve a reference inside a source-authority category to a path safe to open.
+
+        The counterpart of :meth:`resolve` for version-controlled authority, and scoped
+        the same way: a reference may name something inside one category and nothing
+        else, so a benchmark specification cannot be read through the realizations
+        category or the other way round.
+
+        :raises PathScopeError: if the reference is not a well-formed relative reference
+            or resolves outside the source root.
+        """
+        location = self.source_location(category)
+        return resolve_within(
+            location.path,
+            logical,
+            authorized_roots=(self.roots.source,),
+            persistence_class=PersistenceClass.SOURCE_AUTHORITY,
+        )
+
     def inspect(self) -> WorkspaceReport:
         """Describe which declared locations exist, without changing anything.
 
@@ -368,10 +437,10 @@ class Workspace:
 
 
 def open_workspace(
-    source_root: PathLike[str],
-    evidence_root: PathLike[str],
+    source_root: RootInput,
+    evidence_root: RootInput,
     *,
-    user_state_root: PathLike[str] | None = None,
+    user_state_root: RootInput | None = None,
 ) -> Workspace:
     """Open an existing workspace without modifying anything.
 

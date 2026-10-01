@@ -18,6 +18,8 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 UNAVAILABLE = "unavailable"
 """Returned by :func:`make_directory_link` when the host permits neither mechanism."""
 
@@ -46,3 +48,16 @@ def make_directory_link(link: Path, target: Path) -> str:
 
 
 DirectoryLinkFactory = Callable[[Path, Path], str]
+
+
+def require_directory_link(mechanism: str, consequence: str) -> str:
+    """Return the mechanism used, or fail the test saying what it left unproved.
+
+    A silently skipped containment test is a qualification gap that reads as a pass, so a
+    host that cannot construct the scenario says so out loud instead.
+    """
+    if mechanism == UNAVAILABLE:
+        pytest.fail(
+            f"this host permits no directory-link mechanism, so {consequence} is unproved here"
+        )
+    return mechanism

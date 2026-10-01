@@ -51,10 +51,16 @@ from dynamisbench.workspace.authority import (
     INITIALISED_CLASSES,
     SOURCE_CATEGORY_SEGMENTS,
     ClassSemantics,
+    PathScopeError,
     PersistenceClass,
     SourceCategory,
     WorkspaceError,
     WorkspaceRootError,
+)
+from dynamisbench.workspace.paths import (
+    MAX_LOGICAL_REFERENCE_LENGTH,
+    resolve_within,
+    validate_logical_reference,
 )
 from dynamisbench.workspace.workspace import (
     LogicalReference,
@@ -69,9 +75,11 @@ __all__ = [
     "CLASS_LOCATION_SEGMENTS",
     "CLASS_SEMANTICS",
     "INITIALISED_CLASSES",
+    "MAX_LOGICAL_REFERENCE_LENGTH",
     "SOURCE_CATEGORY_SEGMENTS",
     "ClassSemantics",
     "LogicalReference",
+    "PathScopeError",
     "PersistenceClass",
     "SourceCategory",
     "Workspace",
@@ -81,4 +89,6 @@ __all__ = [
     "WorkspaceRootError",
     "WorkspaceRoots",
     "open_workspace",
+    "resolve_within",
+    "validate_logical_reference",
 ]
