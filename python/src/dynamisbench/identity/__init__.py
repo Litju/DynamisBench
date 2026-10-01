@@ -39,8 +39,16 @@ from dynamisbench.identity.digests import (
     asset_sha256_of_stream,
     semantic_sha256_of_canonical_bytes,
 )
+from dynamisbench.identity.semantic import (
+    NEGATIVE_ZERO_IS_NORMALISED,
+    SemanticValue,
+    canonical_semantic_bytes,
+    semantic_representation,
+    semantic_sha256,
+)
 
 __all__ = [
+    "NEGATIVE_ZERO_IS_NORMALISED",
     "READ_CHUNK_BYTES",
     "AssetAccessError",
     "AssetDigest",
@@ -49,9 +57,13 @@ __all__ = [
     "DigestAlgorithm",
     "JsonValue",
     "SemanticDigest",
+    "SemanticValue",
     "asset_sha256",
     "asset_sha256_of_file",
     "asset_sha256_of_stream",
     "canonical_bytes",
+    "canonical_semantic_bytes",
+    "semantic_representation",
+    "semantic_sha256",
     "semantic_sha256_of_canonical_bytes",
 ]
