@@ -6,3 +6,10 @@
 
 *.png binary
 *.ico binary
+
+# The canonical-identity golden corpus is byte-exact scientific authority compared
+# between Windows and Linux runners (ADR-024, DB-1.3). RFC 8785 escapes CR and LF, so
+# these files contain neither, and declaring them explicitly as LF text means a
+# checkout, an editor, or a future line-ending policy cannot rewrite them. A gate in
+# python/tests/identity/test_golden_corpus.py asserts the same property on the bytes.
+python/tests/fixtures/identity/canonical/*.jcs text eol=lf

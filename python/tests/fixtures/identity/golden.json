@@ -1,0 +1,145 @@
+{
+  "authority": "DB-1.3 (RES-229) canonical semantic identity, ADR-006. Committed authority: a changed digest here is a changed scientific identity, not a test artefact.",
+  "canonicalisation": "RFC 8785 (JSON Canonicalization Scheme)",
+  "digest": "sha256",
+  "inputs": "Every case is an existing DB-1.2 valid fixture under fixtures/domain/valid, referenced rather than copied, so an input and its expected digest cannot drift apart silently.",
+  "regenerate": "pytest tests/identity/test_golden_corpus.py --update-golden, then read the diff.",
+  "cases": [
+    {
+      "name": "benchmark_release.lcmj20",
+      "definition": "BenchmarkRelease",
+      "input": "domain/valid/benchmark_release.lcmj20.json",
+      "canonical": "canonical/benchmark_release.lcmj20.jcs",
+      "description": "The deepest nested definition: four keyed collections, an ordered credibility hierarchy, and free-text authority.",
+      "sha256": "1604aeccb9e9ae175c0d18a3a1d05fba63174fe65aba28f374b90c222c10a308"
+    },
+    {
+      "name": "capability_declaration.forward_dynamics",
+      "definition": "CapabilityDeclaration",
+      "input": "domain/valid/capability_declaration.forward_dynamics.json",
+      "canonical": "canonical/capability_declaration.forward_dynamics.jcs",
+      "description": "A capability an execution backend advertises.",
+      "sha256": "7521148f7dda6e5e86da6e7f1e1f299a28b01affa9a0c8a545df979d9d776c29"
+    },
+    {
+      "name": "capability_requirement.analysis",
+      "definition": "CapabilityRequirement",
+      "input": "domain/valid/capability_requirement.analysis.json",
+      "canonical": "canonical/capability_requirement.analysis.jcs",
+      "description": "A capability a definition demands, including the non-essential case.",
+      "sha256": "3448f767bb86fe93c2f91a91273b06fd1d4ac0cf60377851b0e51adb743d055d"
+    },
+    {
+      "name": "engine_binding.mujoco",
+      "definition": "EngineBinding",
+      "input": "domain/valid/engine_binding.mujoco.json",
+      "canonical": "canonical/engine_binding.mujoco.jcs",
+      "description": "An engine name plus a version specifier. The name is legitimate authority; the engine's own types are not reachable.",
+      "sha256": "a76a8ff592baa786f4535af103517286b07acc3dcf74685a80e727d8596a2afe"
+    },
+    {
+      "name": "environment_definition.mujoco",
+      "definition": "EnvironmentDefinition",
+      "input": "domain/valid/environment_definition.mujoco.json",
+      "canonical": "canonical/environment_definition.mujoco.jcs",
+      "description": "An exact execution environment: the ADR-009 provenance that makes a run reproducible.",
+      "sha256": "987f5f6824b868b2f5b0ee0cbbac18f4736719de90426338f8f55e933a5735c4"
+    },
+    {
+      "name": "environment_requirement.python_runtime",
+      "definition": "EnvironmentRequirement",
+      "input": "domain/valid/environment_requirement.python_runtime.json",
+      "canonical": "canonical/environment_requirement.python_runtime.jcs",
+      "description": "One component constraint on that environment.",
+      "sha256": "be213cf45473fc88523e38671eff4846285706a3e6d82f171b4616fa60e374f0"
+    },
+    {
+      "name": "metric_definition.rmse",
+      "definition": "MetricDefinition",
+      "input": "domain/valid/metric_definition.rmse.json",
+      "canonical": "canonical/metric_definition.rmse.jcs",
+      "description": "An assessment metric with a window and a threshold, exercising ordinary decimal number formatting.",
+      "sha256": "62643bd71163eecfcdd5fa2e26f8351397dd4a3f7e0be803421561543598a9aa"
+    },
+    {
+      "name": "quantity_definition.force_plate_line",
+      "definition": "QuantityDefinition",
+      "input": "domain/valid/quantity_definition.force_plate_line.json",
+      "canonical": "canonical/quantity_definition.force_plate_line.jcs",
+      "description": "A force quantity whose canonical unit is the expanded base-unit product m*kg*s^-2 rather than a prefixed spelling.",
+      "sha256": "737415b98d346b29b78cd259876d548da4f36cbb86acf06d417367d732eb2fce"
+    },
+    {
+      "name": "quantity_definition.knee_angle",
+      "definition": "QuantityDefinition",
+      "input": "domain/valid/quantity_definition.knee_angle.json",
+      "canonical": "canonical/quantity_definition.knee_angle.jcs",
+      "description": "The dimensionless angular quantity: unit '1', null optional fields, and a 0.001 s sample period in exponent form.",
+      "sha256": "0d3eadd9945185343241b24702d8d6793a786373fe6a8c927e6de44fe9541122"
+    },
+    {
+      "name": "quantity_definition.vertical_force",
+      "definition": "QuantityDefinition",
+      "input": "domain/valid/quantity_definition.vertical_force.json",
+      "canonical": "canonical/quantity_definition.vertical_force.jcs",
+      "description": "The canonical quantity of the interoperability boundary, with an explicit unit scale.",
+      "sha256": "bbc68d34f40c99b4c06f59ac68481103ee664c5731f31268e3cb0970667d90bb"
+    },
+    {
+      "name": "realization_definition.mujoco",
+      "definition": "RealizationDefinition",
+      "input": "domain/valid/realization_definition.mujoco.json",
+      "canonical": "canonical/realization_definition.mujoco.jcs",
+      "description": "A realization, including declared asset digests. A declared digest is part of the meaning; the asset's own raw-byte identity is computed separately.",
+      "sha256": "82efac5d82a413e6907fccb09c066f877899add1e79259e86a964a61a75ab7e9"
+    },
+    {
+      "name": "reference_definition.published",
+      "definition": "ReferenceDefinition",
+      "input": "domain/valid/reference_definition.published.json",
+      "canonical": "canonical/reference_definition.published.jcs",
+      "description": "A published reference case with a citation.",
+      "sha256": "54db69d39808a48e3fe148811ee766fae40a862810dcc343a1962f00362faab2"
+    },
+    {
+      "name": "scenario_definition.loaded_cmj",
+      "definition": "ScenarioDefinition",
+      "input": "domain/valid/scenario_definition.loaded_cmj.json",
+      "canonical": "canonical/scenario_definition.loaded_cmj.jcs",
+      "description": "A bounded scenario with initial conditions and events, including zero-valued initial conditions.",
+      "sha256": "c3557fca32fc9c120e420a062fd329e0904c58264b10973d36ed226a1945c284"
+    },
+    {
+      "name": "study_definition.sensitivity",
+      "definition": "StudyDefinition",
+      "input": "domain/valid/study_definition.sensitivity.json",
+      "canonical": "canonical/study_definition.sensitivity.jcs",
+      "description": "A study over separately versioned benchmark, realization, SUT and environment authority.",
+      "sha256": "a921a843eb983ad0c0ab55febf86c146007d8f0e30e7edb4cb899bf814610f5a"
+    },
+    {
+      "name": "sut_definition.controller",
+      "definition": "SUTDefinition",
+      "input": "domain/valid/sut_definition.controller.json",
+      "canonical": "canonical/sut_definition.controller.jcs",
+      "description": "A subprocess controller under test, with a command sequence whose order is meaning.",
+      "sha256": "25df5106a603599b7321d5c3a2e2b5206f8e35ebba1d779a0d4a8599cb53c656"
+    },
+    {
+      "name": "sut_definition.in_process_model",
+      "definition": "SUTDefinition",
+      "input": "domain/valid/sut_definition.in_process_model.json",
+      "canonical": "canonical/sut_definition.in_process_model.jcs",
+      "description": "An in-process model under test, with explicit nulls where a subprocess command would be.",
+      "sha256": "410acfd53815c885b107a67c140996d5b83dacc1aa4ea8005ff3371593b270e8"
+    },
+    {
+      "name": "uncertainty_factor_definition.controlled",
+      "definition": "UncertaintyFactorDefinition",
+      "input": "domain/valid/uncertainty_factor_definition.controlled.json",
+      "canonical": "canonical/uncertainty_factor_definition.controlled.jcs",
+      "description": "A controlled factor held at a point value, and the discriminating union branch of the factor distribution.",
+      "sha256": "8db3a8cf1eee41a42109388e6328d2ec9889c66279a7436ce8a2013ff0a7d060"
+    }
+  ]
+}

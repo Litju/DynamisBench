@@ -1,0 +1,1 @@
+{"component":"python","kind":"runtime","purpose":null,"specifier":{"clauses":[{"comparator":"greater_than_or_equal","version":"3.12"}]}}

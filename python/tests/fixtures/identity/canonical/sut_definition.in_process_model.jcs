@@ -1,0 +1,1 @@
+{"description":"The subject model under test, realised in process.","interface":{"command":null,"kind":"in_process"},"kind":"model","label":"Subject model","notes":[],"provenance":{"build_digest":null,"ref":"refs/tags/v1.2.0","repository":"org/zero-sot-sqp","resolved_commit":"1f2e3d4c5b6a"},"required_capabilities":[],"sut_id":"sut.subject-model","version":"1.0.0"}

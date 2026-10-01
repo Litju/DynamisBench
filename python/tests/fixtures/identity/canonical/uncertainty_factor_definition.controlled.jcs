@@ -1,0 +1,1 @@
+{"description":"Held at standard gravity for every run in the study.","distribution":{"kind":"point","value":9.80665},"factor_id":"f.gravity","label":"Gravitational acceleration","notes":[],"quantity":"q.jump.height","role":"controlled","target":{"identifier":"rl.mujoco.loaded-cmj","kind":"realization","parameter":"gravity"}}
