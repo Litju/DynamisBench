@@ -62,6 +62,11 @@ jobs:
       - name: CLI bootstrap
         working-directory: python
         run: uv run dbench --version
+      # Cheap and useful on untrusted input: a fork cannot silently repoint the
+      # authoritative gates at a hosted runner or drop a trust condition.
+      - name: CI authority invariants (ADR-024)
+        working-directory: python
+        run: uv run pytest tests/test_workflow_authority.py -q
       # Bootstrap-only frontend: install the locked workspace and typecheck.
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
