@@ -12,7 +12,12 @@ import pytest
 from tests.workspace.links import DirectoryLinkFactory, make_directory_link
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def link_maker() -> DirectoryLinkFactory:
-    """Create a directory link using whichever mechanism this host permits."""
+    """Create a directory link using whichever mechanism this host permits.
+
+    Module-scoped because it is a plain function over no state, and a Hypothesis property
+    that plants links would otherwise trip the function-scoped-fixture health check for no
+    reason.
+    """
     return make_directory_link
