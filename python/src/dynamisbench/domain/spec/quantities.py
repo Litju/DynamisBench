@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated, Final, Self
 
@@ -96,32 +97,86 @@ _REJECTED_SYMBOLS: Final[Mapping[str, str]] = {
     "g": "gram is a scaled unit; use the SI base unit 'kg'",
 }
 
+_SI_PREFIXES: Final[Mapping[str, int]] = {
+    "Q": 30,
+    "R": 27,
+    "Y": 24,
+    "Z": 21,
+    "E": 18,
+    "P": 15,
+    "T": 12,
+    "G": 9,
+    "M": 6,
+    "k": 3,
+    "h": 2,
+    "da": 1,
+    "d": -1,
+    "c": -2,
+    "m": -3,
+    "µ": -6,
+    "μ": -6,
+    "u": -6,
+    "n": -9,
+    "p": -12,
+    "f": -15,
+    "a": -18,
+    "z": -21,
+    "y": -24,
+    "r": -27,
+    "q": -30,
+}
+"""The SI prefixes, as exact powers of ten.
+
+Two spellings of the micro prefix are accepted because the micro sign and the Greek
+mu are distinct code points that render identically. Both resolve to the same power,
+so a prefixed unit still has exactly one canonical spelling.
+"""
+
 _UNIT_EXPRESSION: Final = re.compile(
-    r"^(?:1|[A-Za-z]+(?:\^-?\d{1,2})?(?:[*/][A-Za-z]+(?:\^-?\d{1,2})?)*)$"
+    r"(?:(?P<scale>(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?))?"
+    r"(?:\*)?"
+    r"(?:(?P<factors>[A-Za-zµμ]+(?:\^-?\d{1,2})?(?:[*/][A-Za-zµμ]+(?:\^-?\d{1,2})?)*))?"
 )
+"""The shape of an accepted unit expression: an optional decimal scale then SI factors.
+
+The scale is what carries SI prefixes. ``mm`` is ``0.001*m`` and ``kN`` is ``1000*N``;
+both are SI units, and forcing authors to base units alone would put the scale
+somewhere it does not belong, such as inside a recorded value.
+"""
+
+MAX_UNIT_EXPRESSION_LENGTH: Final = 128
 
 
-def _base_exponents(expression: str) -> dict[str, int]:
-    """Expand a unit expression into SI base-unit exponents.
+def _unit_scale_and_exponents(expression: str) -> tuple[Decimal, dict[str, int]]:
+    """Expand a unit expression into its decimal scale and SI base-unit exponents.
 
-    Derived-unit aliases are expanded, so equal units always produce equal base-unit
-    exponents. Raises ``ValueError`` for an unknown symbol, a rejected symbol, a zero
-    exponent, or any shape that is not a single unambiguous unit.
+    Derived-unit aliases are expanded, so equal units always reduce to the same
+    scale and base-unit exponents. Raises ``ValueError`` for an unknown symbol, a
+    rejected symbol, a zero exponent, or any shape that is not a single
+    unambiguous unit.
     """
-    if not _UNIT_EXPRESSION.match(expression):
+    match = _UNIT_EXPRESSION.fullmatch(expression)
+    if match is None or (match["scale"] is None and match["factors"] is None):
         raise ValueError(
-            f"unit {expression!r} is not a SI unit expression; use '1', or SI unit "
-            "symbols joined by '*' or '/' with an optional ^exponent"
+            f"unit {expression!r} is not a SI unit expression; use a decimal scale "
+            "and/or SI unit symbols joined by '*' or '/' with an optional ^exponent"
         )
+    scale = Decimal(match["scale"]) if match["scale"] is not None else Decimal(1)
+    if scale <= 0:
+        raise ValueError(f"unit {expression!r} must have a positive scale")
+    power_of_ten = 0
+
+    factors = match["factors"]
+    if factors is None:
+        return scale, {}
+
     exponents: dict[str, int] = {}
-    if expression == "1":
-        return exponents
 
     def add(symbol: str, magnitude: int) -> None:
         exponents[symbol] = exponents.get(symbol, 0) + magnitude
 
     sign = 1
-    for term in re.split(r"([*/])", expression):
+    for term in re.split(r"([*/])", factors):
         if term == "*":
             sign = 1
             continue
@@ -131,21 +186,58 @@ def _base_exponents(expression: str) -> dict[str, int]:
         symbol, separator, exponent_text = term.partition("^")
         if separator and int(exponent_text) == 0:
             raise ValueError(f"unit {expression!r} uses a zero exponent, which changes nothing")
-        if symbol in _REJECTED_SYMBOLS:
-            raise ValueError(f"unit symbol {symbol!r} is not accepted: {_REJECTED_SYMBOLS[symbol]}")
-        if symbol in _SI_DERIVED_ALIASES:
-            for base_symbol, magnitude in _SI_DERIVED_ALIASES[symbol].items():
-                add(base_symbol, sign * magnitude * (int(exponent_text) if separator else 1))
+        magnitude = sign * (int(exponent_text) if separator else 1)
+        symbol_power, symbol_expansion = _resolve_unit_symbol(symbol, expression)
+        power_of_ten += symbol_power * magnitude
+        for base_symbol, base_magnitude in symbol_expansion.items():
+            add(base_symbol, magnitude * base_magnitude)
+    if power_of_ten:
+        scale = scale.scaleb(power_of_ten)
+        if scale <= 0:
+            raise ValueError(f"unit {expression!r} must have a positive scale")
+    return scale, exponents
+
+
+def _resolve_unit_symbol(symbol: str, expression: str) -> tuple[int, Mapping[str, int]]:
+    """Resolve one unit symbol to its exact power of ten and base-unit expansion.
+
+    A whole symbol is preferred over a prefix split, so ``cd`` stays candela and is
+    never read as centi-deci. Otherwise the longest SI prefix is stripped and the
+    remainder must itself be a known, accepted symbol.
+    """
+    if symbol in _REJECTED_SYMBOLS:
+        raise ValueError(f"unit symbol {symbol!r} is not accepted: {_REJECTED_SYMBOLS[symbol]}")
+    if symbol in _SI_BASE_VECTORS:
+        return 0, {symbol: 1}
+    if symbol in _SI_DERIVED_ALIASES:
+        return 0, _SI_DERIVED_ALIASES[symbol]
+    rejected_remainder: str | None = None
+    for prefix in sorted(_SI_PREFIXES, key=len, reverse=True):
+        if not symbol.startswith(prefix):
             continue
-        if symbol not in _SI_BASE_VECTORS:
-            raise ValueError(f"unknown SI unit symbol {symbol!r} in {expression!r}")
-        add(symbol, sign * (int(exponent_text) if separator else 1))
-    return exponents
+        remainder = symbol[len(prefix) :]
+        if remainder in _REJECTED_SYMBOLS:
+            rejected_remainder = remainder
+            continue
+        if remainder in _SI_BASE_VECTORS:
+            return _SI_PREFIXES[prefix], {remainder: 1}
+        if remainder in _SI_DERIVED_ALIASES:
+            return _SI_PREFIXES[prefix], _SI_DERIVED_ALIASES[remainder]
+    if rejected_remainder is not None:
+        raise ValueError(
+            f"unit symbol {symbol!r} is not accepted: {_REJECTED_SYMBOLS[rejected_remainder]}"
+        )
+    raise ValueError(f"unknown SI unit symbol {symbol!r} in {expression!r}")
 
 
 def canonical_unit_dimension(expression: str) -> tuple[int, ...]:
-    """Return the SI base-dimension exponents of a SI unit expression."""
-    exponents = _base_exponents(expression)
+    """Return the SI base-dimension exponents of a SI unit expression.
+
+    The decimal scale does not contribute: ``mm`` and ``m`` share a dimension and
+    differ only in scale, which is part of the unit's identity rather than of its
+    dimension.
+    """
+    _, exponents = _unit_scale_and_exponents(expression)
     return tuple(
         sum(exponents.get(symbol, 0) * vector[index] for symbol, vector in _SI_BASE_VECTORS.items())
         for index in range(len(BASE_DIMENSION_NAMES))
@@ -156,33 +248,48 @@ def _canonical_unit_expression(expression: str) -> str:
     """Validate a unit expression and return its single canonical spelling.
 
     A unit is part of a quantity's scientific identity, so it must not have several
-    spellings. The expression is reduced to SI base units and re-rendered in the fixed
-    base-unit order, so ``kg*m^2/s^3`` and ``W`` produce the same stored unit.
+    spellings. The expression is reduced to a decimal scale plus SI base units and
+    re-rendered in the fixed base-unit order, so ``kg*m^2/s^3`` and ``W`` produce the
+    same stored unit and ``mm`` and ``0.001*m`` likewise.
     """
-    exponents = _base_exponents(expression)
+    scale, exponents = _unit_scale_and_exponents(expression)
     symbols = sorted(
         (symbol for symbol, exponent in exponents.items() if exponent != 0),
         key=_SI_BASE_ORDER.__getitem__,
     )
-    if not symbols:
-        return "1"
-    return "*".join(
+    rendered = "*".join(
         symbol if exponents[symbol] == 1 else f"{symbol}^{exponents[symbol]}" for symbol in symbols
     )
+    prefix = "" if scale == 1 else format(scale.normalize(), "f")
+    canonical = "*".join(part for part in (prefix, rendered) if part)
+    if not canonical:
+        canonical = "1"
+    if len(canonical) > MAX_UNIT_EXPRESSION_LENGTH:
+        raise ValueError(f"unit {expression!r} has no representation within the canonical length")
+    return canonical
 
 
 CanonicalUnitExpression = Annotated[
     str,
-    Field(min_length=1, max_length=128),
+    Field(min_length=1, max_length=MAX_UNIT_EXPRESSION_LENGTH),
     AfterValidator(_canonical_unit_expression),
 ]
 """A SI unit expression stored in its single canonical spelling."""
 
 
 class CanonicalUnit(DomainModel):
-    """The canonical SI unit of a quantity, in exactly one spelling."""
+    """The canonical SI unit of a quantity, in exactly one spelling.
+
+    The decimal scale and the SI base-unit exponents are properties of the stored
+    expression rather than separate fields, so they cannot drift apart.
+    """
 
     expression: CanonicalUnitExpression
+
+    @property
+    def scale(self) -> Decimal:
+        """The decimal scale of the unit, for example ``0.001`` for millimetres."""
+        return _unit_scale_and_exponents(self.expression)[0]
 
 
 class Handedness(StrEnum):

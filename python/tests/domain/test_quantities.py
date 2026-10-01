@@ -126,6 +126,78 @@ def test_a_unit_has_exactly_one_canonical_spelling(spelling: str, canonical: str
 
 
 @pytest.mark.parametrize(
+    ("spelling", "canonical", "scale"),
+    [
+        ("mm", "0.001*m", "0.001"),
+        ("0.001*m", "0.001*m", "0.001"),
+        ("1e-3*m", "0.001*m", "0.001"),
+        ("ms", "0.001*s", "0.001"),
+        ("kN", "1000*m*kg*s^-2", "1000"),
+        ("1000*N", "1000*m*kg*s^-2", "1000"),
+        ("cm/s", "0.01*m*s^-1", "0.01"),
+        ("1.50*kg", "1.5*kg", "1.5"),
+        ("1", "1", "1"),
+        ("2", "2", "2"),
+    ],
+)
+def test_si_prefixed_units_canonicalise_to_a_decimal_scale(
+    spelling: str, canonical: str, scale: str
+) -> None:
+    unit = CanonicalUnit(expression=spelling)
+    assert unit.expression == canonical
+    assert str(unit.scale) == scale
+
+
+def test_a_scale_does_not_change_the_physical_dimension() -> None:
+    assert canonical_unit_dimension("mm") == canonical_unit_dimension("m")
+    assert canonical_unit_dimension("kN") == canonical_unit_dimension("N")
+    assert CanonicalUnit(expression="mm").scale != CanonicalUnit(expression="m").scale
+
+
+@pytest.mark.parametrize(
+    ("spelling", "scale"),
+    [("mm", "0.001"), ("cm", "0.01"), ("um", "0.000001"), ("kN", "1000"), ("daN", "10")],
+)
+def test_prefixed_scales_are_exact_decimals_not_binary_approximations(
+    spelling: str, scale: str
+) -> None:
+    assert str(CanonicalUnit(expression=spelling).scale) == scale
+
+
+def test_a_whole_symbol_wins_over_a_prefix_split() -> None:
+    assert CanonicalUnit(expression="cd").expression == "cd"
+    assert canonical_unit_dimension("cd") == (0, 0, 0, 0, 0, 0, 1)
+    assert canonical_unit_dimension("mol") == (0, 0, 0, 0, 0, 1, 0)
+
+
+def test_micrometre_spellings_resolve_to_one_canonical_unit() -> None:
+    assert CanonicalUnit(expression="µm").expression == "0.000001*m"
+    assert CanonicalUnit(expression="μm").expression == "0.000001*m"
+    assert CanonicalUnit(expression="um").expression == "0.000001*m"
+
+
+@pytest.mark.parametrize("expression", ["min", "kW/h", "xyz", "1/mm", "um^0", "mrad"])
+def test_units_outside_the_accepted_vocabulary_fail_closed(expression: str) -> None:
+    with pytest.raises(ValidationError):
+        CanonicalUnit(expression=expression)
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ["-1*m", "0*m", "1*1", "m*0.001", "0.1*m*0.1", "1000*N*0.001*s", "m*0.5"],
+)
+def test_a_scale_must_be_a_single_positive_leading_factor(expression: str) -> None:
+    with pytest.raises(ValidationError):
+        CanonicalUnit(expression=expression)
+
+
+@pytest.mark.parametrize("expression", ["0.5", "2", "0.333", "1.5"])
+def test_a_dimensionless_quantity_may_carry_its_own_scale(expression: str) -> None:
+    unit = CanonicalUnit(expression=expression)
+    assert canonical_unit_dimension(unit.expression) == DIMENSIONLESS.as_tuple()
+
+
+@pytest.mark.parametrize(
     "expression",
     [
         "",
