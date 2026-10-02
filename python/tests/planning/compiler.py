@@ -7,6 +7,8 @@ words describing what the helpers do are written once.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from dynamisbench.domain.spec.studies import StudyDefinition
 from dynamisbench.planning import FactorCase, StudyPlan, plan_study
 from tests.planning.factor_factories import factor_case
@@ -18,7 +20,12 @@ from tests.planning.factories import (
     study,
 )
 
+PACKAGE_PARENT = Path(__file__).resolve().parents[2]
+"""The ``python`` root, so a subprocess probe can import these helpers by absolute path rather
+than by a working directory it is about to change."""
+
 __all__ = [
+    "PACKAGE_PARENT",
     "World",
     "compile_plan",
     "default_world",
