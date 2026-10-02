@@ -41,8 +41,9 @@ Modules, in the order they build on each other:
 * :mod:`dynamisbench.evidence.bundle` — the vocabulary: run id, outcome, artifact role, the
   bundle path language, the reserved seal names, the no-links rule, the bundle walk, and
   the errors. Every other module in this package takes its terms from that one.
-* :mod:`dynamisbench.evidence.staging` — the mutable staging bundle a run writes into, and
-  the deterministic inventory of the payload it holds.
+* :mod:`dynamisbench.evidence.staging` — the mutable staging bundle a run writes into, the
+  deterministic inventory of the payload it holds, and the finalization that seals it and
+  atomically promotes it into ``runs/``.
 * :mod:`dynamisbench.evidence.manifest` — the manifest, its canonical bytes, the evidence
   digest, and the checksum file.
 * :mod:`dynamisbench.evidence.sealed` — verification of a sealed bundle, and the read-only
@@ -93,8 +94,10 @@ from dynamisbench.evidence.sealed import (
 )
 from dynamisbench.evidence.staging import (
     PayloadFile,
+    SealResult,
     StagingBundle,
     create_staging_bundle,
+    finalize_bundle,
     inventory_payload,
 )
 
@@ -124,12 +127,14 @@ __all__ = [
     "PayloadFile",
     "RunId",
     "RunOutcome",
+    "SealResult",
     "SealedBundle",
     "StagingBundle",
     "VerificationResult",
     "canonical_manifest_bytes",
     "create_staging_bundle",
     "evidence_digest_of_canonical_manifest_bytes",
+    "finalize_bundle",
     "inventory_payload",
     "is_link_or_reparse_point",
     "parse_bundle_relative_path",
