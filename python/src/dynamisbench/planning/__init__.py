@@ -2,36 +2,57 @@
 
 Planning is a compiler, not a scheduler. It turns one validated
 :class:`~dynamisbench.domain.spec.studies.StudyDefinition` plus the validated definitions
-it references into an ordered, deterministic set of planned executions, each carrying one
-:class:`RunSpec` and the :class:`ExecutionFingerprint` of that spec's meaning.
+it references into a :class:`StudyPlan`: an ordered, deterministic set of
+:class:`PlannedRun` instances, each carrying one :class:`RunSpec` and the
+:class:`ExecutionFingerprint` of that spec's meaning.
 
-This gate establishes the two identity-bearing types and the factor vocabulary they are
-built from.
+Four concepts are kept distinct on purpose, because collapsing any two of them makes some
+later question unanswerable:
 
-:class:`RunSpec`
-    Only the exact authority and runtime inputs that can change one run's scientific or
-    runtime result. It is built from resolved content identities rather than from names,
-    because a name can be re-pointed at different content and a run must not discover
-    that at execution time.
+``StudyPlan``
+    The expansion of one study, identified by the study's semantic identity. It carries
+    the study's research prose as a *digest* and nowhere else.
 
-:class:`ExecutionFingerprint`
-    SHA-256 over the RFC 8785 canonical bytes of a RunSpec's meaning — a *fourth* digest
-    alongside the semantic, asset and evidence digests, answering "what was this run asked
-    to do" where the others answer "what did this mean", "what were these bytes" and "what
-    was produced".
+``PlannedRun``
+    One planned instance. Its ordinal, factor-case identity and replicate index distinguish
+    planned instances of the same execution and are never execution-defining.
 
-What the fingerprint deliberately does not contain is the point of the type: replicate
-index, plan ordinal, factor-case name, a future run id, the study's research question or
-analysis plan, timestamps, the host, the user, and the workspace path. Two replicates of
-one configuration at one seed therefore share a fingerprint, because they request the same
-execution — and later differing evidence digests under one fingerprint are exactly the
-nondeterminism evidence the architecture asks for.
+``RunSpec``
+    Only the exact authority and runtime inputs that can change a run's scientific or
+    runtime result: resolved benchmark, scenario, realization, system under test,
+    environment, active factor assignments, seed, and requested outcomes.
 
-:class:`FactorCase`
-    One explicit, exact assignment of a study's varied factors. Controlled factors resolve
-    from the study itself and may not be restated. RES-232 samples nothing, so a varied
-    factor's value must arrive in a case; future Sobol / QMC / SALib sampling produces
-    cases of exactly this shape rather than changing RunSpec semantics.
+``ExecutionFingerprint``
+    SHA-256 over the RFC 8785 canonical bytes of a RunSpec's meaning — a fourth digest
+    alongside the semantic, asset and evidence digests, answering "what was this run
+    asked to do" where the others answer "what did this mean", "what were these bytes"
+    and "what was produced".
+
+Three properties follow and are why the package is shaped this way.
+
+**Replicates share a fingerprint.** Two replicates of one configuration at one seed
+request the same execution, so they have the same fingerprint; later, differing evidence
+digests under one fingerprint are nondeterminism evidence. Both planned runs are kept.
+Nothing is deduplicated because their fingerprints match.
+
+**The expansion is the authority.** Every compatible benchmark/realization pair, times
+every scenario of that release, times every referenced system under test, times every
+referenced environment, times every factor case, times every declared seed, times every
+replicate index. The study model has no scenario subset, so a referenced benchmark
+contributes every scenario and no selector is invented.
+
+**The planner is pure.** It creates no directory, touches no ``.staging`` or ``runs/``,
+writes no evidence, reads no arbitrary file, inspects no installed package, spawns no
+process, installs no environment, samples no distribution, reads no clock, and reaches
+no network or hidden state. It is a function of its arguments, and
+``tests/planning/test_public_boundary.py`` proves the boundaries structurally rather
+than by reading the code.
+
+Continuous and discrete UQ sampling is deliberately not here. A study with varied factors
+is expanded from :class:`FactorCase` inputs the caller supplies; future Sobol / QMC /
+SALib sampling produces those same inputs rather than changing RunSpec semantics (VVUQ
+Workflow, Factors). Actually installed-runtime satisfaction and engine/toolchain preflight
+belong to execution, not here.
 """
 
 from dynamisbench.planning.authority import (
@@ -65,6 +86,14 @@ from dynamisbench.planning.errors import (
     PlanningError,
 )
 from dynamisbench.planning.factors import FactorAssignment, FactorCase, FactorValue
+from dynamisbench.planning.plan import (
+    BASELINE_CASE_ID,
+    PlannedRun,
+    QuantityCoverage,
+    RealizationBinding,
+    StudyPlan,
+    plan_study,
+)
 from dynamisbench.planning.runspec import (
     RUN_SPEC_SCHEMA_VERSION,
     ExecutionFingerprint,
@@ -75,6 +104,7 @@ from dynamisbench.planning.runspec import (
 )
 
 __all__ = [
+    "BASELINE_CASE_ID",
     "RUN_SPEC_SCHEMA_VERSION",
     "UNASSESSED_APPLICABILITY",
     "ApplicabilityAssessment",
@@ -92,8 +122,11 @@ __all__ = [
     "FactorResolutionError",
     "FactorValue",
     "IncompatibleCapabilityError",
+    "PlannedRun",
     "PlanningContext",
     "PlanningError",
+    "QuantityCoverage",
+    "RealizationBinding",
     "ResolvedAuthority",
     "ResolvedBenchmarkRef",
     "ResolvedEnvironmentRef",
@@ -104,8 +137,10 @@ __all__ = [
     "ResolvedScenarioRef",
     "ResolvedStudyRef",
     "RunSpec",
+    "StudyPlan",
     "assess_capabilities",
     "canonical_run_spec_bytes",
     "execution_fingerprint_of_canonical_bytes",
+    "plan_study",
     "run_spec_fingerprint",
 ]
