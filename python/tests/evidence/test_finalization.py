@@ -42,6 +42,7 @@ from dynamisbench.evidence.manifest import canonical_manifest_bytes, parse_check
 from dynamisbench.evidence.sealed import verify_bundle_seal
 from dynamisbench.evidence.staging import StagingBundle
 from dynamisbench.workspace import PersistenceClass, Workspace
+from tests.evidence.links import HARD_LINK, HardLinkFactory, require_file_link
 from tests.evidence.seal import SAMPLE_PAYLOAD, seal_in_place
 from tests.workspace.links import DirectoryLinkFactory, require_directory_link
 
@@ -309,6 +310,30 @@ def test_a_link_inside_the_bundle_refuses_the_seal_and_promotes_nothing(
         finalize_bundle(bundle, RunOutcome.SUCCEEDED)
     assert not runs_root(workspace).exists()
     assert bundle.path.is_dir()
+
+
+def test_a_hard_linked_payload_cannot_be_sealed_and_promotes_nothing(
+    workspace: Workspace, hard_link_maker: HardLinkFactory
+) -> None:
+    """The consequence that matters: a bundle that is not self-contained never becomes sealed.
+
+    Finalization has no hard-link check of its own — it takes the inventory through the same
+    walker — so this test proves the rule reaches the seal commit point rather than only the
+    read-only parts of the package. A bundle that cannot be sealed is left in staging and
+    diagnosable, and no ``runs/<run-id>`` is created, because a run directory is not
+    authoritative unless its bytes are provably its own.
+    """
+    bundle = staged(workspace)
+    mechanism = require_file_link(
+        hard_link_maker(bundle.path / "run-copy.json", bundle.path / "run.json"),
+        "hard-link rejection during finalization is unproved on this host",
+    )
+    assert mechanism == HARD_LINK
+    with pytest.raises(BundleIntegrityError, match="hard link"):
+        finalize_bundle(bundle, RunOutcome.SUCCEEDED)
+    assert not runs_root(workspace).exists()
+    assert bundle.path.is_dir()
+    assert not (bundle.path / MANIFEST_FILE_NAME).exists()
 
 
 def test_a_file_appearing_during_sealing_is_detected_rather_than_sealed(

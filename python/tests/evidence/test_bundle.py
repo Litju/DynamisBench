@@ -13,9 +13,12 @@ Three groups:
   traversal, no drive, and never a name the seal writes. The traversal and device-name
   halves are *not* re-tested as this package's own logic — they are the RES-230 gate being
   reused, and what matters here is that a rejection still happens through this module.
-* **Links and reparse points.** A symlink, a junction, and any other reparse point are
-  refused; a hard link deliberately is not. The junction case matters most on the primary
-  platform, because ``is_symlink()`` reports a junction as an ordinary directory.
+* **Links and reparse points.** A symlink, a junction, any other reparse point, and a
+  hard-linked file are all refused. The junction case matters most on the primary platform,
+  because ``is_symlink()`` reports a junction as an ordinary directory. The hard link is a
+  separate rule with a separate reason — it resolves nowhere, it is simply a second way in —
+  and the pair of tests at the end prove both that it is refused and that the refusal comes
+  from the shared walker rather than from the predicate.
 """
 
 from __future__ import annotations
@@ -33,13 +36,15 @@ from dynamisbench.evidence import (
     RESERVED_BUNDLE_FILE_NAMES,
     SEAL_FILE_NAMES,
     ArtifactRole,
+    BundleIntegrityError,
     BundleNamingError,
     RunOutcome,
     is_link_or_reparse_point,
     parse_bundle_relative_path,
     parse_run_id,
+    walk_bundle,
 )
-from tests.evidence.links import FileLinkFactory
+from tests.evidence.links import HARD_LINK, FileLinkFactory, HardLinkFactory, require_file_link
 from tests.workspace.links import UNAVAILABLE, DirectoryLinkFactory, require_directory_link
 
 WINDOWS_DEVICE_NAMES = ("con", "nul", "aux", "prn", "com1", "lpt1", "con.json", "nul.txt")
@@ -289,20 +294,101 @@ def test_a_directory_junction_is_detected_even_though_is_symlink_disagrees(
         )
 
 
-def test_a_hard_link_is_not_treated_as_an_escape(tmp_path: Path) -> None:
-    """A hard link is a second name for bytes already inside the bundle, not a redirect.
+def test_an_ordinary_regular_file_has_one_link_and_is_accepted(tmp_path: Path) -> None:
+    """The rule is a link count above one, so the ordinary case must be proved, not assumed.
 
-    Both names hash to the same digest, so refusing one would cost portability nothing and
-    would reject a legitimate artifact arrangement on filesystems that produce them.
+    Everything this package seals is a regular file written once, and on both authoritative
+    platforms that is exactly ``st_nlink == 1``. If the rule ever became "any file at all" or
+    "any entry at all" this is the test that stops it, and it is here rather than implied by
+    the whole suite passing because the suite writes hundreds of such files.
+    """
+    bundle_root = tmp_path / "bundle"
+    bundle_root.mkdir()
+    (bundle_root / "run.json").write_bytes(b"{}")
+    (bundle_root / "native").mkdir()
+    (bundle_root / "native" / "table.parquet").write_bytes(b"PAR1")
+
+    assert (bundle_root / "run.json").lstat().st_nlink == 1
+    entries = walk_bundle(bundle_root)
+    assert [entry.relative_path for entry in entries if not entry.is_directory] == [
+        "native/table.parquet",
+        "run.json",
+    ]
+
+
+def test_a_hard_link_is_not_a_redirection_so_the_predicate_stays_silent(
+    tmp_path: Path, hard_link_maker: HardLinkFactory
+) -> None:
+    """A hard link resolves no name anywhere, so it is not this predicate's finding.
+
+    Asserted explicitly rather than left implicit, because it is the reason the rule lives in
+    the walker instead: ``is_link_or_reparse_point`` answers *does following this name take
+    me elsewhere*, and a hard link answers no. It also cannot grow a link-count test, because
+    a POSIX directory's link count counts its subdirectories.
     """
     target = tmp_path / "run.json"
     target.write_bytes(b"{}")
     hard = tmp_path / "run-copy.json"
-    try:
-        os.link(target, hard)
-    except (OSError, NotImplementedError):
-        pytest.fail("this host does not permit hard links, so the hard-link rule is unproved")
+    mechanism = require_file_link(
+        hard_link_maker(hard, target),
+        "the hard-link rule is unproved on this host",
+    )
+    assert mechanism == HARD_LINK
     assert not is_link_or_reparse_point(hard)
+
+
+def test_the_shared_walker_refuses_a_hard_linked_file(
+    tmp_path: Path, hard_link_maker: HardLinkFactory
+) -> None:
+    """The refusal itself, at the one boundary that both sealing and verification go through.
+
+    A hard link means a second pathname for the same file record may exist outside the bundle
+    and rewrite the bytes without touching the sealed path, so the bundle cannot be proven
+    self-contained. The second name here is *inside* the bundle, which the authority rejects
+    anyway: the bundle cannot enumerate the names it does not know about.
+    """
+    bundle_root = tmp_path / "bundle"
+    bundle_root.mkdir()
+    original = bundle_root / "run.json"
+    original.write_bytes(b'{"seed":7}')
+    inside = bundle_root / "run-copy.json"
+    mechanism = require_file_link(
+        hard_link_maker(inside, original),
+        "hard-link rejection inside a bundle is unproved on this host",
+    )
+    assert mechanism == HARD_LINK
+    assert os.path.samefile(original, inside)
+
+    with pytest.raises(BundleIntegrityError, match="hard link"):
+        walk_bundle(bundle_root)
+
+
+def test_the_hard_link_diagnostic_says_why_without_naming_the_machine(
+    tmp_path: Path, hard_link_maker: HardLinkFactory
+) -> None:
+    """A bundle is copied, shared and stored; its diagnostics travel with it.
+
+    The message has to carry the reason — multiple filesystem links, therefore not provably
+    self-contained — because a reader who cannot act on the finding cannot fix it. It must
+    not carry the machine's directory layout, because that is operational state and is
+    deliberately not scientific evidence.
+    """
+    bundle_root = tmp_path / "bundle"
+    bundle_root.mkdir()
+    original = bundle_root / "run.json"
+    original.write_bytes(b"{}")
+    require_file_link(
+        hard_link_maker(bundle_root / "run-copy.json", original),
+        "the hard-link diagnostic is unproved on this host",
+    )
+
+    with pytest.raises(BundleIntegrityError) as refusal:
+        walk_bundle(bundle_root)
+    message = str(refusal.value)
+    assert "run-copy.json" in message
+    assert "2 filesystem links" in message
+    assert "self-contained" in message
+    assert str(tmp_path) not in message
 
 
 def test_a_missing_path_is_not_reported_as_a_link(tmp_path: Path) -> None:

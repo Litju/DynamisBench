@@ -95,6 +95,17 @@ and computing it as a set difference at every use site would be an easy place to
 condition — which is exactly the bug this constant exists to prevent.
 """
 
+_LINK_REFUSAL_MARKERS: Final = ("link or reparse point", "is a link", "hard link")
+"""The phrases that mark a link refusal among the walk's integrity errors.
+
+There is one place that decides what a bundle may contain, and it raises a single exception
+type for several distinct situations, so a caller told only "integrity error" would have to
+guess which. These are the phrases every link refusal names, including the hard-link rule:
+one list is what keeps the verifier's vocabulary honest as refusals are added, and a new
+refusal that is not a link simply falls through to ``BUNDLE_UNREADABLE`` rather than being
+misreported as one.
+"""
+
 
 class DefectKind(StrEnum):
     """Every way a sealed bundle can fail to be exactly what it claims to be.
@@ -109,6 +120,10 @@ class DefectKind(StrEnum):
     BUNDLE_MISSING = "bundle_missing"
     BUNDLE_UNREADABLE = "bundle_unreadable"
     LINK_IN_BUNDLE = "link_in_bundle"
+    """Some entry reaches, or can be reached through, another pathname: a symlink, a junction,
+    any other reparse point, or a hard-linked file. One kind for all of them because the
+    finding is the same — the bundle is not self-contained — and the fix is the same: replace
+    the entry with a real file of its own."""
     MANIFEST_MISSING = "manifest_missing"
     MANIFEST_INVALID = "manifest_invalid"
     MANIFEST_NOT_CANONICAL = "manifest_not_canonical"
@@ -230,10 +245,11 @@ def _defects_from_exception(error: BundleIntegrityError) -> tuple[Defect, ...]:
     The walk raises one exception type for several distinct situations, and a caller told
     only "integrity error" has to guess which. The message is inspected to recover the kind,
     which is sound because every raise site names its own situation, and it keeps the single
-    exception type that the sealing path also relies on.
+    exception type that the sealing path also relies on. The link phrases live in
+    :data:`_LINK_REFUSAL_MARKERS`, so the two files cannot drift on what counts as a link.
     """
     message = str(error)
-    if "link or reparse point" in message or "is a link" in message:
+    if any(marker in message for marker in _LINK_REFUSAL_MARKERS):
         return (Defect(DefectKind.LINK_IN_BUNDLE, message),)
     return (Defect(DefectKind.BUNDLE_UNREADABLE, message),)
 

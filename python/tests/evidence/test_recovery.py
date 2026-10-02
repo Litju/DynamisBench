@@ -41,6 +41,7 @@ from dynamisbench.evidence import (
     verify_sealed_bundle,
 )
 from dynamisbench.workspace import PersistenceClass, Workspace
+from tests.evidence.links import HARD_LINK, HardLinkFactory, require_file_link
 from tests.evidence.seal import SAMPLE_PAYLOAD, seal_in_place
 from tests.workspace.links import DirectoryLinkFactory, require_directory_link
 
@@ -297,6 +298,28 @@ def test_a_staging_directory_holding_a_link_is_reported_unrecognised(
     )
     assert mechanism
     assert discover_staging(workspace).unrecognised == (RUN,)
+
+
+def test_a_staging_directory_holding_a_hard_link_is_reported_unrecognised(
+    workspace: Workspace, hard_link_maker: HardLinkFactory
+) -> None:
+    """Discovery must survive a bundle it is no longer allowed to classify.
+
+    A hard-linked payload file makes the walk refuse the directory, and recovery treats a
+    refusal as *unrecognised* rather than letting it escape: a discovery pass is exactly when
+    a crash is least acceptable, because it is what a supervisor runs after an unclean
+    shutdown. It also deletes nothing, so the diagnosis survives the pass.
+    """
+    bundle = staged(workspace)
+    mechanism = require_file_link(
+        hard_link_maker(bundle.path / "run-copy.json", bundle.path / "run.json"),
+        "hard-link handling during discovery is unproved on this host",
+    )
+    assert mechanism == HARD_LINK
+    report = discover_staging(workspace)
+    assert report.unrecognised == (RUN,)
+    assert not report.candidates
+    assert bundle.path.is_dir()
 
 
 def test_a_run_that_was_already_promoted_is_not_a_staging_candidate(workspace: Workspace) -> None:

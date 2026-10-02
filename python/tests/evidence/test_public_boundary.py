@@ -1,6 +1,6 @@
 """Structural gates on the evidence package's boundaries.
 
-Four properties are checked here rather than trusted, because each of them would let the
+Five properties are checked here rather than trusted, because each of them would let the
 package rot in a way no functional test would notice:
 
 * **Simulator independence (ADR-001).** The evidence layer is part of the engine-independent
@@ -28,6 +28,11 @@ package rot in a way no functional test would notice:
 
 * **A closed module set.** The package is six modules and that is a reviewable fact; adding a
   seventh is a design decision rather than an accident.
+
+* **One place that decides what a bundle may contain.** Content rules have three callers —
+  the staging inventory, finalization and sealed verification — so they are single-sourced in
+  the bundle walker and the gates below fail if a second copy of one appears or if a caller
+  starts reading a bundle for itself.
 """
 
 from __future__ import annotations
@@ -299,6 +304,37 @@ def test_no_exported_type_is_re_defined_outside_the_package() -> None:
 def test_the_six_modules_are_the_whole_package() -> None:
     """Named so that adding a seventh is a reviewed change rather than a silent one."""
     assert EVIDENCE_MODULES == EXPECTED_MODULES
+
+
+def test_the_hard_link_rule_is_written_once_in_the_bundle_walker() -> None:
+    """Evidence & Provenance Model v0.3 refuses hard-linked files, in one place only.
+
+    The rule has to be single-sourced, because it has three callers — the staging payload
+    inventory, finalization, and sealed verification — and three copies of a content rule is
+    three chances for one of them to drift. If it lived anywhere but ``bundle.py`` this gate
+    fails, so the claim is structural rather than a matter of reading the code.
+    """
+    mentioning = {
+        path.name
+        for path in sorted(EVIDENCE_ROOT.glob("*.py"))
+        if "st_nlink" in path.read_text(encoding="utf-8")
+    }
+    assert mentioning == {"bundle.py"}, (
+        f"the hard-link rule must be stated only in the bundle walker, found {sorted(mentioning)}"
+    )
+
+
+def test_every_bundle_reader_goes_through_the_shared_walker() -> None:
+    """Staging and verification must not read a bundle's contents for themselves.
+
+    This is what makes the single-sourced rule above mean something: if either module walked
+    or stat'ed a bundle on its own, a content rule would still need repeating there. Both
+    name :func:`~dynamisbench.evidence.bundle.walk_bundle`, which is where every refusal about
+    what a bundle may contain lives.
+    """
+    for filename in ("sealed.py", "staging.py"):
+        source = (EVIDENCE_ROOT / filename).read_text(encoding="utf-8")
+        assert "walk_bundle" in source, f"{filename} does not obtain bundle entries from the walker"
 
 
 def test_the_package_offers_no_way_to_delete_a_bundle() -> None:

@@ -1,9 +1,9 @@
 """Shared fixtures for the evidence qualification suites.
 
 The evidence suite needs exactly two things from its host: an initialized workspace whose
-roots are temporary, and whatever directory-link mechanism this host permits. Both are
-supplied here so that no individual test decides how to obtain them, and so that a test
-which needs a link says so loudly when the host cannot create one instead of skipping.
+roots are temporary, and whichever link mechanisms this host permits. Both are supplied here
+so that no individual test decides how to obtain them, and so that a test which needs a link
+says so loudly when the host cannot create one instead of skipping.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from dynamisbench.workspace import PersistenceClass, Workspace, initialize_workspace
-from tests.evidence.links import FileLinkFactory, make_file_link
+from tests.evidence.links import FileLinkFactory, HardLinkFactory, make_file_link, make_hard_link
 from tests.workspace.links import DirectoryLinkFactory, make_directory_link
 
 
@@ -65,3 +65,9 @@ def link_maker() -> DirectoryLinkFactory:
 def file_link_maker() -> FileLinkFactory:
     """Create a *file* link using whichever mechanism this host permits."""
     return make_file_link
+
+
+@pytest.fixture(scope="module")
+def hard_link_maker() -> HardLinkFactory:
+    """Create a second directory entry for the same file record, if this host permits it."""
+    return make_hard_link

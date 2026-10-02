@@ -44,6 +44,7 @@ from dynamisbench.evidence.manifest import (
 )
 from dynamisbench.evidence.sealed import Defect, DefectKind, VerificationResult, verify_bundle_seal
 from dynamisbench.workspace import PersistenceClass, Workspace
+from tests.evidence.links import HARD_LINK, HardLinkFactory, require_file_link
 from tests.evidence.seal import SAMPLE_PAYLOAD, build_manifest, seal_in_place, write_payload
 from tests.workspace.links import DirectoryLinkFactory, require_directory_link
 
@@ -375,6 +376,30 @@ def test_a_junction_inside_a_sealed_bundle_is_reported_as_a_link(
     assert mechanism
     result = verify_sealed_bundle(workspace, RUN)
     assert kinds(result) == {DefectKind.LINK_IN_BUNDLE}
+
+
+def test_a_hard_linked_file_in_a_sealed_bundle_is_invalid(
+    workspace: Workspace, hard_link_maker: HardLinkFactory
+) -> None:
+    """A bundle that was self-contained when it was sealed can stop being so afterwards.
+
+    Adding a second directory entry for a sealed artifact's file record does not change a
+    byte inside the bundle and does not change the manifest, so every digest in it still
+    agrees. What it does is hand the same bytes a second name that the seal never declared —
+    a name that can rewrite them without going through the sealed path — which is why the
+    bundle must stop being valid on this alone. Verification reports it as a link rather
+    than raising, because a caller inspecting a bundle wants a report.
+    """
+    destination = promote(workspace)
+    mechanism = require_file_link(
+        hard_link_maker(destination / "run-copy.json", destination / "run.json"),
+        "hard-link rejection inside a sealed bundle is unproved on this host",
+    )
+    assert mechanism == HARD_LINK
+    result = verify_sealed_bundle(workspace, RUN)
+    assert kinds(result) == {DefectKind.LINK_IN_BUNDLE}
+    assert result.bundle is None
+    assert not result.is_valid
 
 
 def test_every_defect_is_reported_not_just_the_first(workspace: Workspace) -> None:

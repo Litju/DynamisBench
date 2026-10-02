@@ -49,14 +49,17 @@ error so a malformed path is a validation failure rather than an exception escap
 inside a model.
 
 **A sealed bundle contains regular files and directories, and nothing else.** Symlinks,
-junctions, and every other reparse point are refused. This is not only about escapes: a
-bundle whose bytes can be redirected elsewhere is not a self-contained portable artifact,
-so a copy of it is not necessarily the evidence that was sealed. A junction is called out
-specifically because :meth:`pathlib.Path.is_symlink` reports it as *not* a link, which
-makes a symlink-only check the standard way for a bundle to escape unnoticed on the
-authoritative platform. A **hard link is deliberately allowed**: it is a second directory
-entry for bytes already inside the bundle rather than a redirection out of it, and both
-entries hash to the same value, so it costs the seal no integrity.
+junctions, every other reparse point, and hard-linked files are all refused. This is not
+only about escapes: a bundle whose bytes can be *reached*, or changed, through any pathname
+other than the ones it declares is not a self-contained portable artifact, so a copy of it is
+not necessarily the evidence that was sealed. A junction is called out specifically because
+:meth:`pathlib.Path.is_symlink` reports it as *not* a link, which makes a symlink-only check
+the standard way for a bundle to escape unnoticed on the authoritative platform. A **hard
+link is refused for the mirror-image reason**: it redirects nothing, but it means a second
+pathname for the same file record may exist somewhere the bundle cannot enumerate, and that
+pathname can rewrite the bytes without ever touching the sealed path. An extra way *in* is
+as disqualifying as an extra way *out*, and it is refused even when both names the producer
+knows about lie inside the bundle, because the bundle cannot prove there is no third one.
 
 The errors here are the vocabulary's, and each one is a decision a caller might make
 differently: a *naming* failure is a caller mistake, a *conflict* means a location is
@@ -167,9 +170,9 @@ class BundleConflictError(EvidenceError):
 class BundleIntegrityError(EvidenceError):
     """Bundle content cannot be sealed, or does not verify as claimed.
 
-    Content-level only: a link, a non-regular file, a missing or extra artifact, a
-    modified payload, a manifest that will not validate, a checksum file that will not
-    parse. The sealing path raises this; the verification path reports the same
+    Content-level only: a link, a hard-linked file, a non-regular file, a missing or extra
+    artifact, a modified payload, a manifest that will not validate, a checksum file that
+    will not parse. The sealing path raises this; the verification path reports the same
     information as a defect so a caller inspecting a bundle gets a report rather than an
     exception.
     """
@@ -376,9 +379,18 @@ def is_link_or_reparse_point(path: Path) -> bool:
       indirections that are neither a symlink nor a junction yet still resolve elsewhere.
       It does not exist on POSIX, where it is therefore simply absent.
 
-    A hard link is deliberately **not** reported. It is a second directory entry for bytes
-    that are already inside the bundle rather than a redirection out of it, so both entries
-    hash identically and the seal loses nothing by allowing it.
+    A hard link is deliberately **not** reported here, and that is worth stating precisely
+    because the authority refuses it one level up. A hard link resolves no name anywhere: both
+    names are the same bytes in the same place, so this predicate's question — *does following
+    this name take me somewhere else?* — answers no. It cannot grow an ``st_nlink`` test even
+    so, because on POSIX a directory's link count is the number of its own subdirectories, so
+    that test would report every non-leaf directory in a bundle as a link.
+
+    The hard link is refused instead by :func:`walk_bundle`, which asks the other half of the
+    question — *can these bytes be reached through a pathname this bundle does not know about?*
+    — and refuses the file because it cannot be proven self-contained, not because it resolves
+    elsewhere. Keeping the two rules apart is what lets the predicate stay total and
+    directory-safe while the walker remains the one place a bundle's content is judged.
 
     A path that does not exist is not a link. The predicate is total so that a caller
     asking "is this an ordinary file?" before deciding what to do about a missing entry
@@ -429,10 +441,23 @@ def walk_bundle(root: Path) -> tuple[BundleEntry, ...]:
     class by :meth:`Workspace.resolve`, and what is added here is the bundle-content rule
     the workspace layer has no opinion about.
 
-    Four things are refused, and each is refused rather than skipped:
+    Five things are refused, and each is refused rather than skipped:
 
     * **A link of any kind** — a symlink, a junction, or any other reparse point. Reported
       at the entry that carries it, so the diagnostic names the artifact.
+    * **A hard-linked file** — a regular file whose ``st_nlink`` is greater than one. This is
+      a distinct reason rather than a weaker form of the first one, because the threat runs
+      the other way: a hard link does not send the bundle's reads somewhere else, it means a
+      second pathname for the same file record may exist outside the bundle, and that pathname
+      can rewrite the bytes without going through the sealed path and without ever appearing
+      in the manifest. Verification would catch that afterwards; what the seal claims is that
+      the bundle is self-contained, and a second way in to the bytes is exactly the fact it
+      cannot prove away. Both names lying inside the bundle does not help, because the bundle
+      cannot enumerate the names it does not know. A *directory* is never judged this way —
+      on POSIX its link count counts subdirectories — so the rule reads ``st_nlink`` on
+      regular files only, and the reserved seal files are judged like any other payload
+      because a hard-linked ``manifest.json`` is no more self-contained than a hard-linked
+      table. The diagnostic names the entry and its link count, and never an absolute path.
     * **Anything that is neither a regular file nor a directory** — a socket, a FIFO, a
       device, a block special file. None of those is portable evidence and none can be
       hashed into a manifest.
@@ -490,6 +515,14 @@ def _walk_bundle(root: Path, directory: Path) -> Iterator[BundleEntry]:
             yield BundleEntry(relative_path, child, is_directory=True)
             yield from _walk_bundle(root, child)
         elif stat.S_ISREG(info.st_mode):
+            if info.st_nlink > 1:
+                raise BundleIntegrityError(
+                    f"the bundle entry {relative_path!r} is a hard link with "
+                    f"{info.st_nlink} filesystem links, so another pathname for the same file "
+                    "record may exist outside this bundle and could rewrite these bytes without "
+                    "ever touching the sealed path; the bundle therefore cannot be proven "
+                    "self-contained"
+                )
             if relative_path not in RESERVED_BUNDLE_FILE_NAMES:
                 try:
                     parse_bundle_relative_path(relative_path)

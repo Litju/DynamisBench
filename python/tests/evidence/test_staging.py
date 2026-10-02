@@ -13,8 +13,8 @@ happening, and the ones that stop being true the moment this package gets them w
   a writer holding a stale reference cannot add a file to a bundle whose inventory has
   already been taken.
 * **The inventory is deterministic and complete.** Same files in, same snapshot out,
-  whatever order they were written in; the reserved seal names are not payload; a link, an
-  irregular file, or an unnameable file makes the bundle unsealable.
+  whatever order they were written in; the reserved seal names are not payload; a link, a
+  hard-linked file, an irregular file, or an unnameable file makes the bundle unsealable.
 * **Nothing is ever deleted.** There is no method to remove a staging bundle, which is what
   keeps "the run was interrupted" and "the application tidied up" from being the same event.
 """
@@ -35,6 +35,7 @@ from dynamisbench.evidence import (
 )
 from dynamisbench.evidence.staging import StagingBundle, inventory_payload
 from dynamisbench.workspace import PersistenceClass, Workspace
+from tests.evidence.links import HARD_LINK, HardLinkFactory, require_file_link
 from tests.workspace.links import DirectoryLinkFactory, require_directory_link
 
 
@@ -215,6 +216,28 @@ def test_a_junction_inside_a_bundle_makes_it_unsealable(
     )
     assert mechanism
     with pytest.raises(BundleIntegrityError, match="link or reparse point"):
+        bundle.payload_inventory()
+
+
+def test_a_hard_linked_payload_file_makes_a_bundle_unsealable(
+    workspace: Workspace, hard_link_maker: HardLinkFactory
+) -> None:
+    """The other way out of a bundle: not a redirect, but a second way *in*.
+
+    The inventory is where a run's payload is declared, so a file whose bytes are also
+    reachable under a pathname the bundle never enumerated cannot be declared honestly — the
+    manifest would describe content whose sealing guarantees the bundle cannot make. Refused
+    through the shared walker, so the same rule reaches finalization and verification without
+    either of them repeating the check.
+    """
+    bundle = make_bundle(workspace)
+    bundle.write_payload("run.json", b'{"seed":7}')
+    mechanism = require_file_link(
+        hard_link_maker(bundle.path / "run-copy.json", bundle.path / "run.json"),
+        "hard-link rejection inside a staging bundle is unproved on this host",
+    )
+    assert mechanism == HARD_LINK
+    with pytest.raises(BundleIntegrityError, match="hard link"):
         bundle.payload_inventory()
 
 
