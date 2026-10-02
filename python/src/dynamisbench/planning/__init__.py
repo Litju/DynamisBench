@@ -46,6 +46,18 @@ from dynamisbench.planning.authority import (
     ResolvedStudyRef,
     ResolvedSUTRef,
 )
+from dynamisbench.planning.compatibility import (
+    UNASSESSED_APPLICABILITY,
+    ApplicabilityAssessment,
+    ApplicabilityDeclaration,
+    ApplicabilityState,
+    CapabilityCompatibility,
+    CapabilityDemand,
+    CapabilityProvision,
+    CapabilityRequirementSource,
+    EffectiveCapabilityRequirement,
+    assess_capabilities,
+)
 from dynamisbench.planning.errors import (
     AuthorityResolutionError,
     FactorResolutionError,
@@ -64,7 +76,16 @@ from dynamisbench.planning.runspec import (
 
 __all__ = [
     "RUN_SPEC_SCHEMA_VERSION",
+    "UNASSESSED_APPLICABILITY",
+    "ApplicabilityAssessment",
+    "ApplicabilityDeclaration",
+    "ApplicabilityState",
     "AuthorityResolutionError",
+    "CapabilityCompatibility",
+    "CapabilityDemand",
+    "CapabilityProvision",
+    "CapabilityRequirementSource",
+    "EffectiveCapabilityRequirement",
     "ExecutionFingerprint",
     "FactorAssignment",
     "FactorCase",
@@ -83,6 +104,7 @@ __all__ = [
     "ResolvedScenarioRef",
     "ResolvedStudyRef",
     "RunSpec",
+    "assess_capabilities",
     "canonical_run_spec_bytes",
     "execution_fingerprint_of_canonical_bytes",
     "run_spec_fingerprint",
