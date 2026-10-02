@@ -43,6 +43,8 @@ Modules, in the order they build on each other:
   the errors. Every other module in this package takes its terms from that one.
 * :mod:`dynamisbench.evidence.staging` — the mutable staging bundle a run writes into, and
   the deterministic inventory of the payload it holds.
+* :mod:`dynamisbench.evidence.manifest` — the manifest, its canonical bytes, the evidence
+  digest, and the checksum file.
 """
 
 from dynamisbench.evidence.bundle import (
@@ -67,6 +69,19 @@ from dynamisbench.evidence.bundle import (
     parse_run_id,
     walk_bundle,
 )
+from dynamisbench.evidence.manifest import (
+    CHECKSUM_SEPARATOR,
+    MANIFEST_SCHEMA_VERSION,
+    ChecksumEntry,
+    EvidenceDigest,
+    Manifest,
+    ManifestEntry,
+    canonical_manifest_bytes,
+    evidence_digest_of_canonical_manifest_bytes,
+    parse_checksums,
+    parse_manifest,
+    render_checksums,
+)
 from dynamisbench.evidence.staging import (
     PayloadFile,
     StagingBundle,
@@ -77,7 +92,9 @@ from dynamisbench.evidence.staging import (
 __all__ = [
     "CHECKSUMS_FILE_NAME",
     "CHECKSUMS_TEMP_FILE_NAME",
+    "CHECKSUM_SEPARATOR",
     "MANIFEST_FILE_NAME",
+    "MANIFEST_SCHEMA_VERSION",
     "MANIFEST_TEMP_FILE_NAME",
     "RESERVED_BUNDLE_FILE_NAMES",
     "SEAL_FILE_NAMES",
@@ -88,15 +105,24 @@ __all__ = [
     "BundleNamingError",
     "BundleOperationError",
     "BundleRelativePath",
+    "ChecksumEntry",
+    "EvidenceDigest",
     "EvidenceError",
+    "Manifest",
+    "ManifestEntry",
     "PayloadFile",
     "RunId",
     "RunOutcome",
     "StagingBundle",
+    "canonical_manifest_bytes",
     "create_staging_bundle",
+    "evidence_digest_of_canonical_manifest_bytes",
     "inventory_payload",
     "is_link_or_reparse_point",
     "parse_bundle_relative_path",
+    "parse_checksums",
+    "parse_manifest",
     "parse_run_id",
+    "render_checksums",
     "walk_bundle",
 ]
