@@ -70,7 +70,10 @@ the second generic resolver this package must not grow.
 
 from __future__ import annotations
 
+import os
 import stat
+from collections.abc import Iterator
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Final
@@ -91,6 +94,7 @@ __all__ = [
     "SEAL_FILE_NAMES",
     "ArtifactRole",
     "BundleConflictError",
+    "BundleEntry",
     "BundleIntegrityError",
     "BundleNamingError",
     "BundleOperationError",
@@ -101,6 +105,7 @@ __all__ = [
     "is_link_or_reparse_point",
     "parse_bundle_relative_path",
     "parse_run_id",
+    "walk_bundle",
 ]
 
 MANIFEST_FILE_NAME: Final = "manifest.json"
@@ -387,3 +392,115 @@ def is_link_or_reparse_point(path: Path) -> bool:
     except OSError:
         return False
     return bool(attributes & _REPARSE_POINT_ATTRIBUTE)
+
+
+@dataclass(frozen=True, slots=True)
+class BundleEntry:
+    """One entry found beneath a bundle root, by the walk that refuses indirections.
+
+    ``relative_path`` is the portable ``/``-separated name the entry would carry in a
+    manifest. It is a plain ``str`` and not a :data:`BundleRelativePath` because a
+    *directory* has no manifest path — only files are payload — so the naming language is
+    applied by the caller that knows which kind of entry it is looking at.
+    """
+
+    relative_path: str
+    path: Path
+    is_directory: bool
+
+
+def _stat_or_refuse(path: Path, relative_path: str) -> os.stat_result:
+    try:
+        return path.lstat()
+    except OSError as error:
+        raise BundleIntegrityError(
+            f"the bundle entry {relative_path!r} could not be read: {error}"
+        ) from error
+
+
+def walk_bundle(root: Path) -> tuple[BundleEntry, ...]:
+    """Enumerate everything beneath ``root``, refusing anything that is not a real file or
+    directory.
+
+    This is the one place in the package that looks inside a bundle, and both the sealing
+    path and the verification path go through it, so a link or an irregular file cannot be
+    treated differently depending on which one is asking. It is deliberately *not* a
+    second copy of the workspace resolver: ``root`` has already been proved inside its
+    class by :meth:`Workspace.resolve`, and what is added here is the bundle-content rule
+    the workspace layer has no opinion about.
+
+    Four things are refused, and each is refused rather than skipped:
+
+    * **A link of any kind** — a symlink, a junction, or any other reparse point. Reported
+      at the entry that carries it, so the diagnostic names the artifact.
+    * **Anything that is neither a regular file nor a directory** — a socket, a FIFO, a
+      device, a block special file. None of those is portable evidence and none can be
+      hashed into a manifest.
+    * **A name outside the bundle path language.** A file that cannot be expressed as a
+      manifest path cannot be declared, so a bundle holding one has no manifest. The
+      refusal is a :class:`BundleIntegrityError` with the naming failure chained, because
+      from the seal's point of view the content is what is unusable, not the caller's
+      string. The reserved seal names are exempt: they are files a bundle legitimately
+      contains, and whether one of them is expected here or is debris from a failed attempt
+      is a question for the caller reading the walk, not for the walk itself.
+    * **A reserved seal name used as a directory.** ``manifest.json`` and
+      ``checksums.sha256`` are files the seal writes; a *directory* of that name would make
+      the atomic rename onto it impossible and is therefore a bundle that cannot be sealed.
+
+    Directories are returned as entries but are not payload. An empty directory carries no
+    scientific meaning, and the authority is explicit that directories need no digest
+    entries — so one is carried through promotion rather than being removed or declared.
+
+    The result is ordered by name within each directory, so two enumerations of the same
+    bundle agree, but the *payload* order that reaches the manifest is fixed separately by
+    sorting on the relative path itself, so nothing downstream depends on this walk.
+    """
+    if not root.is_dir():
+        raise BundleIntegrityError(f"the bundle root is not a directory: {root}")
+    if is_link_or_reparse_point(root):
+        raise BundleIntegrityError(
+            f"the bundle root is a link rather than a real directory, so its contents are "
+            f"not self-contained: {root}"
+        )
+    return tuple(_walk_bundle(root, root))
+
+
+def _walk_bundle(root: Path, directory: Path) -> Iterator[BundleEntry]:
+    try:
+        children = sorted(directory.iterdir(), key=lambda child: child.name)
+    except OSError as error:
+        raise BundleIntegrityError(
+            f"the bundle directory {directory.relative_to(root).as_posix()!r} could not "
+            f"be listed: {error}"
+        ) from error
+    for child in children:
+        relative_path = child.relative_to(root).as_posix()
+        if is_link_or_reparse_point(child):
+            raise BundleIntegrityError(
+                f"the bundle entry {relative_path!r} is a link or reparse point, and a "
+                "sealed bundle must contain regular files and directories only"
+            )
+        info = _stat_or_refuse(child, relative_path)
+        if stat.S_ISDIR(info.st_mode):
+            if relative_path in RESERVED_BUNDLE_FILE_NAMES:
+                raise BundleIntegrityError(
+                    f"the bundle entry {relative_path!r} is a directory, but that name is "
+                    "written by the seal as a file"
+                )
+            yield BundleEntry(relative_path, child, is_directory=True)
+            yield from _walk_bundle(root, child)
+        elif stat.S_ISREG(info.st_mode):
+            if relative_path not in RESERVED_BUNDLE_FILE_NAMES:
+                try:
+                    parse_bundle_relative_path(relative_path)
+                except BundleNamingError as error:
+                    raise BundleIntegrityError(
+                        f"the bundle entry {relative_path!r} cannot be named in a manifest, "
+                        f"so this bundle cannot be sealed: {error}"
+                    ) from error
+            yield BundleEntry(relative_path, child, is_directory=False)
+        else:
+            raise BundleIntegrityError(
+                f"the bundle entry {relative_path!r} is neither a regular file nor a "
+                "directory, so it is not portable evidence"
+            )

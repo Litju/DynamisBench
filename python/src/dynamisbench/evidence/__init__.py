@@ -39,8 +39,10 @@ The seal, and the reason it is shaped this way:
 Modules, in the order they build on each other:
 
 * :mod:`dynamisbench.evidence.bundle` — the vocabulary: run id, outcome, artifact role, the
-  bundle path language, the reserved seal names, the no-links rule, and the errors. Every
-  other module in this package takes its terms from that one.
+  bundle path language, the reserved seal names, the no-links rule, the bundle walk, and
+  the errors. Every other module in this package takes its terms from that one.
+* :mod:`dynamisbench.evidence.staging` — the mutable staging bundle a run writes into, and
+  the deterministic inventory of the payload it holds.
 """
 
 from dynamisbench.evidence.bundle import (
@@ -52,6 +54,7 @@ from dynamisbench.evidence.bundle import (
     SEAL_FILE_NAMES,
     ArtifactRole,
     BundleConflictError,
+    BundleEntry,
     BundleIntegrityError,
     BundleNamingError,
     BundleOperationError,
@@ -62,6 +65,13 @@ from dynamisbench.evidence.bundle import (
     is_link_or_reparse_point,
     parse_bundle_relative_path,
     parse_run_id,
+    walk_bundle,
+)
+from dynamisbench.evidence.staging import (
+    PayloadFile,
+    StagingBundle,
+    create_staging_bundle,
+    inventory_payload,
 )
 
 __all__ = [
@@ -73,14 +83,20 @@ __all__ = [
     "SEAL_FILE_NAMES",
     "ArtifactRole",
     "BundleConflictError",
+    "BundleEntry",
     "BundleIntegrityError",
     "BundleNamingError",
     "BundleOperationError",
     "BundleRelativePath",
     "EvidenceError",
+    "PayloadFile",
     "RunId",
     "RunOutcome",
+    "StagingBundle",
+    "create_staging_bundle",
+    "inventory_payload",
     "is_link_or_reparse_point",
     "parse_bundle_relative_path",
     "parse_run_id",
+    "walk_bundle",
 ]
