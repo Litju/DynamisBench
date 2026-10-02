@@ -48,6 +48,8 @@ Modules, in the order they build on each other:
   digest, and the checksum file.
 * :mod:`dynamisbench.evidence.sealed` — verification of a sealed bundle, and the read-only
   description a valid verification returns.
+* :mod:`dynamisbench.evidence.recovery` — deterministic discovery and classification of the
+  staging directories an interrupted run left behind. Reports; never deletes.
 """
 
 from dynamisbench.evidence.bundle import (
@@ -84,6 +86,12 @@ from dynamisbench.evidence.manifest import (
     parse_checksums,
     parse_manifest,
     render_checksums,
+)
+from dynamisbench.evidence.recovery import (
+    StagingCandidate,
+    StagingReport,
+    StagingState,
+    discover_staging,
 )
 from dynamisbench.evidence.sealed import (
     Defect,
@@ -130,9 +138,13 @@ __all__ = [
     "SealResult",
     "SealedBundle",
     "StagingBundle",
+    "StagingCandidate",
+    "StagingReport",
+    "StagingState",
     "VerificationResult",
     "canonical_manifest_bytes",
     "create_staging_bundle",
+    "discover_staging",
     "evidence_digest_of_canonical_manifest_bytes",
     "finalize_bundle",
     "inventory_payload",
