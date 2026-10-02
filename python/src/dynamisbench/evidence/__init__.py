@@ -45,6 +45,8 @@ Modules, in the order they build on each other:
   the deterministic inventory of the payload it holds.
 * :mod:`dynamisbench.evidence.manifest` — the manifest, its canonical bytes, the evidence
   digest, and the checksum file.
+* :mod:`dynamisbench.evidence.sealed` — verification of a sealed bundle, and the read-only
+  description a valid verification returns.
 """
 
 from dynamisbench.evidence.bundle import (
@@ -82,6 +84,13 @@ from dynamisbench.evidence.manifest import (
     parse_manifest,
     render_checksums,
 )
+from dynamisbench.evidence.sealed import (
+    Defect,
+    DefectKind,
+    SealedBundle,
+    VerificationResult,
+    verify_sealed_bundle,
+)
 from dynamisbench.evidence.staging import (
     PayloadFile,
     StagingBundle,
@@ -106,6 +115,8 @@ __all__ = [
     "BundleOperationError",
     "BundleRelativePath",
     "ChecksumEntry",
+    "Defect",
+    "DefectKind",
     "EvidenceDigest",
     "EvidenceError",
     "Manifest",
@@ -113,7 +124,9 @@ __all__ = [
     "PayloadFile",
     "RunId",
     "RunOutcome",
+    "SealedBundle",
     "StagingBundle",
+    "VerificationResult",
     "canonical_manifest_bytes",
     "create_staging_bundle",
     "evidence_digest_of_canonical_manifest_bytes",
@@ -124,5 +137,6 @@ __all__ = [
     "parse_manifest",
     "parse_run_id",
     "render_checksums",
+    "verify_sealed_bundle",
     "walk_bundle",
 ]
