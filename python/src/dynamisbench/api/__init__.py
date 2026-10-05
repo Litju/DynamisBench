@@ -5,5 +5,29 @@ It is an application boundary, not scientific authority (ADR-016), it never beco
 scientific API for the desktop IPC channel (ADR-015), and it never executes simulations
 itself (ADR-017).
 
-FastAPI and Uvicorn arrive with the issue that implements this boundary; DB-1.1
-provides the package only."""
+Importing this package starts nothing. It defines a versioned namespace and a factory
+that builds an ASGI application; the desktop session, not the library, decides whether
+and where to serve it (RES-375).
+"""
+
+from __future__ import annotations
+
+from dynamisbench.api.app import create_app
+from dynamisbench.api.routing import (
+    API_V1_PREFIX,
+    API_VERSION,
+    APPLICATION_NAME,
+    read_health,
+    read_info,
+    v1_router,
+)
+
+__all__ = [
+    "API_VERSION",
+    "API_V1_PREFIX",
+    "APPLICATION_NAME",
+    "create_app",
+    "read_health",
+    "read_info",
+    "v1_router",
+]
