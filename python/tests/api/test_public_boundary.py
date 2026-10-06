@@ -12,8 +12,8 @@ on a measured import, where an indirect call cannot hide.
 What is checked:
 
 * **A closed module set, in two groups.** Five boundary modules, reachable from
-  ``import dynamisbench.api``, and the session modules DB-2.2 adds, reachable only by importing
-  them directly. An extra one is a reviewed change rather than a silent one.
+  ``import dynamisbench.api``, and the two session modules DB-2.2 adds, reachable only by
+  importing them directly. An eighth is a reviewed change rather than a silent one.
 * **No simulator, in transit or in source.** The repository-wide isolation gate already
   walks every file; this one names the package, so a regression says which boundary broke.
 * **No dependency on any scientific layer.** ``api`` may import the package root and its
@@ -22,12 +22,14 @@ What is checked:
   a fresh import as well as on the source, because a transitive arrival would make the API
   process depend on a layer it is supposed to describe. This is the gate that makes
   "FastAPI is not authority" structural rather than aspirational.
-* **A closed direct third-party surface.** ``fastapi``, ``pydantic`` and ``starlette``.
-  FastAPI's and Pydantic's own closures are absent on purpose: they are their dependencies,
-  pinned by them, and a gate that listed them could be satisfied by adding one directly.
-* **Nothing from the future stack, early.** The import must not pull in uvicorn, DuckDB or
-  any numerical package. Uvicorn is a declared runtime dependency and is still forbidden here,
-  which is what keeps "importing this package starts no server" true by construction.
+* **A closed direct third-party surface.** ``fastapi``, ``pydantic`` and ``starlette``
+  everywhere, and ``uvicorn`` in ``server.py`` alone. FastAPI's and Pydantic's own closures are
+  absent on purpose: they are their dependencies, pinned by them, and a gate that listed them
+  could be satisfied by adding one directly.
+* **Nothing from the future stack, early.** The import must not pull in DuckDB or any numerical
+  package, and must not pull in Uvicorn - even though the sidecar module exists beside it and
+  ``uvicorn`` is a declared runtime dependency. That is what keeps "importing this package
+  starts no server" true by construction rather than by convention.
 * **A public surface with no authority vocabulary and no control plane.** No exported name
   may mention a benchmark, workspace, evidence, seal, plan, run, execution, worker, queue,
   session or credential — the shapes an API would acquire as soon as it started owning the
@@ -70,12 +72,16 @@ Everything here is reachable by importing ``dynamisbench.api``, so everything he
 as small and as inert as it was.
 """
 
-SESSION_MODULES = ("session.py",)
-"""The session's own policy, added by DB-2.2 and reachable only by importing it directly.
+SESSION_MODULES = (
+    "server.py",
+    "session.py",
+)
+"""The session's own composition, added by DB-2.2 and reachable only by importing it directly.
 
-Deliberately kept out of ``__all__``, so no advertised name of this package mentions a session
-or a credential. The process that will serve it is a separate module that only an import can
-reach, which is what keeps ``import dynamisbench.api`` loading no server.
+Two modules, deliberately split. One validates and enforces the session's credential and origin
+policy and imports no web server; one binds the socket and runs the server and imports Uvicorn.
+That split is the whole reason ``import dynamisbench.api`` still loads no server, and it is why
+neither is in ``__all__``: no advertised name of this package mentions a session or a credential.
 """
 
 EXPECTED_MODULES = BOUNDARY_MODULES + SESSION_MODULES
@@ -115,6 +121,15 @@ and silently leave every 404 and 405 on Starlette's default body.
 Nothing else from either closure is permitted directly. FastAPI's and Pydantic's own
 dependencies are absent on purpose: they are pinned by their packages, and a gate that
 listed them could be satisfied by adding one directly.
+"""
+
+SESSION_EXTERNAL_SURFACE = ALLOWED_EXTERNAL_SURFACE | {"uvicorn"}
+"""``uvicorn`` is permitted in exactly one module, and that is the reason for the split.
+
+The application boundary must load no server when it is imported - that is what keeps "importing
+this package starts nothing" true by construction. The sidecar must import Uvicorn to run one.
+Keeping the two apart, and stating the wider surface only for the server, means a module that
+reaches for Uvicorn to answer a request still fails here.
 """
 
 FIRST_PARTY = frozenset({"dynamisbench"})
@@ -213,10 +228,33 @@ def test_no_api_module_depends_on_a_scientific_layer(filename: str) -> None:
     assert offending == [], f"{filename} imports {offending}"
 
 
-@pytest.mark.parametrize("filename", EXPECTED_MODULES)
-def test_the_api_package_has_a_closed_external_surface(filename: str) -> None:
+@pytest.mark.parametrize(
+    ("filename", "allowed"),
+    [
+        *((filename, ALLOWED_EXTERNAL_SURFACE) for filename in BOUNDARY_MODULES),
+        ("session.py", ALLOWED_EXTERNAL_SURFACE),
+        ("server.py", SESSION_EXTERNAL_SURFACE),
+    ],
+)
+def test_the_api_package_has_a_closed_external_surface(
+    filename: str, allowed: frozenset[str]
+) -> None:
     external = _imported_roots(API_ROOT / filename) - FIRST_PARTY - sys.stdlib_module_names
-    assert not external - ALLOWED_EXTERNAL_SURFACE, f"{filename} imports {sorted(external)}"
+    assert not external - allowed, f"{filename} imports {sorted(external)}"
+
+
+def test_only_the_server_module_may_import_a_web_server() -> None:
+    """Stated on its own because it is the split that matters, not the table above.
+
+    A module that reached for Uvicorn to answer a request would still satisfy a per-module
+    table that gave it the wider surface, so the property is pinned directly: exactly one module
+    in this package reaches a web server.
+    """
+    reaching = [
+        filename for filename in API_MODULES if _imported_roots(API_ROOT / filename) & {"uvicorn"}
+    ]
+
+    assert reaching == ["server.py"]
 
 
 def test_importing_the_api_package_loads_no_simulator_library() -> None:
