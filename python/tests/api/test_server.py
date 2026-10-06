@@ -19,11 +19,17 @@ What is covered:
   log, no WebSocket protocol, and a logging configuration in which nothing — including the
   access logger Uvicorn binds to stdout by default — can reach the protocol channel.
 * **Readiness means listening, and happens once.** Emitted after Uvicorn's own startup
-  returned, once, as a line that parses as protocol v1. A refused ASGI startup emits none.
+  returned and Uvicorn reports itself started, once, as a line that parses as protocol v1. A
+  refused ASGI startup emits none.
+* **Failures are classified by startup state, not by exception type.** A failure injected at
+  the listener before ``started`` is a startup failure with no line; the same three exception
+  types injected after readiness is an unexpected failure with one line already out. Nothing
+  waits for a TCP condition to fail on its own.
 * **Shutdown is clean and observable.** Asked to stop, the server stops accepting connections,
   closes the socket, runs the ASGI shutdown and returns zero.
 * **Outcomes are explicit.** Zero for a clean stop, and a distinct non-zero code for a bad
-  configuration and for a failure to start.
+  configuration and for a failure to start — and a runtime failure after readiness is the
+  fourth, not the third.
 """
 
 from __future__ import annotations
@@ -455,6 +461,132 @@ def test_a_refused_application_startup_emits_no_readiness() -> None:
     assert exit_code is Exit.STARTUP_FAILED
     assert output == "", "nothing may be announced by a sidecar that never listened"
     assert sidecar.socket.fileno() == -1, "the pre-bound socket must not outlive the process"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OSError("the listener could not be created"),
+        RuntimeError("the listener refused"),
+        SystemExit(1),
+    ],
+    ids=["oserror", "runtimeerror", "systemexit"],
+)
+def test_a_failure_before_the_server_started_is_a_startup_failure(
+    failure: BaseException, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Injected at the listener, so the outcome cannot depend on finding a failing socket.
+
+    A sidecar is given a socket that is already bound, and Uvicorn creates its asyncio server
+    from that socket in a branch which does not convert an ``OSError`` into the ``SystemExit``
+    it raises for a host-and-port bind. The same listener failure therefore reaches this
+    process as an ordinary exception, and classifying on the class of the exception would
+    report "unexpected" for a listener that never opened — the outcome the supervisor would
+    act on wrongly. Each exception type is injected here, and all three must be a startup
+    failure, because none of them had been announced and none of them ever served anything.
+    """
+    observed: dict[str, Any] = {}
+
+    async def refusing_to_start(self: uvicorn.Server, sockets: Any = None) -> None:
+        observed["started"] = self.started
+        raise failure
+
+    monkeypatch.setattr(uvicorn.Server, "startup", refusing_to_start)
+    sidecar = _sidecar_with(create_app())
+
+    exit_code, output = _run_capturing_stdout(sidecar)
+
+    assert observed == {"started": False}, "the failure must have arrived before started"
+    assert exit_code is Exit.STARTUP_FAILED
+    assert output == "", "a failed start announces nothing"
+    assert sidecar.socket.fileno() == -1, "the pre-bound socket must not outlive the process"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OSError("the listening socket failed"),
+        RuntimeError("this sidecar failed while serving"),
+        SystemExit(1),
+    ],
+    ids=["oserror", "runtimeerror", "systemexit"],
+)
+def test_a_failure_after_readiness_is_an_unexpected_failure(
+    failure: BaseException, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half of the same rule, and the reason the rule is about state.
+
+    Injected once the server is up and the line has gone out, which is a failure a supervisor
+    has already been told about: it believes it can connect, and the process it is talking to
+    has stopped. The three injected types are the three the previous gate also covers, and they
+    classify the other way — so what decides the outcome is not the exception, it is whether
+    anything was announced.
+    """
+    observed: dict[str, Any] = {}
+
+    async def failing_while_serving(self: uvicorn.Server) -> None:
+        observed["started"] = self.started
+        raise failure
+
+    monkeypatch.setattr(uvicorn.Server, "main_loop", failing_while_serving)
+    sidecar = _sidecar_with(create_app())
+
+    exit_code, output = _run_capturing_stdout(sidecar)
+
+    assert observed == {"started": True}
+    assert exit_code is Exit.UNEXPECTED
+    lines = output.splitlines()
+    assert len(lines) == 1, f"readiness had already been announced once; got {lines!r}"
+    assert Readiness.model_validate_json(lines[0]).port == sidecar.port
+    assert sidecar.socket.fileno() == -1, "the pre-bound socket must not outlive the process"
+
+
+def test_a_server_that_does_not_report_itself_started_announces_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The invariant the announcement is guarded by, checked by removing the announcement's
+    premise.
+
+    ``startup`` returning is not the same as the server having started, and the difference is
+    not visible from outside Uvicorn. If Uvicorn's own flag is not set, this sidecar does not
+    announce: a readiness line for a server that may not be listening is precisely the race the
+    handshake exists to remove, and the outcome is a startup failure because that is what it is.
+    """
+    observed: dict[str, Any] = {}
+
+    async def returning_without_starting(self: uvicorn.Server, sockets: Any = None) -> None:
+        observed["started"] = self.started
+        self.should_exit = True
+
+    monkeypatch.setattr(uvicorn.Server, "startup", returning_without_starting)
+    sidecar = _sidecar_with(create_app())
+
+    exit_code, output = _run_capturing_stdout(sidecar)
+
+    assert observed == {"started": False}
+    assert exit_code is Exit.STARTUP_FAILED
+    assert output == ""
+
+
+def test_readiness_is_announced_only_when_the_server_has_started() -> None:
+    """The check on a real server, where Uvicorn does set its flag.
+
+    Read at the moment the line is emitted, through the callback that runs immediately after
+    it, so the gate covers the positive case the defensive branch above protects rather than
+    only the failure it is written for.
+    """
+    observed: dict[str, Any] = {}
+    sidecar = _sidecar_with(create_app())
+
+    def on_listening(server: uvicorn.Server) -> None:
+        observed["started"] = server.started
+        server.should_exit = True
+
+    exit_code, output = _run_capturing_stdout(sidecar, on_listening)
+
+    assert observed == {"started": True}
+    assert exit_code is Exit.CLEAN
+    assert len(output.splitlines()) == 1
 
 
 def test_a_clean_shutdown_stops_accepting_and_runs_the_application_shutdown() -> None:

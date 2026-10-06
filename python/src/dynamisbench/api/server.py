@@ -13,18 +13,22 @@ shell never has to guess:
   and no ``0.0.0.0``: a desktop sidecar has no reason to be reachable from the network, and
   an address it cannot be given is one it cannot be misconfigured into.
 * **Readiness means listening.** :class:`_SidecarServer` writes the single readiness record
-  after Uvicorn's own ``startup`` has returned, which is the first point at which a client
-  can connect and be answered. A supervisor that read the port from a line emitted earlier
-  would race the listener it is about to use.
+  after Uvicorn's own ``startup`` has returned *and* Uvicorn reports itself started, which
+  is the first point at which a client can connect and be answered. A supervisor that read
+  the port from a line emitted earlier would race the listener it is about to use, so the
+  check is made rather than assumed.
 * **stdout is the protocol.** Uvicorn's default logging configuration sends *access* logs to
   stdout, which would corrupt the only channel the supervisor reads, so the log configuration
   here is replaced with one that sends everything to stderr. Nothing else in this package
   writes to stdout, and the record carries no path, no process id, no timestamp and no
   credential — a supervisor needs four facts and a leaked one cannot be taken back.
-* **Outcomes are explicit.** :class:`Exit` is the whole vocabulary: zero for a shutdown that
-  was asked for, and three distinct non-zero codes for the three ways this process can fail
-  before or during serving. A failure that exits zero is indistinguishable from a healthy
-  sidecar that stopped, so none of them does.
+* **Outcomes are explicit, and decided by state.** :class:`Exit` is the whole vocabulary: zero
+  for a shutdown that was asked for, and three distinct non-zero codes for the three ways this
+  process can fail before or during serving. A failure that exits zero is indistinguishable
+  from a healthy sidecar that stopped, so none of them does. Which failure code applies is
+  decided by whether readiness was announced, never by the class of the exception: a listener
+  that never opened and a server that died while serving are both failures, but only one of
+  them happened before a supervisor was told where to connect.
 """
 
 from __future__ import annotations
@@ -268,10 +272,18 @@ def announce(port: int) -> None:
 class _SidecarServer(uvicorn.Server):
     """Uvicorn, plus the one thing this sidecar adds: readiness after listening.
 
-    Overriding ``startup`` rather than polling ``started`` is what makes "only after
-    listening" structural. Uvicorn calls ``sys.exit`` from inside that method when the ASGI
-    lifespan or the listener fails, so a startup failure leaves the announcement uncalled
-    without a single conditional here.
+    Overriding ``startup`` rather than polling ``started`` is what makes "only after listening"
+    structural. The check inside it is what keeps that true if Uvicorn's own definition of
+    started ever moves: nothing is announced unless the server says it has started, and a
+    server that has not started is a startup failure rather than a readiness handshake.
+
+    ``readiness_announced`` is the record of whether the line went out, and it is what the
+    failure classification reads. Uvicorn raises ``SystemExit`` from inside this method when
+    the ASGI lifespan refuses to start, but a listener built from a socket that is already
+    bound is created by a branch that does not convert an ``OSError`` into that exit, so the
+    same kind of failure can arrive as an ordinary exception. Classifying on the exception
+    would answer "a failure this process did not anticipate" for a listener that never
+    opened. What had been announced is a fact, and the fact is the classifier.
     """
 
     def __init__(
@@ -283,12 +295,33 @@ class _SidecarServer(uvicorn.Server):
         super().__init__(config)
         self._port = port
         self._on_listening = on_listening
+        self.readiness_announced = False
 
     async def startup(self, sockets: list[socket.socket] | None = None) -> None:
         await super().startup(sockets=sockets)
+        if not self.started:
+            raise RuntimeError("Uvicorn returned from startup without having started.")
         announce(self._port)
+        self.readiness_announced = True
         if self._on_listening is not None:
             self._on_listening(self)
+
+
+def _failure_outcome(server: _SidecarServer) -> Exit:
+    """The outcome of a failure that stopped this sidecar, decided by what it had announced.
+
+    Read the state rather than the exception class, for the reason the class is not enough:
+    the pre-bound socket means a listener failure and an ASGI lifespan failure reach this
+    function as different exception types for the same situation, and a supervisor needs the
+    situation, not the type. Before readiness, nothing was ever served and there is no line to
+    withdraw; after it, the supervisor has been told where to connect and that is exactly what
+    it needs to be told has failed.
+    """
+    if server.readiness_announced:
+        logger.exception("The API sidecar stopped with an unexpected failure.")
+        return Exit.UNEXPECTED
+    logger.error("The API sidecar could not start.")
+    return Exit.STARTUP_FAILED
 
 
 async def run_sidecar(
@@ -305,20 +338,16 @@ async def run_sidecar(
     Every failure becomes an :class:`Exit`, because this is a supervised process: an
     exception that escapes here reaches a supervisor as an unhandled traceback and a code
     that means "crashed", which is a worse answer than a code that means which of the three
-    things went wrong.
+    things went wrong. ``SystemExit`` and ordinary exceptions are caught together and
+    classified by :func:`_failure_outcome` rather than by type, because the exception type no
+    longer determines which of the two failures this was.
     """
     server = _SidecarServer(uvicorn_configuration(sidecar), sidecar.port, on_listening)
     try:
         await server.serve(sockets=[sidecar.socket])
         return Exit.CLEAN
-    except SystemExit:
-        # Uvicorn exits this way when the listener or the ASGI lifespan refuses to start,
-        # having already logged why. There is no readiness line to withdraw.
-        logger.error("The API sidecar could not start.")
-        return Exit.STARTUP_FAILED
-    except Exception:
-        logger.exception("The API sidecar stopped with an unexpected failure.")
-        return Exit.UNEXPECTED
+    except (SystemExit, Exception):
+        return _failure_outcome(server)
     finally:
         # Uvicorn closes the sockets it was handed during a normal shutdown, and closing an
         # already-closed socket is a no-op. Doing it here as well means no path out of this
