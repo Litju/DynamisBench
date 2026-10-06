@@ -1,7 +1,7 @@
 """The sidecar as a real process: stdout is a protocol, and the credential never appears on it.
 
 The gates in ``test_server.py`` hold a real socket and a real Uvicorn server, which is where
-the lifecycle properties live. This module covers the two things only a separate process can
+the lifecycle properties live. This module covers the things only a separate process can
 show:
 
 * **stdout is exactly the handshake.** One line, parseable as protocol v1, carrying the port
@@ -12,6 +12,10 @@ show:
 * **A refused configuration fails the process, quietly.** A malformed credential produces the
   configuration exit code, no readiness line, and — the point of the gate — no echo of the
   rejected value anywhere in the output a supervisor will keep.
+* **A repeated ``Authorization`` header reaches the server as a repeated header.** Both header
+  clients in this project collapse repeated names into one value, so this is the only place
+  the two-header request can be put on the wire at all — which is what makes this the gate for
+  a credential that must not be admitted because of where one of two copies happened to sit.
 
 HTTP is spoken over the announced socket with ``http.client``, not with the in-process test
 client, because the claim under test is that a local process on this machine gets a 401 without
@@ -181,6 +185,68 @@ def _answered(port: int, token: str) -> int | None:
     except (OSError, http.client.HTTPException):
         return None
     return status
+
+
+def _request_repeating_a_header(
+    port: int, path: str, name: str, *values: str
+) -> tuple[int, dict[str, str], bytes]:
+    """One request carrying the same header more than once, spoken over a real socket.
+
+    ``putrequest`` and ``putheader`` are used instead of ``request`` because ``request`` takes
+    a mapping and joins repeated names into one value — the very normalization under test. This
+    is the only way to put two ``Authorization`` headers on the wire from this process.
+    """
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
+    try:
+        connection.putrequest("GET", path, skip_accept_encoding=True)
+        for value in values:
+            connection.putheader(name, value)
+        connection.endheaders()
+        response = connection.getresponse()
+        return (
+            response.status,
+            {name.lower(): value for name, value in response.getheaders()},
+            response.read(),
+        )
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "tokens",
+    [
+        ("correct", "wrong"),
+        ("wrong", "correct"),
+        ("correct", "correct"),
+    ],
+)
+def test_the_process_refuses_a_repeated_authorization_header(tokens: tuple[str, str]) -> None:
+    """Over a real socket, in both orders, and with the right credential present twice.
+
+    The header is written twice on the wire and the second copy is not discarded anywhere on
+    the way in, so this is the condition the credential contract has to hold under: a request
+    carrying two ``Authorization`` headers is refused whichever one of them is correct. A
+    server that read the first header it saw would answer 401 for one of these two orderings
+    and 200 for the other, and a caller who tried both would have a way in.
+    """
+    issued = {
+        "correct": CREDENTIAL,
+        "wrong": base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("="),
+    }
+
+    with _sidecar() as child:
+        port = Readiness.model_validate_json(_readiness(child)).port
+
+        status, headers, body = _request_repeating_a_header(
+            port,
+            "/api/v1/health",
+            "Authorization",
+            *(f"Bearer {issued[name]}" for name in tokens),
+        )
+
+    assert status == 401, tokens
+    assert json.loads(body) == UNAUTHORIZED_BODY
+    assert headers["www-authenticate"] == "Bearer"
 
 
 def test_the_process_announces_its_port_and_nothing_else() -> None:

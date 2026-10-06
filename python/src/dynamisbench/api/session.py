@@ -19,10 +19,10 @@ Four properties are load-bearing, and each is enforced where it can be rather th
   comparison of two fixed-length digests, which is also why the presented value is never
   compared for equality against anything first: an early ``len`` or ``==`` test would tell
   an attacker whether the guess was the right *shape* before the comparison that matters.
-* **Refusal is one answer.** A missing header, a wrong scheme, a malformed token and an
-  incorrect token all reach the same comparison, the same 401 status, the same envelope
-  body and the same ``WWW-Authenticate`` header. Anything that distinguished them would
-  turn this endpoint into an oracle for guessing a credential.
+* **Refusal is one answer.** A missing header, a duplicated header, a wrong scheme, a
+  malformed token and an incorrect token all reach the same comparison, the same 401 status,
+  the same envelope body and the same ``WWW-Authenticate`` header. Anything that
+  distinguished them would turn this endpoint into an oracle for guessing a credential.
 * **The origin list is exact or it is refused.** ``*``, ``null``, wildcard patterns,
   reflected origins, empty lists, embedded credentials and origins carrying a path, query
   or fragment are all rejected before a socket is opened, because a permissive CORS policy
@@ -251,19 +251,26 @@ def _exact_origin(entry: object) -> str:
 def presented_credential(headers: Sequence[tuple[bytes, bytes]]) -> str:
     """The bearer value on a request, or the empty string when there is not one.
 
-    Every failure of the *shape* of the header — absent, no ``Bearer`` scheme, empty — returns
-    the same empty string, so that the credential comparison is the only thing that ever
-    rejects a request. A first-match scan is used rather than a lookup because a request
-    carrying two ``Authorization`` headers is malformed, and refusing to guess which one was
-    meant is the answer that cannot be exploited.
+    Every failure of the *shape* of the header — absent, duplicated, no ``Bearer`` scheme,
+    empty — returns the same empty string, so that the credential comparison is the only
+    thing that ever rejects a request.
+
+    **Exactly one** ``Authorization`` header counts as presenting a proof, and that is a count
+    rather than a lookup. ASGI hands a middleware every header entry as it arrived, so a
+    request may carry two of them; reading the first would make admission depend on their
+    order — correct-then-anything admitted, anything-then-correct refused — and "which of these
+    was meant" is not a question a server may answer by guessing. A duplicated header is
+    malformed, so it presents nothing, and it presents nothing by the same route as every
+    other malformed header rather than by a branch of its own.
     """
-    for name, value in headers:
-        if name.lower() == b"authorization":
-            scheme, _, credential = value.partition(b" ")
-            if scheme.lower() != b"bearer":
-                return ""
-            return credential.decode("utf-8", "replace")
-    return ""
+    authorization = [value for name, value in headers if name.lower() == b"authorization"]
+    if len(authorization) != 1:
+        return ""
+
+    scheme, _, credential = authorization[0].partition(b" ")
+    if scheme.lower() != b"bearer":
+        return ""
+    return credential.decode("utf-8", "replace")
 
 
 class SessionAuthentication:

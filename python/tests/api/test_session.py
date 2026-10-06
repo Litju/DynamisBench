@@ -14,11 +14,15 @@ What is covered:
   a refusal names the variable it is about and never the value it rejected.
 * **The credential cannot be printed.** A refused value does not reach the message, and an
   admitted one does not survive in its own ``repr``.
-* **Refusal is one answer.** Absent header, wrong scheme, empty bearer and wrong bearer
-  produce the same status, the same body and the same ``WWW-Authenticate`` header, so the
-  endpoint cannot be used to test a guess.
-* **Comparison is constant time.** Every request, right or wrong, goes through one
-  ``hmac.compare_digest`` over two fixed-length digests.
+* **Refusal is one answer.** Absent header, duplicated header, wrong scheme, empty bearer and
+  wrong bearer produce the same status, the same body and the same ``WWW-Authenticate``
+  header, so the endpoint cannot be used to test a guess. The duplicate case is exercised at
+  the ASGI boundary rather than through a client, because a client would join the two headers
+  into one value before the middleware ever saw them — which is the defect, not the absence
+  of it, that has to be caught.
+* **Comparison is constant time.** Every request, right or wrong, and however many
+  ``Authorization`` headers it carries, goes through one ``hmac.compare_digest`` over two
+  fixed-length digests.
 * **Every route is authenticated.** The versioned routes, the OpenAPI document and the
   documentation routes all answer 401 without a credential, which is the property that stops
   a discovered localhost port from being readable by whatever found it.
@@ -29,6 +33,7 @@ What is covered:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -39,6 +44,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from dynamisbench.api.errors import ErrorCode
 from dynamisbench.api.session import (
@@ -81,6 +87,84 @@ def _valid(length: int) -> str:
     """A correctly encoded credential of an incorrect length."""
     raw = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")[:length]
     return raw + "A" * (length - len(raw))
+
+
+def _secured() -> ASGIApp:
+    """The application the session serves, without a client wrapped around it."""
+    configuration = session_configuration()
+    return secured_application(configuration.credential, configuration.origins)
+
+
+def _asgi_request(
+    application: ASGIApp,
+    headers: list[tuple[bytes, bytes]],
+    path: str = "/api/v1/health",
+) -> tuple[int, dict[bytes, bytes], bytes]:
+    """One HTTP request driven straight into the application, with the headers as given.
+
+    ``TestClient`` accepts a mapping of headers, and the client it is built on joins repeated
+    names into a single comma-separated value before the request is spoken — so a request
+    carrying two ``Authorization`` headers cannot be expressed through it at all. The scope is
+    therefore assembled here, in the shape a server hands a middleware, and the application is
+    called the way a server calls it. A higher-level client normalising duplicates away is
+    precisely the failure these gates exist to catch, so nothing above the ASGI interface is
+    allowed to sit between the headers and the refusal.
+    """
+    scope: Scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.5"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode("ascii"),
+        "root_path": "",
+        "query_string": b"",
+        "headers": headers,
+        "client": ("127.0.0.1", 51234),
+        "server": ("127.0.0.1", 51273),
+    }
+    sent: list[Message] = []
+
+    async def receive() -> Message:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    async def call() -> None:
+        await application(scope, receive, send)
+
+    asyncio.run(call())
+
+    start = next(message for message in sent if message["type"] == "http.response.start")
+    body = b"".join(
+        message.get("body", b"") for message in sent if message["type"] == "http.response.body"
+    )
+    return start["status"], dict(start["headers"]), body
+
+
+def _recording_scope(application: ASGIApp) -> tuple[ASGIApp, list[Scope]]:
+    """The application with the scope it was entered with kept alongside it."""
+
+    observed: list[Scope] = []
+
+    async def record(scope: Scope, receive: Receive, send: Send) -> None:
+        observed.append(scope)
+        await application(scope, receive, send)
+
+    return record, observed
+
+
+def _authorization(credential: str) -> tuple[bytes, bytes]:
+    return (b"authorization", f"Bearer {credential}".encode())
+
+
+INCORRECT_CREDENTIAL = _valid(43)
+"""A correctly shaped credential that this session never issued."""
+
+CORRECT_HEADER = _authorization(CREDENTIAL)
+INCORRECT_HEADER = _authorization(INCORRECT_CREDENTIAL)
 
 
 def test_a_valid_credential_is_accepted() -> None:
@@ -220,6 +304,139 @@ def test_only_a_bearer_header_yields_a_credential(
     comparison as a string that cannot be right, rather than as a branch that can be probed.
     """
     assert presented_credential(headers) == presented
+
+
+@pytest.mark.parametrize(
+    ("headers", "presented"),
+    [
+        ([], ""),
+        ([CORRECT_HEADER], CREDENTIAL),
+        ([(b"authorization", b"Basic " + CREDENTIAL.encode())], ""),
+        ([(b"authorization", b"Bearer ")], ""),
+        ([CORRECT_HEADER, INCORRECT_HEADER], ""),
+        ([INCORRECT_HEADER, CORRECT_HEADER], ""),
+        ([CORRECT_HEADER, CORRECT_HEADER], ""),
+        ([CORRECT_HEADER, INCORRECT_HEADER, CORRECT_HEADER], ""),
+        (
+            [(b"Authorization", b"Bearer " + CREDENTIAL.encode()), CORRECT_HEADER],
+            "",
+        ),
+        (
+            [CORRECT_HEADER, (b"authorization", b"Bearer")],
+            "",
+        ),
+    ],
+)
+def test_only_one_authorization_header_presents_a_proof(
+    headers: list[tuple[bytes, bytes]], presented: str
+) -> None:
+    """The whole table, in one gate: what may present a credential, and what presents nothing.
+
+    The duplicated rows are the point of this gate. ASGI preserves repeated header entries, so
+    a request can carry two ``Authorization`` headers, and a parser that returned the first
+    would admit a request because of where a header happened to sit in the list: correct first
+    admitted, correct second refused. Admission that depends on header order is not a session
+    proof. Duplicates therefore present nothing, in every order and any number, and they do it
+    by returning the same empty string every other unusable header returns.
+    """
+    assert presented_credential(headers) == presented
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        [CORRECT_HEADER, INCORRECT_HEADER],
+        [INCORRECT_HEADER, CORRECT_HEADER],
+        [CORRECT_HEADER, CORRECT_HEADER],
+    ],
+)
+def test_a_duplicated_authorization_header_is_refused_in_either_order(
+    headers: list[tuple[bytes, bytes]],
+) -> None:
+    """The same 401 as every other refusal, including when the credential is present twice.
+
+    Driven straight into the ASGI application, because a client that joined repeated headers
+    would make all three rows indistinguishable from one header and this gate would pass for
+    the wrong reason. Correct-then-wrong, wrong-then-correct and correct-twice all reach the
+    refusal, and all three reach it indistinguishably.
+    """
+    status, headers_out, body = _asgi_request(_secured(), headers)
+
+    assert status == 401
+    assert headers_out[b"www-authenticate"] == b"Bearer"
+    assert json.loads(body) == UNAUTHORIZED_BODY
+
+
+def test_a_duplicated_header_reaches_the_middleware_as_two_entries() -> None:
+    """The raw representation itself, asserted rather than assumed.
+
+    The gates above are only meaningful if the two ``Authorization`` entries survive the trip
+    into the middleware, so the scope the application was entered with is inspected: two
+    entries, in the order given. If a layer above ever joined them, this fails and says so
+    rather than leaving the refusal looking as though it had been earned.
+    """
+    application, observed = _recording_scope(_secured())
+
+    status, _, body = _asgi_request(application, [CORRECT_HEADER, INCORRECT_HEADER])
+
+    presented = [name for name, _ in observed[0]["headers"] if name.lower() == b"authorization"]
+    assert presented == [b"authorization", b"authorization"]
+    assert len(observed[0]["headers"]) == 2
+    assert status == 401
+    assert json.loads(body) == UNAUTHORIZED_BODY
+
+
+def test_a_single_authorization_header_is_still_the_whole_proof() -> None:
+    """The rule refuses duplicates, not repeats of the same proof.
+
+    Stated so that a future reader cannot mistake "exactly one header" for "a header that may
+    not be sent again", and so the composed application's one-header path is covered at this
+    level too rather than only through the client.
+    """
+    status, _, body = _asgi_request(_secured(), [CORRECT_HEADER])
+
+    assert status == 200
+    assert json.loads(body)["api_version"] == "v1"
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        [],
+        [CORRECT_HEADER, INCORRECT_HEADER],
+        [INCORRECT_HEADER, CORRECT_HEADER],
+        [CORRECT_HEADER, CORRECT_HEADER],
+        [(b"authorization", b"Basic " + CREDENTIAL.encode())],
+        [(b"authorization", b"Bearer ")],
+        [INCORRECT_HEADER],
+    ],
+)
+def test_every_unusable_header_reaches_exactly_one_comparison(
+    headers: list[tuple[bytes, bytes]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A duplicated header is refused the way every other one is: by the comparison itself.
+
+    Each shape is driven through the same instrumented comparison, and each must produce
+    exactly one call between two fixed-length digests. A parser that refused duplicates on a
+    branch of its own — by returning before the credential was ever consulted, or by
+    comparing something whose length depends on the request — would show up here as a
+    different count or a different width.
+    """
+    observed: list[tuple[bytes, bytes]] = []
+    compare = hmac.compare_digest
+
+    def recorded(left: bytes, right: bytes) -> bool:
+        observed.append((left, right))
+        return compare(left, right)
+
+    monkeypatch.setattr(hmac, "compare_digest", recorded)
+
+    _asgi_request(_secured(), headers)
+
+    assert len(observed) == 1, "every request must reach exactly one comparison"
+    left, right = observed[0]
+    assert len(left) == len(right) == hashlib.sha256().digest_size
+    assert right == hashlib.sha256(CREDENTIAL.encode()).digest()
 
 
 @pytest.mark.parametrize(
