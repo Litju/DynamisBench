@@ -11,7 +11,9 @@ on a measured import, where an indirect call cannot hide.
 
 What is checked:
 
-* **A closed module set.** Five modules. A sixth is a reviewed decision.
+* **A closed module set, in two groups.** Five boundary modules, reachable from
+  ``import dynamisbench.api``, and the session modules DB-2.2 adds, reachable only by importing
+  them directly. An extra one is a reviewed change rather than a silent one.
 * **No simulator, in transit or in source.** The repository-wide isolation gate already
   walks every file; this one names the package, so a regression says which boundary broke.
 * **No dependency on any scientific layer.** ``api`` may import the package root and its
@@ -20,12 +22,12 @@ What is checked:
   a fresh import as well as on the source, because a transitive arrival would make the API
   process depend on a layer it is supposed to describe. This is the gate that makes
   "FastAPI is not authority" structural rather than aspirational.
-* **A closed direct third-party surface.** ``fastapi`` and ``pydantic``. FastAPI's and
-  Pydantic's own closures are absent on purpose: they are their dependencies, pinned by
-  them, and a gate that listed them could be satisfied by adding one directly.
+* **A closed direct third-party surface.** ``fastapi``, ``pydantic`` and ``starlette``.
+  FastAPI's and Pydantic's own closures are absent on purpose: they are their dependencies,
+  pinned by them, and a gate that listed them could be satisfied by adding one directly.
 * **Nothing from the future stack, early.** The import must not pull in uvicorn, DuckDB or
-  any numerical package. Uvicorn is a declared runtime dependency and is still forbidden
-  here, which is what keeps "importing this package starts no server" true by construction.
+  any numerical package. Uvicorn is a declared runtime dependency and is still forbidden here,
+  which is what keeps "importing this package starts no server" true by construction.
 * **A public surface with no authority vocabulary and no control plane.** No exported name
   may mention a benchmark, workspace, evidence, seal, plan, run, execution, worker, queue,
   session or credential — the shapes an API would acquire as soon as it started owning the
@@ -55,13 +57,28 @@ API_ROOT = Path(api.__file__).resolve().parent
 
 API_MODULES = tuple(sorted(path.name for path in API_ROOT.glob("*.py")))
 
-EXPECTED_MODULES = (
+BOUNDARY_MODULES = (
     "__init__.py",
     "app.py",
     "errors.py",
     "models.py",
     "routing.py",
 )
+"""The application boundary: the five modules DB-2.1 established, unchanged.
+
+Everything here is reachable by importing ``dynamisbench.api``, so everything here has to stay
+as small and as inert as it was.
+"""
+
+SESSION_MODULES = ("session.py",)
+"""The session's own policy, added by DB-2.2 and reachable only by importing it directly.
+
+Deliberately kept out of ``__all__``, so no advertised name of this package mentions a session
+or a credential. The process that will serve it is a separate module that only an import can
+reach, which is what keeps ``import dynamisbench.api`` loading no server.
+"""
+
+EXPECTED_MODULES = BOUNDARY_MODULES + SESSION_MODULES
 
 FORBIDDEN_ENGINE_MODULES = frozenset(
     {"mujoco", "opensim", "simtk", "gym", "gymnasium", "pybullet", "brax", "dm_control"}
@@ -196,7 +213,7 @@ def test_no_api_module_depends_on_a_scientific_layer(filename: str) -> None:
     assert offending == [], f"{filename} imports {offending}"
 
 
-@pytest.mark.parametrize("filename", API_MODULES)
+@pytest.mark.parametrize("filename", EXPECTED_MODULES)
 def test_the_api_package_has_a_closed_external_surface(filename: str) -> None:
     external = _imported_roots(API_ROOT / filename) - FIRST_PARTY - sys.stdlib_module_names
     assert not external - ALLOWED_EXTERNAL_SURFACE, f"{filename} imports {sorted(external)}"
@@ -229,6 +246,21 @@ def test_importing_the_api_package_loads_the_boundary_and_nothing_from_the_futur
 
     assert "fastapi" in loaded, "the API package must actually import the boundary it is for"
     assert not loaded & FORBIDDEN_MEASURED_IMPORTS, sorted(loaded & FORBIDDEN_MEASURED_IMPORTS)
+
+
+def test_importing_the_api_package_loads_no_session_module() -> None:
+    """The session's modules are reached by importing them, never by importing the package.
+
+    This is what makes the two module groups meaningfully different rather than a naming
+    convention. Measured on a fresh import, so an indirect arrival — through FastAPI, through
+    the routing layer, through anything — fails here as well, and ``FORBIDDEN_MEASURED_IMPORTS``
+    stays true: the Uvicorn prohibition above is a property of what the package loads, and this
+    is why it still is.
+    """
+    loaded = _loaded_module_names()
+    session = tuple(f"dynamisbench.api.{name.removesuffix('.py')}" for name in SESSION_MODULES)
+
+    assert not {name for name in loaded if name.startswith(session)}
 
 
 def test_every_advertised_name_exists_and_is_advertised_once() -> None:
@@ -282,9 +314,15 @@ def test_an_exported_read_model_is_not_a_scientific_domain_model() -> None:
         )
 
 
-def test_the_five_modules_are_the_whole_package() -> None:
-    """Named so that adding a sixth is a reviewed change rather than a silent one."""
+def test_the_module_set_is_the_whole_package() -> None:
+    """Named so that adding an eighth is a reviewed change rather than a silent one.
+
+    Stated as two named groups because the modules are not equivalent: five describe the
+    application and are reachable from ``import dynamisbench.api``, and two belong to the
+    desktop session and are not.
+    """
     assert API_MODULES == EXPECTED_MODULES
+    assert set(BOUNDARY_MODULES) & set(SESSION_MODULES) == set()
 
 
 def _openapi() -> dict[str, Any]:

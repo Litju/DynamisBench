@@ -57,6 +57,7 @@ class ErrorCode(StrEnum):
     METHOD_NOT_ALLOWED = "method_not_allowed"
     INVALID_REQUEST = "invalid_request"
     HTTP_ERROR = "http_error"
+    UNAUTHORIZED = "unauthorized"
     INTERNAL_ERROR = "internal_error"
 
 
