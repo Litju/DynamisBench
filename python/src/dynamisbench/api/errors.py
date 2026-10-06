@@ -145,6 +145,12 @@ def install_error_contract(app: FastAPI) -> None:
     is what puts each one in the layer that can answer it — and registering only
     ``Exception`` would route a 404 through the 500 handler and re-raise it.
 
+    ``HTTPException`` is imported from ``starlette``, not from ``fastapi``, and that is
+    not a style choice. ``fastapi.HTTPException`` is a *subclass* of the class the
+    framework actually raises for an unmatched path or a wrong method, so registering the
+    subclass would leave every 404 and 405 answering with Starlette's default
+    ``{"detail": ...}`` while looking correctly installed.
+
     There is no shared base class, no registry, no per-code exception hierarchy and no
     global mutable state: the boundary has three failure shapes, each answered in three
     lines, and a fourth would be an exception framework.
