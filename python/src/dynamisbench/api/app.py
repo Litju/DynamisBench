@@ -15,6 +15,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from dynamisbench import __version__
+from dynamisbench.api.errors import install_error_contract
 from dynamisbench.api.routing import APPLICATION_NAME, v1_router
 
 API_DESCRIPTION = (
@@ -37,6 +38,7 @@ def create_app() -> FastAPI:
         version=__version__,
     )
     app.include_router(v1_router)
+    install_error_contract(app)
     return app
 
 
