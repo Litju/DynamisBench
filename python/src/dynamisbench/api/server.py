@@ -153,7 +153,7 @@ def bind_loopback() -> socket.socket:
     """
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+        if sys.platform == "win32":
             listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         listener.bind((LOOPBACK_HOST, 0))
     except OSError:

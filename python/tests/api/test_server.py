@@ -239,6 +239,29 @@ def test_a_bound_socket_is_loopback_and_ephemeral() -> None:
         listener.close()
 
 
+def test_a_bound_socket_reserves_its_port_against_another_process() -> None:
+    """The listener sets the option that stops another process taking its port.
+
+    Measured on the socket, so this observes the reservation rather than the intention to make
+    it. The guard in ``bind_loopback`` names the platform rather than asking whether this
+    interpreter happens to expose the constant, which is both what the option is and the only
+    way the attribute resolves in the type checker on every platform; that makes the setting of
+    it something to prove rather than assume. Skipped elsewhere because there is no equivalent
+    option to set, not because the reservation is wanted less there.
+    """
+    if sys.platform != "win32":
+        pytest.skip(
+            "this host has no port-reservation socket option, so the reservation is unproved "
+            "here; the loopback, ephemeral and bind-once gates above prove the rest of the "
+            "bind on this host"
+        )
+    listener = bind_loopback()
+    try:
+        assert listener.getsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE) == 1
+    finally:
+        listener.close()
+
+
 def test_two_bound_sockets_never_share_a_port() -> None:
     """Ephemeral means ephemeral: the second bind is not refused by the first."""
     first, second = bind_loopback(), bind_loopback()
