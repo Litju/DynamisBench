@@ -191,6 +191,15 @@ def test_the_relative_reference_is_meaning_while_the_absolute_path_is_not(
     that artifact happens to be stored right now and belongs nowhere. Both halves are
     checked, because a digest that hashed only the meaning and one that hashed only the
     location would both fail the relocation test for opposite reasons.
+
+    The volume anchor used to close the location half here, and it could not. On Windows the
+    anchor is ``C:\\`` and saying "that is absent" says something; on POSIX the anchor is
+    ``/``, which is also the separator the relative reference is written with, so the
+    assertion was asking for the absence of a character this test requires to be present - and
+    it failed there for exactly that reason. The claim needed is already proved portably by
+    :func:`test_canonical_bytes_carry_no_trace_of_either_workspace`, which asserts that the
+    artifact's real absolute path, in both workspaces, is absent from the canonical bytes; the
+    two roots are checked here as well, because they are the paths a reader would try first.
     """
     roots, paths = populated_workspace(tmp_path, "first")
     canonical = canonical_semantic_bytes(load_realization(roots)).decode("utf-8")
@@ -198,7 +207,6 @@ def test_the_relative_reference_is_meaning_while_the_absolute_path_is_not(
     assert "/".join(ASSET_LOGICAL) in canonical
     assert paths["source_root"] not in canonical
     assert paths["evidence_root"] not in canonical
-    assert str(Path(paths["source_root"]).anchor) not in canonical
 
 
 def test_a_relocated_asset_keeps_its_own_identity(tmp_path: Path) -> None:

@@ -83,9 +83,24 @@ def test_no_exported_field_or_type_carries_an_engine_native_name(class_name: str
         assert token not in haystack, f"{class_name} exposes {token!r}"
 
 
+def _resolved_hints(model: type[BaseModel]) -> dict[str, Any]:
+    """Every field annotation of ``model``, with its own type parameters bound.
+
+    ``VersionedRef`` declares ``IdentifierT`` as a PEP 695 type parameter, which is scoped to the
+    class rather than to the module, so it is not among the module globals that
+    ``typing.get_type_hints`` searches by default. Whether the interpreter finds those parameters
+    anyway is a patch-level detail of ``typing`` that differed between the 3.12.3 behind one
+    hosted image and the 3.12.10 behind the other, and this gate should not depend on it: the
+    parameters are read off the class and bound explicitly, which also makes it plain which names
+    the annotations are allowed to refer to.
+    """
+    localns = {parameter.__name__: parameter for parameter in model.__type_params__}
+    return typing.get_type_hints(model, localns=localns)
+
+
 def test_no_exported_definition_uses_any_object_or_arbitrary_type() -> None:
     for class_name, model in exported_models().items():
-        hints = typing.get_type_hints(model)
+        hints = _resolved_hints(model)
         for field_name, hint in hints.items():
             rendered = str(hint).lower()
             assert "typing.any" not in rendered, f"{class_name}.{field_name} is Any"
