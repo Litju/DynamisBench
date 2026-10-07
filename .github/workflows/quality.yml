@@ -53,7 +53,7 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version-file: python/.python-version
+          version-file: python/.python-version
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -128,7 +128,7 @@ jobs:
       # Cargo target, or simulator environment is shared across OSes (ADR-023).
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version-file: python/.python-version
+          version-file: python/.python-version
           enable-cache: true
       - name: Install locked dependencies
         run: uv sync --frozen

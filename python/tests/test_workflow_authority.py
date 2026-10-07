@@ -156,6 +156,42 @@ def test_every_gate_qualifies_on_windows_x64_and_linux_x64() -> None:
     assert not partial, f"each portable gate must run on {sorted(PORTABLE_TARGETS)}: {partial}"
 
 
+PYTHON_VERSION_FILE = "python/.python-version"
+SETUP_UV = "astral-sh/setup-uv"
+
+
+def test_the_python_toolchain_is_pinned_from_the_repository_declaration() -> None:
+    """The two images must resolve the Python the repository declares, not their own.
+
+    A setup action that is handed an input name it does not accept ignores it and warns, rather
+    than failing, so a typo turns a pinned toolchain into whatever interpreter the runner image
+    happens to ship. That is precisely the drift the identity record cannot detect - it records
+    the interpreter that ran, not the one that was declared - so it is checked here, where the
+    declared version file and the step that consumes it are both visible.
+    """
+    resolved = {
+        f"{job_id} / {step.get('name', step['uses'])}": (step.get("with") or {})
+        for job_id, job in _gates().items()
+        for step in job["steps"]
+        if str(step.get("uses", "")).startswith(SETUP_UV)
+    }
+    assert resolved, f"no gate may resolve the declared Python through {SETUP_UV}"
+    drifted = {
+        name: inputs
+        for name, inputs in resolved.items()
+        if inputs.get("version-file") != PYTHON_VERSION_FILE
+    }
+    assert not drifted, f"every {SETUP_UV} step must read {PYTHON_VERSION_FILE}: {drifted}"
+    literals = {
+        name: inputs
+        for name, inputs in resolved.items()
+        if "version" in inputs and "version-file" not in inputs
+    }
+    assert not literals, (
+        f"the Python version must come from the repository, not a literal: {literals}"
+    )
+
+
 def test_workflow_permissions_stay_read_only_and_no_gate_tolerates_failure() -> None:
     assert _qualification().get("permissions") == {"contents": "read"}
     tolerated = {job_id for job_id, job in _gates().items() if job.get("continue-on-error")}
