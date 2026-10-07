@@ -68,13 +68,24 @@ jobs:
             resolved="$("$@" --version 2>&1 | head -n 1 || true)"
             printf '%s' "${resolved:-absent}"
           }
+          # The interpreter the qualification jobs will actually run, resolved the way uv
+          # resolves it - not the one the image happens to put on PATH. Both images ship a
+          # 3.12 of their own, and recording that as the qualified toolchain would report a
+          # difference between the platforms that is not there.
+          declared_python="$(tr -d '[:space:]' < python/.python-version)"
+          qualified_python="$(uv python find --project python)"
+          qualified_version="$("$qualified_python" -c 'import platform; print(platform.python_version())')"
+          if [ "$qualified_version" != "$declared_python" ]; then
+            printf '::error::the qualified interpreter is %s but python/.python-version declares %s\n' \
+              "$qualified_version" "$declared_python" >&2
+            exit 1
+          fi
           mkdir -p evidence
           {
             printf '{\n'
             printf '  "authority": "ADR-025",\n'
             printf '  "authoritative": true,\n'
-            printf '  "target": "%s",\n'         "${{ matrix.name }}"
-            printf '  "runner_image": "%s",\n'   "${RUNNER_IMAGE:-absent}"
+            printf '  "target": "%s",\n'          "${{ matrix.name }}"
             printf '  "image_os": "%s",\n'       "${ImageOS:-absent}"
             printf '  "image_version": "%s",\n' "${ImageVersion:-absent}"
             printf '  "runner_os": "%s",\n'      "${RUNNER_OS}"
@@ -82,7 +93,8 @@ jobs:
             printf '  "repository": "%s",\n'     "${GITHUB_REPOSITORY}"
             printf '  "ref": "%s",\n'            "${GITHUB_REF}"
             printf '  "github_sha": "%s",\n'     "${GITHUB_SHA}"
-            printf '  "python": "%s",\n'         "$(tool_version python)"
+            printf '  "declared_python": "%s",\n' "$declared_python"
+            printf '  "python": "%s",\n'         "$(tool_version "$qualified_python")"
             printf '  "uv": "%s",\n'             "$(tool_version uv)"
             printf '  "node": "%s",\n'           "$(tool_version node)"
             printf '  "pnpm": "%s",\n'           "$(tool_version pnpm)"
@@ -136,7 +148,7 @@ jobs:
           {
             echo "python: $(uv run python --version)"
             echo "uv: $(uv --version)"
-            echo "runner: ${RUNNER_IMAGE} ${RUNNER_OS}/${RUNNER_ARCH} (${ImageVersion:-unknown})"
+            echo "runner: ${ImageOS:-unknown} ${ImageVersion:-unknown} ${RUNNER_OS}/${RUNNER_ARCH}"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Lint (Ruff)
         run: uv run ruff check .
@@ -177,7 +189,7 @@ jobs:
           {
             echo "node: $(node --version)"
             echo "pnpm: $(pnpm --version)"
-            echo "runner: ${RUNNER_IMAGE} ${RUNNER_OS}/${RUNNER_ARCH} (${ImageVersion:-unknown})"
+            echo "runner: ${ImageOS:-unknown} ${ImageVersion:-unknown} ${RUNNER_OS}/${RUNNER_ARCH}"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Type check (tsc)
         run: pnpm run typecheck
@@ -235,7 +247,7 @@ jobs:
             echo "pnpm: $(pnpm --version)"
             echo "rustc: $(rustc --version)"
             echo "cargo: $(cargo --version)"
-            echo "runner: ${RUNNER_IMAGE} ${RUNNER_OS}/${RUNNER_ARCH} (${ImageVersion:-unknown})"
+            echo "runner: ${ImageOS:-unknown} ${ImageVersion:-unknown} ${RUNNER_OS}/${RUNNER_ARCH}"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Build the workbench (Tauri frontendDist)
         run: pnpm run build

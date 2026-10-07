@@ -48,6 +48,7 @@ REQUIRED_IDENTITY_KEYS = (
     "runner_arch",
     "image_os",
     "image_version",
+    "declared_python",
     "python",
     "uv",
     "node",
