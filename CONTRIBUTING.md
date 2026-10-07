@@ -35,39 +35,48 @@ through WSL, `/mnt/c`, or other Linux tooling against this checkout.
 Do not share `.venv`, `node_modules`, Cargo target state, or simulator environments
 between Windows and Linux. Linux CI resolves its own platform environment.
 
-## CI authority (ADR-024)
+## CI authority (ADR-025)
 
-Full qualification is authoritative only on dedicated self-hosted runners.
-`.github/workflows/quality.yml` routes every gate by explicit labels:
+Portable software qualification is authoritative on ephemeral GitHub-hosted runners.
+`.github/workflows/quality.yml` is the only qualification workflow, and every gate
+runs on both explicit, pinned images:
 
-| platform role | labels |
+| platform role | image |
 | --- | --- |
-| Windows x86-64 product/runtime | `[self-hosted, Windows, X64, dynamisbench]` |
-| Linux x86-64 core/portability/determinism | `[self-hosted, Linux, X64, dynamisbench]` |
+| Windows x86-64 product/runtime | `windows-2025` |
+| Linux x86-64 core/portability/determinism | `ubuntu-24.04` |
 
-The `dynamisbench` label is what keeps a qualification job off an unrelated project's
-self-hosted runner. Do not route to a bare `self-hosted` pool.
+A hosted result on these images satisfies a qualification, milestone, release,
+cross-platform determinism, or scientific-evidence gate. There is no second,
+"non-authoritative" hosted workflow, because the only reason one existed was that
+the authoritative workflow could not run fork code.
 
-* `windows-latest` / `ubuntu-latest` may appear only in `smoke-hosted.yml`, whose
-  workflow and job names are marked `NON-AUTHORITATIVE`. A hosted result never
-  satisfies a qualification, milestone, release, cross-platform determinism, or
-  scientific-evidence gate, whatever its conclusion.
-* If a required self-hosted runner is offline, its gate stays queued. That is the
-  correct outcome. Do not add a hosted fallback to turn a blocked gate green.
-* Only trusted refs reach the persistent runners: pushes to `main`, manual
-  `workflow_dispatch`, and pull requests whose head repository is this repository.
-  A fork pull request runs the hosted smoke workflow and nothing else.
+* Pin the image. `-latest` is rejected: a result that cannot be tied to a named
+  runner image cannot be interpreted later. `python/tests/test_workflow_authority.py`
+  resolves each job's matrix and admits only the two approved images.
+* Do not route a portable gate to `self-hosted`. A self-hosted runner is not a
+  higher-authority tier; it is introduced only when a specific claim genuinely
+  needs hardware, an accelerator, a proprietary or simulator installation, a
+  licensed asset, or an exact declared execution host — and that issue must say so.
+  An unavailable special-purpose runner blocks only that claim; it must never leave
+  unrelated portable software unfinished, and it must never grow a hosted or
+  self-hosted fallback that turns a blocked gate green.
+* Fork pull requests may run this matrix. The hosted runners are ephemeral and
+  isolated, which is exactly why that is acceptable, so no
+  `pull_request.head.repo.full_name` trust gate belongs in a portable job. The
+  price is that the token stays `contents: read`, no secret is referenced, and
+  checkout must not persist credentials into a tree that fork code now controls.
 * `pull_request_target` must not be used here. It checks out untrusted PR head code
-  with a privileged token, which is exactly how a public repository's self-hosted
-  runners get compromised.
-* Runner credentials, workspaces, caches, and toolchains are mutable infrastructure,
-  not scientific authority. The `platform-identity` gate publishes the runner
-  OS/architecture and toolchain identity as a run artifact instead of trusting
-  runner-local state.
+  with a privileged token.
+* Runner images, caches, workspaces, and toolchains are mutable infrastructure, not
+  scientific authority. The `platform-identity` gate publishes the runner image,
+  OS/architecture, commit, and resolved Python/uv/Node/pnpm/Rust/Cargo versions as a
+  run artifact, and it is the only gate that publishes one.
 
-`python/tests/test_workflow_authority.py` enforces these rules as a gate, so a
-hosted fallback, a dropped label, a removed trust condition, or a reintroduced
-`pull_request_target` fails CI rather than waiting for review.
+`python/tests/test_workflow_authority.py` enforces these rules as a gate, so an
+unapproved image, a dropped platform, a reintroduced `self-hosted` route, a widened
+permission, a tolerated failure, or a `pull_request_target` fails CI rather than
+waiting for review.
 
 ## Quality gates
 
