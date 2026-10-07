@@ -367,20 +367,52 @@ def test_a_generated_payload_declares_exactly_its_own_files(
     assert canonical_of(manifest) == manifest, "a sealed manifest is stored canonically"
 
 
-def test_a_path_too_long_for_the_operating_system_fails_cleanly(tmp_path: Path) -> None:
-    """A legal bundle path the host cannot write fails with a named error, not a crash.
+def test_a_payload_the_filesystem_refuses_fails_with_a_named_error(tmp_path: Path) -> None:
+    """A write the operating system refuses fails with a named error, not a crash.
+
+    This is the portable half of that boundary: the caller must learn which payload could not be
+    written, naming it, rather than receiving an unhandled ``OSError`` or a truncated file. The
+    refusal is provoked with a directory standing where the payload file must go, because every
+    filesystem refuses that, on every host, for reasons that have nothing to do with how deep a
+    workspace happens to live or whether the host has long paths enabled.
+    """
+    from dynamisbench.evidence import BundleOperationError
+
+    root = tmp_path / "a"
+    source, evidence = root / "source", root / "evidence"
+    source.mkdir(parents=True)
+    evidence.mkdir(parents=True)
+    workspace = initialize_workspace(source, evidence)
+    bundle = create_staging_bundle(workspace, RUN)
+    name = "payload.json"
+
+    written = bundle.write_payload(name, b"{}")
+    written.unlink()
+    written.mkdir()
+
+    with pytest.raises(BundleOperationError, match="could not be written") as refusal:
+        bundle.write_payload(name, b"{}")
+    assert name in str(refusal.value), "the refusal must name the artifact that failed"
+
+
+def test_a_path_too_long_for_this_host_fails_cleanly(tmp_path: Path) -> None:
+    """A legal bundle path this host cannot write fails with a named error, not a crash.
 
     Found by a property test, and recorded here because it is a real boundary rather than a
-    quirk of one generator. ``BundleRelativePath`` bounds the *reference* — 1024 characters,
+    quirk of one generator. ``BundleRelativePath`` bounds the *reference`` — 1024 characters,
     inherited from the workspace gate — because that is what portability is defined against; it
     cannot bound the *absolute* path, which is a function of where the workspace happens to
     live. On Windows the two meet at ``MAX_PATH``, and exceeding it produces a clean
-    ``BundleOperationError`` naming the artifact, which is the correct outcome: the caller
-    learns which payload could not be written instead of getting a truncated file or an
-    unhandled ``OSError``.
+    ``BundleOperationError`` naming the artifact.
 
-    The limit is therefore a property of the deployment rather than of the science, and a
-    workspace whose evidence root is very deep should live closer to its drive.
+    Whether that meeting point exists is a property of the host rather than of this code: a host
+    with long paths enabled has no ``MAX_PATH`` for a 244-character reference to reach, and there
+    the boundary cannot be provoked at all. So the host's own behaviour is measured by attempting
+    the write rather than inferred from a platform name. Where the limit exists the refusal is
+    asserted to be the named one and to name the artifact; where it does not, the test says that
+    rather than asserting something about a machine it is not running on. The conversion itself
+    is proved on every host by
+    :func:`test_a_payload_the_filesystem_refuses_fails_with_a_named_error`.
     """
     from dynamisbench.evidence import BundleOperationError
 
@@ -392,8 +424,18 @@ def test_a_path_too_long_for_the_operating_system_fails_cleanly(tmp_path: Path) 
     bundle = create_staging_bundle(workspace, RUN)
     name = f"{'n' * 240}.json"
     assert len(name) < 1024, "the name is inside the bundle path language"
-    with pytest.raises(BundleOperationError, match="could not be written"):
+    try:
         bundle.write_payload(name, b"{}")
+    except BundleOperationError as refusal:
+        assert "could not be written" in str(refusal)
+        assert name in str(refusal), "the refusal must name the artifact that failed"
+        return
+    pytest.skip(
+        "this host writes a 244-character reference, so it has no path length for the bundle "
+        "reference bound to meet and the operating system refuses nothing here; the reference "
+        "bound is proved by the naming gates and the refusal-to-named-error conversion by "
+        "test_a_payload_the_filesystem_refuses_fails_with_a_named_error"
+    )
 
 
 # --- roles are optional and never inferred ----------------------------------------------------
