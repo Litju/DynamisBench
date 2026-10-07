@@ -11,7 +11,7 @@ This repository is **not** the architectural authority. The living authority is 
 Linear project **P-RES-35 — DynamisBench**:
 
 * Architecture & System Design
-* Architecture Decision Register (ADR-001 … ADR-023)
+* Architecture Decision Register (ADR-001 … ADR-025)
 * Locked Tech Stack & Product Runtime
 * Engine, SUT & Execution Contracts
 * Evidence & Provenance Model
@@ -87,17 +87,26 @@ locked tech stack schedules before v0.1.
 
 ## CI
 
-`.github/workflows/quality.yml` runs three jobs on `windows-latest` and
-`ubuntu-latest`:
+`.github/workflows/quality.yml` is the only qualification workflow (ADR-025). Every
+gate runs on both explicit GitHub-hosted images, `windows-2025` and `ubuntu-24.04`:
 
-| Job       | Gate                                                                |
-| --------- | ------------------------------------------------------------------- |
-| `python`  | locked `uv sync`, Ruff lint + format, Pyright, pytest with Hypothesis |
-| `frontend`| locked `pnpm install`, `tsc --noEmit`, Vitest, Vite build             |
+| Job | Gate |
+| --- | --- |
+| `platform-identity` | runner image, OS/architecture, commit, and resolved Python/uv/Node/pnpm/Rust/Cargo versions, published as a run artifact |
+| `python` | locked `uv sync`, Ruff lint + format, Pyright, pytest with the `ci` Hypothesis profile |
+| `frontend` | locked `pnpm install`, `tsc --noEmit`, Vitest, Vite build |
 | `desktop` | Rust toolchain, Tauri Linux system deps, workbench build, `cargo build --locked` |
 
-## Scope of the current bootstrap (RES-227 / DB-1.1)
+Hosted runs are authoritative for portable software claims: repository code and
+deterministic behaviour, canonical identity, CLI/API/frontend behaviour, and desktop
+compilation. A claim that genuinely needs hardware, an accelerator, a proprietary or
+simulator installation, or an exact declared host requires a purpose-built runner and
+says so in its own issue; an unavailable one blocks only that claim.
 
-Repository, toolchains, package boundaries, and CI skeleton only. Explicitly not
-present yet: simulator libraries, scientific algorithms, database or control-plane
-services, execution environments, product features, and packaging.
+## Scope of the current baseline
+
+The scientific core — canonical identity, validated domain specs, deterministic
+`StudyPlan`/`RunSpec` compilation, workspace, and sealed evidence — and the local
+application boundary (`/api/v1` plus the session-secured loopback sidecar) exist and
+are qualified. Explicitly not present yet: simulator libraries, numerical simulation,
+execution environments, database or control-plane services, product UI, and packaging.
