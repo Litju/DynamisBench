@@ -59,6 +59,11 @@ jobs:
         with:
           node-version: 24
       - uses: dtolnay/rust-toolchain@stable
+      # The same locked environment the qualification jobs build, so the interpreter recorded
+      # below is the interpreter they will run rather than one inferred from a declaration.
+      - name: Resolve the qualified Python environment
+        working-directory: python
+        run: uv sync --frozen
       - name: Record runner image and toolchain identity
         shell: bash
         run: |
@@ -68,12 +73,12 @@ jobs:
             resolved="$("$@" --version 2>&1 | head -n 1 || true)"
             printf '%s' "${resolved:-absent}"
           }
-          # The interpreter the qualification jobs will actually run, resolved the way uv
-          # resolves it - not the one the image happens to put on PATH. Both images ship a
-          # 3.12 of their own, and recording that as the qualified toolchain would report a
-          # difference between the platforms that is not there.
+          # The interpreter of the environment the qualification jobs actually run in,
+          # built from the same locked `uv sync` they use - not the one the image happens to
+          # put on PATH. Both images ship a 3.12 of their own, and recording that as the
+          # qualified toolchain would report a difference between the platforms that is not there.
           declared_python="$(tr -d '[:space:]' < python/.python-version)"
-          qualified_python="$(uv python find --project python)"
+          qualified_python="$(cd python && uv run --frozen python -c 'import sys; print(sys.executable)')"
           qualified_version="$("$qualified_python" -c 'import platform; print(platform.python_version())')"
           if [ "$qualified_version" != "$declared_python" ]; then
             printf '::error::the qualified interpreter is %s but python/.python-version declares %s\n' \
