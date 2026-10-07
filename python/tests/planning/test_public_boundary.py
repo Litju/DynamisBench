@@ -123,6 +123,16 @@ as a surprise.
 
 FIRST_PARTY = frozenset({"dynamisbench"})
 
+INTERPRETER_BOOTSTRAP_MODULES = frozenset({"sitecustomize", "usercustomize"})
+"""Modules ``site`` imports at start-up if the machine's environment happens to provide them.
+
+Ubuntu's system interpreter, for instance, loads a ``sitecustomize`` that exists to wire up the
+distribution's own crash reporter, and a uv-managed interpreter loads none. Neither is a
+dependency of this package, and neither is in ``sys.stdlib_module_names`` because neither ships
+with CPython. Leaving them in would make this gate a measurement of the runner image rather than
+of the import graph, which is the one thing it exists to be.
+"""
+
 EXPECTED_FIRST_PARTY = ("dynamisbench.domain.spec", "dynamisbench.identity")
 """The two layers planning is built on, and nothing else.
 
@@ -343,6 +353,7 @@ def test_importing_the_planning_package_loads_exactly_the_declared_dependencies(
         name
         for name in top_level
         if not name.startswith(("dynamisbench", "_", "encodings"))
+        and name not in INTERPRETER_BOOTSTRAP_MODULES
         and name not in sys.stdlib_module_names
     }
     assert third_party == MEASURED_EXTERNAL_SURFACE, sorted(third_party)
