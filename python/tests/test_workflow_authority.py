@@ -156,39 +156,49 @@ def test_every_gate_qualifies_on_windows_x64_and_linux_x64() -> None:
     assert not partial, f"each portable gate must run on {sorted(PORTABLE_TARGETS)}: {partial}"
 
 
-PYTHON_VERSION_FILE = "python/.python-version"
+PYTHON_VERSION_FILE = REPO_ROOT / "python" / ".python-version"
 SETUP_UV = "astral-sh/setup-uv"
+# The inputs a setup action would have to be given to name a Python, none of which belongs here:
+# ``version``/``version-file`` name the uv release to install, not the interpreter to run, and
+# ``python-version`` would be a second source of truth that can drift from the version file.
+PYTHON_NAMING_INPUTS = ("version", "version-file", "python-version", "python-version-file")
 
 
-def test_the_python_toolchain_is_pinned_from_the_repository_declaration() -> None:
-    """The two images must resolve the Python the repository declares, not their own.
+def test_the_qualified_python_is_whatever_the_repository_declares() -> None:
+    """Both images must run the interpreter the repository pins, not the one they ship.
 
-    A setup action that is handed an input name it does not accept ignores it and warns, rather
-    than failing, so a typo turns a pinned toolchain into whatever interpreter the runner image
-    happens to ship. That is precisely the drift the identity record cannot detect - it records
-    the interpreter that ran, not the one that was declared - so it is checked here, where the
-    declared version file and the step that consumes it are both visible.
+    Two ways this goes wrong, both silent. An input name a setup action does not accept is
+    ignored with a warning, so a pin that looks present resolves nothing; and a declaration that
+    names only a minor version is satisfied by whatever patch the image happens to carry, so the
+    two qualification platforms run different interpreters while both claim to be qualified. The
+    first was real - ``python-version-file`` is not an input ``setup-uv`` has - and it shipped
+    3.12.10 and 3.12.3 on the two images. Neither drift is visible to the identity record, which
+    faithfully reports the interpreter that ran rather than the one that was declared.
     """
-    resolved = {
-        f"{job_id} / {step.get('name', step['uses'])}": (step.get("with") or {})
+    steps = [
+        (job_id, step)
         for job_id, job in _gates().items()
         for step in job["steps"]
         if str(step.get("uses", "")).startswith(SETUP_UV)
+    ]
+    assert steps, f"no gate prepares the locked Python environment through {SETUP_UV}"
+    overridden = {
+        f"{job_id} / {step['uses']}": {
+            key: value
+            for key, value in (step.get("with") or {}).items()
+            if key in PYTHON_NAMING_INPUTS
+        }
+        for job_id, step in steps
+        if set(PYTHON_NAMING_INPUTS) & set(step.get("with") or {})
     }
-    assert resolved, f"no gate may resolve the declared Python through {SETUP_UV}"
-    drifted = {
-        name: inputs
-        for name, inputs in resolved.items()
-        if inputs.get("version-file") != PYTHON_VERSION_FILE
-    }
-    assert not drifted, f"every {SETUP_UV} step must read {PYTHON_VERSION_FILE}: {drifted}"
-    literals = {
-        name: inputs
-        for name, inputs in resolved.items()
-        if "version" in inputs and "version-file" not in inputs
-    }
-    assert not literals, (
-        f"the Python version must come from the repository, not a literal: {literals}"
+    assert not overridden, (
+        f"{PYTHON_VERSION_FILE.name} is the single source of the qualified Python; uv reads it "
+        f"itself, so a version given here can only drift from it: {overridden}"
+    )
+    declared = PYTHON_VERSION_FILE.read_text(encoding="utf-8").strip()
+    assert re.fullmatch(r"\d+\.\d+\.\d+", declared), (
+        f"{declared!r} names a minor version, which each runner image may satisfy with a "
+        "different patch release; the qualified interpreter must be named exactly"
     )
 
 
