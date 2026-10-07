@@ -1,17 +1,17 @@
-# ADR-024: full DynamisBench qualification is authoritative only on dedicated
-# self-hosted runners. A GitHub-hosted result is never a qualification, and an
-# unavailable required runner leaves its gate queued. There is deliberately no
-# hosted fallback label, matrix entry, or substitute job in this file.
+# ADR-025: portable software qualification is authoritative on ephemeral
+# GitHub-hosted runners. Windows x64 and Linux x64 are distinct qualification
+# targets, each on an explicit stable image, and each resolves its own platform
+# environment. ADR-024 (universal self-hosted runners) is superseded; no gate in
+# this file routes to `self-hosted` and there is no hosted fallback.
 #
-# Trust boundary (ADR-024): every job below is gated so that only trusted refs
-# execute on these persistent runners. Pushes to `main`, manual dispatches, and
-# pull requests whose head repository is this repository are trusted. A pull
-# request from a fork is untrusted: its jobs are skipped, not executed, so fork
-# code never reaches a persistent self-hosted machine. Fork pull requests get the
-# clearly non-authoritative GitHub-hosted checks in `smoke-hosted.yml`.
+# These runners are ephemeral and isolated, so pull-request code — including code
+# from a public fork — may execute here. The price of that is honoured: the token
+# is read-only, no secret is referenced, and `pull_request_target` is deliberately
+# not used anywhere (it would check out untrusted head code with a privileged
+# token).
 #
-# `pull_request_target` is deliberately not used anywhere: it would check out and
-# execute untrusted PR head code on a privileged self-hosted runner.
+# The image labels are pinned explicitly rather than through `-latest`, so a
+# qualification result is interpretable against a named runner image.
 name: quality
 
 on:
@@ -26,60 +26,73 @@ permissions:
   contents: read
 
 concurrency:
-  group: quality-authoritative-${{ github.ref }}
+  group: quality-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Records the runner and toolchain identity the rest of this workflow is
-  # qualified against (ADR-024/ADR-009). The record is an artifact, never
-  # runner-local authority.
+  # Records the runner image and resolved toolchain identity the rest of this
+  # workflow is qualified against (ADR-025, ADR-009). The record is an artifact,
+  # never runner-local authority, and it is deliberately free of the WSL/uname
+  # sniffing that only ever distinguished the old self-hosted Linux target: the
+  # Linux job here is a real Linux VM.
   platform-identity:
     name: platform-identity (${{ matrix.name }})
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ matrix.runs-on }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: windows-x64
-            runs-on: [self-hosted, Windows, X64, dynamisbench]
+            runs-on: windows-2025
           - name: linux-x64
-            runs-on: [self-hosted, Linux, X64, dynamisbench]
+            runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Record runner and toolchain identity
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version-file: python/.python-version
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Record runner image and toolchain identity
         shell: bash
         run: |
           set -euo pipefail
+          tool_version() {
+            local resolved
+            resolved="$("$@" --version 2>&1 | head -n 1 || true)"
+            printf '%s' "${resolved:-absent}"
+          }
           mkdir -p evidence
           {
             printf '{\n'
-            printf '  "workflow": "quality",\n'
+            printf '  "authority": "ADR-025",\n'
             printf '  "authoritative": true,\n'
-            printf '  "runner_name": "%s",\n'        "${RUNNER_NAME}"
-            printf '  "runner_os": "%s",\n'          "${RUNNER_OS}"
-            printf '  "runner_arch": "%s",\n'        "${RUNNER_ARCH}"
-            printf '  "runner_temp": "%s",\n'        "${RUNNER_TEMP}"
-            printf '  "repository": "%s",\n'         "${GITHUB_REPOSITORY}"
-            printf '  "ref": "%s",\n'                "${GITHUB_REF}"
-            printf '  "sha": "%s",\n'                "${GITHUB_SHA}"
-            printf '  "kernel": "%s",\n'             "$(uname -a)"
-            printf '  "wsl": %s,\n'                 "$(if grep -qi microsoft /proc/version 2>/dev/null; then echo true; else echo false; fi)"
-            printf '  "python": "%s",\n'             "$(python3 --version 2>&1 || echo absent)"
-            printf '  "uv": "%s",\n'                 "$(uv --version 2>&1 || echo absent)"
-            printf '  "node": "%s",\n'               "$(node --version 2>&1 || echo absent)"
-            printf '  "pnpm": "%s",\n'               "$(pnpm --version 2>&1 || echo absent)"
-            printf '  "rustc": "%s"\n'               "$(rustc --version 2>&1 || echo absent)"
+            printf '  "target": "%s",\n'         "${{ matrix.name }}"
+            printf '  "runner_image": "%s",\n'   "${RUNNER_IMAGE:-absent}"
+            printf '  "image_os": "%s",\n'       "${ImageOS:-absent}"
+            printf '  "image_version": "%s",\n' "${ImageVersion:-absent}"
+            printf '  "runner_os": "%s",\n'      "${RUNNER_OS}"
+            printf '  "runner_arch": "%s",\n'    "${RUNNER_ARCH}"
+            printf '  "repository": "%s",\n'     "${GITHUB_REPOSITORY}"
+            printf '  "ref": "%s",\n'            "${GITHUB_REF}"
+            printf '  "github_sha": "%s",\n'     "${GITHUB_SHA}"
+            printf '  "python": "%s",\n'         "$(tool_version python)"
+            printf '  "uv": "%s",\n'             "$(tool_version uv)"
+            printf '  "node": "%s",\n'           "$(tool_version node)"
+            printf '  "pnpm": "%s",\n'           "$(tool_version pnpm)"
+            printf '  "rustc": "%s",\n'          "$(tool_version rustc)"
+            printf '  "cargo": "%s"\n'           "$(tool_version cargo)"
             printf '}\n'
           } > evidence/platform-identity.json
           cat evidence/platform-identity.json
           {
-            echo "### Authoritative runner identity"
+            echo "### Hosted qualification identity"
             echo
             echo '```json'
             cat evidence/platform-identity.json
@@ -94,9 +107,6 @@ jobs:
 
   python:
     name: python (${{ matrix.name }})
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 60
     strategy:
@@ -104,9 +114,9 @@ jobs:
       matrix:
         include:
           - name: windows-x64
-            runs-on: [self-hosted, Windows, X64, dynamisbench]
+            runs-on: windows-2025
           - name: linux-x64
-            runs-on: [self-hosted, Linux, X64, dynamisbench]
+            runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: python
@@ -114,7 +124,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      # Each runner resolves its own platform environment; no .venv, node_modules,
+      # Each job resolves its own platform environment; no .venv, node_modules,
       # Cargo target, or simulator environment is shared across OSes (ADR-023).
       - uses: astral-sh/setup-uv@v6
         with:
@@ -127,7 +137,7 @@ jobs:
           {
             echo "python: $(uv run python --version)"
             echo "uv: $(uv --version)"
-            echo "runner: ${RUNNER_NAME} (${RUNNER_OS}/${RUNNER_ARCH})"
+            echo "runner: ${RUNNER_IMAGE} ${RUNNER_OS}/${RUNNER_ARCH} (${ImageVersion:-unknown})"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Lint (Ruff)
         run: uv run ruff check .
@@ -142,9 +152,6 @@ jobs:
 
   frontend:
     name: frontend (${{ matrix.name }})
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 60
     strategy:
@@ -152,9 +159,9 @@ jobs:
       matrix:
         include:
           - name: windows-x64
-            runs-on: [self-hosted, Windows, X64, dynamisbench]
+            runs-on: windows-2025
           - name: linux-x64
-            runs-on: [self-hosted, Linux, X64, dynamisbench]
+            runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -171,7 +178,7 @@ jobs:
           {
             echo "node: $(node --version)"
             echo "pnpm: $(pnpm --version)"
-            echo "runner: ${RUNNER_NAME} (${RUNNER_OS}/${RUNNER_ARCH})"
+            echo "runner: ${RUNNER_IMAGE} ${RUNNER_OS}/${RUNNER_ARCH} (${ImageVersion:-unknown})"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Type check (tsc)
         run: pnpm run typecheck
@@ -182,9 +189,6 @@ jobs:
 
   desktop:
     name: desktop (${{ matrix.name }})
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 120
     strategy:
@@ -192,9 +196,9 @@ jobs:
       matrix:
         include:
           - name: windows-x64
-            runs-on: [self-hosted, Windows, X64, dynamisbench]
+            runs-on: windows-2025
           - name: linux-x64
-            runs-on: [self-hosted, Linux, X64, dynamisbench]
+            runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -232,7 +236,7 @@ jobs:
             echo "pnpm: $(pnpm --version)"
             echo "rustc: $(rustc --version)"
             echo "cargo: $(cargo --version)"
-            echo "runner: ${RUNNER_NAME} (${RUNNER_OS}/${RUNNER_ARCH})"
+            echo "runner: ${RUNNER_IMAGE} ${RUNNER_OS}/${RUNNER_ARCH} (${ImageVersion:-unknown})"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Build the workbench (Tauri frontendDist)
         run: pnpm run build
