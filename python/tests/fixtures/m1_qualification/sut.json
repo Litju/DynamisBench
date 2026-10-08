@@ -1,0 +1,19 @@
+{
+  "sut_id": "sut.m1.controller",
+  "version": "1.0.0",
+  "label": "M1 qualification SUT",
+  "description": "Compact system under test for M1 infrastructure qualification.",
+  "kind": "controller",
+  "interface": {
+    "kind": "subprocess",
+    "command": ["python", "-m", "m1_controller"]
+  },
+  "provenance": {
+    "repository": "org/m1-controller",
+    "ref": "refs/tags/v1.0.0",
+    "resolved_commit": "a1b2c3d4e5f6",
+    "build_digest": null
+  },
+  "required_capabilities": [],
+  "notes": []
+}

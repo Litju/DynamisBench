@@ -1,0 +1,44 @@
+{
+  "realization_id": "rl.m1.minimal",
+  "version": "1.0.0",
+  "label": "M1 minimal realization",
+  "description": "Compact realization for M1 infrastructure qualification.",
+  "benchmark": {
+    "identifier": "db.m1-qual",
+    "version": "1.0.0"
+  },
+  "engine": {
+    "engine": "mujoco",
+    "specifier": {
+      "clauses": [
+        {
+          "comparator": "exact",
+          "version": "3.3.0"
+        }
+      ]
+    },
+    "notes": null
+  },
+  "capabilities": [
+    {
+      "capability": "forward_dynamics",
+      "summary": "realization provides forward_dynamics",
+      "limitations": []
+    }
+  ],
+  "quantity_mappings": [
+    {
+      "quantity": "q.m1.height",
+      "source": "sensor_com",
+      "transform": {
+        "name": "identity",
+        "version": "1.0.0"
+      },
+      "notes": []
+    }
+  ],
+  "engine_configuration": [],
+  "assets": [],
+  "known_discrepancies": [],
+  "notes": []
+}
