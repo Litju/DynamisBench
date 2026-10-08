@@ -62,6 +62,16 @@ def test_spec_validate_refuses_malformed_json(tmp_path: Path) -> None:
     assert "Traceback" not in result.stderr
 
 
+def test_spec_validate_refuses_invalid_utf8(tmp_path: Path) -> None:
+    invalid = tmp_path / "invalid-utf8.json"
+    invalid.write_bytes(b'{"study_id": "study.m1.qualification", "note": "\xff\xfe"}')
+    result = run_cli("spec", "validate", "--kind", "study", str(invalid))
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "invalid UTF-8" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
 def test_identity_inspect_is_stable_across_json_formatting() -> None:
     fixture = FIXTURE_ROOT / "benchmark.json"
     canonical = run_cli("identity", "inspect", "--kind", "benchmark", str(fixture))
@@ -129,4 +139,36 @@ def test_plan_compile_refuses_a_missing_varied_factor_case() -> None:
     ]
     result = run_cli(*args)
     assert result.returncode != 0
+    assert "Traceback" not in result.stderr
+
+
+def test_plan_compile_refuses_duplicate_authority(tmp_path: Path) -> None:
+    """Two definitions with the same ``(identifier, version)`` are invalid user input.
+
+    The refusal comes from the planning catalog's own validators, so it must be bounded
+    like every other input failure rather than escaping as a Pydantic traceback.
+    """
+    duplicate = tmp_path / "duplicate-benchmark.json"
+    duplicate.write_bytes((FIXTURE_ROOT / "benchmark.json").read_bytes())
+    result = run_cli(
+        "plan",
+        "compile",
+        "--study",
+        str(FIXTURE_ROOT / "study.json"),
+        "--benchmark",
+        str(FIXTURE_ROOT / "benchmark.json"),
+        "--benchmark",
+        str(duplicate),
+        "--realization",
+        str(FIXTURE_ROOT / "realization.json"),
+        "--sut",
+        str(FIXTURE_ROOT / "sut.json"),
+        "--environment",
+        str(FIXTURE_ROOT / "environment.json"),
+        "--factor-case",
+        str(FIXTURE_ROOT / "factor-case.json"),
+    )
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert "invalid planning authority" in result.stderr
     assert "Traceback" not in result.stderr

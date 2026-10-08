@@ -9,21 +9,26 @@ qualification target. The report states exactly what M1 qualifies — software a
 domain infrastructure only — and what remains outside the claim ceiling.
 
 Determinism rules: no timestamps, no network, no hidden Git lookup, no absolute
-machine paths, keys sorted, ASCII-only output, and the same inputs always produce
-byte-identical output.
+machine paths, keys sorted, ASCII-only output, LF-only canonical bytes, and the
+same inputs always produce byte-identical output.
+
+The module is deliberately a small set of pure-ish functions over explicit paths
+so that ``tests/test_m1_qualification.py`` can qualify every refusal path without
+re-running the pytest suite it is generating evidence for.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = "m1.qualification.1"
+SCHEMA_VERSION = "m1.qualification.2"
 
 NON_CLAIMS = [
     "human-movement model validity",
@@ -92,7 +97,11 @@ QUALIFIED_GATES: tuple[dict[str, str], ...] = (
     {
         "name": "cross-platform-parity",
         "evidence": "m1-qualification-windows-x64 / m1-qualification-linux-x64 artifacts",
-        "summary": "Digests, run counts, and fingerprint summaries match by platform.",
+        "summary": (
+            "cross-platform-parity evidence input: per-platform digests, run counts, and "
+            "fingerprint summaries; the pairwise comparison across both artifacts establishes "
+            "parity."
+        ),
     },
 )
 
@@ -101,7 +110,8 @@ class EvidenceError(Exception):
     """Evidence is missing, malformed, or not clean enough to certify."""
 
 
-def _parse_junit(path: Path) -> dict[str, Any]:
+def parse_junit(path: Path) -> dict[str, Any]:
+    """Read one JUnit XML report and return its clean counts and skip records."""
     if not path.is_file():
         raise EvidenceError(f"JUnit report not found: {path}")
     try:
@@ -148,7 +158,8 @@ def _parse_junit(path: Path) -> dict[str, Any]:
     }
 
 
-def _run_cli(args: list[str], *, executable: str) -> str:
+def run_cli(args: list[str], *, executable: str) -> str:
+    """Run one ``dbench`` primitive in a fresh process and return its stdout."""
     result = subprocess.run(
         [executable, "-m", "dynamisbench", *args],
         capture_output=True,
@@ -160,11 +171,11 @@ def _run_cli(args: list[str], *, executable: str) -> str:
     return result.stdout
 
 
-def _cli_smoke(
+def cli_smoke(
     fixture_root: Path, *, executable: str
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Exercise the three real primitives against the committed fixtures."""
-    validate_out = _run_cli(
+    validate_out = run_cli(
         ["spec", "validate", "--kind", "benchmark", str(fixture_root / "benchmark.json")],
         executable=executable,
     )
@@ -172,7 +183,7 @@ def _cli_smoke(
     if validate.get("valid") is not True or validate.get("kind") != "benchmark":
         raise EvidenceError("spec validate output failed the expected shape")
 
-    identity_out = _run_cli(
+    identity_out = run_cli(
         ["identity", "inspect", "--kind", "benchmark", str(fixture_root / "benchmark.json")],
         executable=executable,
     )
@@ -180,7 +191,7 @@ def _cli_smoke(
     if identity.get("algorithm") != "sha256" or not identity.get("digest"):
         raise EvidenceError("identity inspect output failed the expected shape")
 
-    plan_out = _run_cli(
+    plan_out = run_cli(
         [
             "plan",
             "compile",
@@ -222,29 +233,30 @@ def _cli_smoke(
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Emit the deterministic M1 qualification report.")
-    parser.add_argument("--target", required=True, choices=["windows-x64", "linux-x64"])
-    parser.add_argument("--git-sha", required=True)
-    parser.add_argument("--junit", required=True, type=Path)
-    parser.add_argument("--fixture-root", required=True, type=Path)
-    parser.add_argument("--output", required=True, type=Path)
-    args = parser.parse_args(argv)
+def build_report(
+    *,
+    target: str,
+    tested_sha: str,
+    source_sha: str,
+    summary: dict[str, Any],
+    validate_smoke: dict[str, Any],
+    identity_smoke: dict[str, Any],
+    plan_summary: dict[str, Any],
+) -> dict[str, Any]:
+    """Assemble the deterministic report object from already-verified evidence.
 
-    try:
-        summary = _parse_junit(args.junit)
-        validate_smoke, identity_smoke, plan_summary = _cli_smoke(
-            args.fixture_root, executable=sys.executable
-        )
-    except (EvidenceError, json.JSONDecodeError, KeyError, TypeError) as exc:
-        print(f"m1_qualification: error: {exc}", file=sys.stderr)
-        return 2
-
-    report = {
+    ``tested_sha`` is the commit the qualification actually checked out and ran;
+    ``source_sha`` is the branch head that supplied the change, which on a pull
+    request is a different commit (the synthetic merge commit is tested). Both are
+    recorded under their own names, and the tested commit is never mislabelled as
+    the source.
+    """
+    return {
         "schema_version": SCHEMA_VERSION,
         "milestone": "M1",
-        "target": args.target,
-        "git_sha": args.git_sha,
+        "target": target,
+        "tested_sha": tested_sha,
+        "source_sha": source_sha,
         "test_summary": {
             "total": summary["total"],
             "passed": summary["passed"],
@@ -272,11 +284,58 @@ def main(argv: list[str] | None = None) -> int:
         "non_claims": NON_CLAIMS,
     }
 
-    output_dir = args.output.parent
-    if output_dir and not output_dir.exists():
-        output_dir.mkdir(parents=True)
-    text = json.dumps(report, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
-    args.output.write_text(text, encoding="utf-8")
+
+def render_report(report: dict[str, Any]) -> str:
+    """One canonical LF-only JSON rendering of the report."""
+    return json.dumps(report, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
+
+
+def write_report(path: Path, text: str) -> None:
+    """Write the report as explicit UTF-8 bytes, never through newline translation."""
+    if path.parent and not path.parent.exists():
+        path.parent.mkdir(parents=True)
+    path.write_bytes(text.encode("utf-8"))
+
+
+def _validate_sha1(value: str, *, label: str) -> str:
+    """A full lowercase SHA-1 hex string, or a bounded evidence refusal."""
+    if not re.fullmatch(r"[0-9a-f]{40}", value):
+        raise EvidenceError(f"{label} must be a full lowercase SHA-1 hex string")
+    return value
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Emit the deterministic M1 qualification report.")
+    parser.add_argument("--target", required=True, choices=["windows-x64", "linux-x64"])
+    parser.add_argument("--tested-sha", required=True)
+    parser.add_argument("--source-sha", required=True)
+    parser.add_argument("--junit", required=True, type=Path)
+    parser.add_argument("--fixture-root", required=True, type=Path)
+    parser.add_argument("--output", required=True, type=Path)
+    args = parser.parse_args(argv)
+
+    try:
+        tested_sha = _validate_sha1(args.tested_sha, label="tested_sha")
+        source_sha = _validate_sha1(args.source_sha, label="source_sha")
+        summary = parse_junit(args.junit)
+        validate_smoke, identity_smoke, plan_summary = cli_smoke(
+            args.fixture_root, executable=sys.executable
+        )
+    except (EvidenceError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        print(f"m1_qualification: error: {exc}", file=sys.stderr)
+        return 2
+
+    report = build_report(
+        target=args.target,
+        tested_sha=tested_sha,
+        source_sha=source_sha,
+        summary=summary,
+        validate_smoke=validate_smoke,
+        identity_smoke=identity_smoke,
+        plan_summary=plan_summary,
+    )
+    text = render_report(report)
+    write_report(args.output, text)
     print(text)
     return 0
 

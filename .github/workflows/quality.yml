@@ -169,7 +169,8 @@ jobs:
         run: >
           uv run python tools/m1_qualification.py
           --target ${{ matrix.name }}
-          --git-sha ${{ github.event.pull_request.head.sha || github.sha }}
+          --tested-sha ${{ github.sha }}
+          --source-sha ${{ github.event.pull_request.head.sha || github.sha }}
           --junit evidence/pytest.xml
           --fixture-root tests/fixtures/m1_qualification
           --output evidence/m1-qualification-${{ matrix.name }}.json
