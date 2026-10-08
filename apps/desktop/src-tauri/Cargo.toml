@@ -10,6 +10,14 @@ name = "dynamisbench_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
+# The session credential is 32 bytes from the operating system CSPRNG (`getrandom`),
+# encoded as unpadded URL-safe base64 (`base64`). The two protocol records — readiness in,
+# shutdown out — are serde types. These four crates are the whole addition RES-376 makes:
+# there is no auth framework, no HTTP client, no logging framework, and no async runtime.
+base64 = "0.22"
+getrandom = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tauri = { version = "2", features = [] }
 
 [build-dependencies]

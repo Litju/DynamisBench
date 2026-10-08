@@ -85,9 +85,16 @@ def _command() -> list[str]:
 
 @contextlib.contextmanager
 def _sidecar(overrides: Mapping[str, str | None] | None = None) -> Iterator[subprocess.Popen[str]]:
-    """A running sidecar, guaranteed not to outlive the test."""
+    """A running sidecar, guaranteed not to outlive the test.
+
+    stdin is piped and left open, because RES-376 makes it the supervisor's control channel
+    and an EOF on it is supervisor loss: a sidecar whose stdin is inherited from a test runner
+    with nothing attached would be told its parent is gone and shut down on its own. A pipe
+    this fixture owns and never closes is the minimal version of "a supervisor exists".
+    """
     child = subprocess.Popen(
         _command(),
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -98,6 +105,8 @@ def _sidecar(overrides: Mapping[str, str | None] | None = None) -> Iterator[subp
     finally:
         if child.poll() is None:
             child.kill()
+        if child.stdin is not None and not child.stdin.closed:
+            child.stdin.close()
         for stream in (child.stdout, child.stderr):
             if stream is not None:
                 stream.close()

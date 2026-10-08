@@ -89,6 +89,20 @@ message that varied with the reason would report the reason, and the reason is e
 must not be reported.
 """
 
+NETWORK_ORIGIN_SCHEMES = ("http", "https")
+"""The schemes a browser origin read over the network may use."""
+
+TAURI_CUSTOM_PROTOCOL_ORIGIN = "tauri://localhost"
+"""The one non-network origin the desktop WebView may occupy.
+
+Tauri serves the bundled frontend over its own custom protocol on macOS and Linux, where the
+WebView's origin is exactly ``tauri://localhost`` — Windows is the platform that uses
+``http://tauri.localhost`` instead (RES-376). The scheme is non-network and only the Tauri
+runtime serves it, so it is the exact Linux/macOS analogue of the trusted Windows origin and
+is admitted by exact match alone: no other host under ``tauri:``, and no other custom scheme,
+is this origin.
+"""
+
 CORS_METHODS = ("GET", "POST", "OPTIONS")
 """The methods the workbench's HTTP surface uses or needs.
 
@@ -224,9 +238,16 @@ def _exact_origin(entry: object) -> str:
             f"{ALLOWED_ORIGINS_VARIABLE} contains an origin that is not a URL."
         ) from None
 
-    if parts.scheme not in ("http", "https"):
+    if parts.scheme == "tauri":
+        if parts.netloc != "localhost":
+            raise SessionConfigurationError(
+                f"{ALLOWED_ORIGINS_VARIABLE} tauri origins must be exactly "
+                f"{TAURI_CUSTOM_PROTOCOL_ORIGIN}."
+            )
+    elif parts.scheme not in NETWORK_ORIGIN_SCHEMES:
         raise SessionConfigurationError(
-            f"{ALLOWED_ORIGINS_VARIABLE} origins must be http or https."
+            f"{ALLOWED_ORIGINS_VARIABLE} origins must be http, https or "
+            f"{TAURI_CUSTOM_PROTOCOL_ORIGIN}."
         )
 
     if not parts.netloc or parts.username is not None or parts.password is not None:
@@ -353,7 +374,9 @@ __all__ = [
     "ALLOWED_ORIGINS_VARIABLE",
     "CORS_HEADERS",
     "CORS_METHODS",
+    "NETWORK_ORIGIN_SCHEMES",
     "SESSION_CREDENTIAL_VARIABLE",
+    "TAURI_CUSTOM_PROTOCOL_ORIGIN",
     "UNAUTHORIZED_MESSAGE",
     "RuntimeConfiguration",
     "SessionAuthentication",

@@ -51,6 +51,7 @@ from dynamisbench.api.session import (
     CORS_HEADERS,
     CORS_METHODS,
     SESSION_CREDENTIAL_VARIABLE,
+    TAURI_CUSTOM_PROTOCOL_ORIGIN,
     UNAUTHORIZED_MESSAGE,
     SessionConfigurationError,
     parse_allowed_origins,
@@ -233,6 +234,38 @@ def test_exact_origins_are_accepted(origins: tuple[str, ...]) -> None:
     assert parse_allowed_origins(json.dumps(list(origins))) == origins
 
 
+def test_the_tauri_custom_protocol_origin_is_the_only_custom_scheme_accepted() -> None:
+    """The bundled frontend's own origin, on the platforms that serve it over ``tauri:``.
+
+    Tauri uses ``http://tauri.localhost`` on Windows and exactly ``tauri://localhost`` on
+    macOS and Linux, so a packaged non-Windows session cannot start unless this one string is
+    admitted. It is admitted by exact match rather than by scheme, because "any origin under
+    ``tauri:``" is a wider grant than the one origin the WebView can occupy.
+    """
+    assert parse_allowed_origins(json.dumps([TAURI_CUSTOM_PROTOCOL_ORIGIN])) == (
+        TAURI_CUSTOM_PROTOCOL_ORIGIN,
+    )
+    assert TAURI_CUSTOM_PROTOCOL_ORIGIN == "tauri://localhost"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        '["tauri://evil.example"]',
+        '["tauri://localhost:5173"]',
+        '["tauri://localhost/"]',
+        '["tauri://localhost/app"]',
+        '["tauri://user@localhost"]',
+        '["tauri://localHOSt"]',
+        '["Tauri://localhost"]',
+    ],
+)
+def test_no_origin_under_the_custom_scheme_except_the_exact_one(value: str) -> None:
+    """A different host, port, path, credentials or casing is a different origin."""
+    with pytest.raises(SessionConfigurationError):
+        parse_allowed_origins(value)
+
+
 @pytest.mark.parametrize(
     ("value", "reason"),
     [
@@ -249,8 +282,7 @@ def test_exact_origins_are_accepted(origins: tuple[str, ...]) -> None:
         ('["null"]', "wildcard"),
         ('[""]', "wildcard"),
         ('["http://*.localhost"]', "wildcard"),
-        ('["file:///tauri"]', "http or https"),
-        ('["tauri://localhost"]', "http or https"),
+        ('["file:///tauri"]', "http, https"),
         ('["http://user:pass@tauri.localhost"]', "no credentials"),
         ('["http://tauri.localhost/app"]', "no path"),
         ('["http://tauri.localhost/"]', "no path"),
