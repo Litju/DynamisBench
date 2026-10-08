@@ -264,27 +264,53 @@ def test_platform_identity_publishes_image_and_toolchain_evidence() -> None:
     stale = [probe for probe in OBSOLETE_IDENTITY_PROBES if probe in recorded]
     assert not stale, f"hosted Linux is a real VM; obsolete runner probing: {stale}"
 
-    # Runner-local state is not scientific authority: only the identity gate and
-    # the Python matrix may publish qualification artifacts, and each publishes
-    # exactly its own kind: the identity record and the M1 qualification report.
-    allowed = {
-        IDENTITY_JOB: ("platform-identity-",),
-        "python": ("m1-qualification-",),
-    }
-    offenders = {}
+
+# Runner-local state is not scientific authority. Each job publishes exactly the
+# artifact it is entitled to, by exact name and path - never a prefix-shaped surface
+# that a later step could widen without this failing.
+EXPECTED_ARTIFACTS: dict[str, dict[str, object]] = {
+    IDENTITY_JOB: {
+        "name": "platform-identity-${{ matrix.name }}",
+        "path": "evidence/platform-identity.json",
+        "if-no-files-found": "error",
+        "retention-days": 90,
+    },
+    "python": {
+        "name": "m1-qualification-${{ matrix.name }}",
+        "path": "python/evidence/m1-qualification-${{ matrix.name }}.json",
+        "if-no-files-found": "error",
+        "retention-days": 90,
+    },
+}
+
+NO_ARTIFACT_JOBS = ("frontend", "desktop")
+
+
+def test_qualification_artifacts_publish_exactly_their_intended_surface() -> None:
+    """Exactly one upload step per entitled job, with exact names and paths.
+
+    A same-prefix allowance admits any number of artifacts under that prefix, which
+    is a publication surface rather than an authority. The identity record and the
+    M1 report are the whole of it; frontend and desktop publish none.
+    """
     for job_id, job in _gates().items():
-        names = [
-            str((step.get("with") or {}).get("name", ""))
+        uploads = [
+            step
             for step in job["steps"]
             if str(step.get("uses", "")).startswith("actions/upload-artifact")
         ]
-        if job_id in allowed:
-            bad = [name for name in names if not name.startswith(allowed[job_id])]
-            if bad:
-                offenders[job_id] = bad
-        elif names:
-            offenders[job_id] = names
-    assert not offenders, f"unexpected qualification artifacts published: {offenders}"
+        expected = EXPECTED_ARTIFACTS.get(job_id)
+        if expected is None:
+            assert job_id in NO_ARTIFACT_JOBS, f"unreviewed qualification job: {job_id}"
+            assert not uploads, f"{job_id} must publish no qualification artifact: {uploads}"
+            continue
+        assert len(uploads) == 1, (
+            f"{job_id} must publish exactly one qualification artifact, found {len(uploads)}"
+        )
+        published = dict(uploads[0].get("with") or {})
+        assert published == expected, (
+            f"{job_id} artifact publication drifted from its exact authority: {published!r}"
+        )
 
 
 def test_no_gate_is_marked_non_authoritative() -> None:

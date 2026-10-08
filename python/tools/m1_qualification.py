@@ -21,13 +21,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = "m1.qualification.1"
+SCHEMA_VERSION = "m1.qualification.2"
 
 NON_CLAIMS = [
     "human-movement model validity",
@@ -235,18 +236,27 @@ def cli_smoke(
 def build_report(
     *,
     target: str,
-    git_sha: str,
+    tested_sha: str,
+    source_sha: str,
     summary: dict[str, Any],
     validate_smoke: dict[str, Any],
     identity_smoke: dict[str, Any],
     plan_summary: dict[str, Any],
 ) -> dict[str, Any]:
-    """Assemble the deterministic report object from already-verified evidence."""
+    """Assemble the deterministic report object from already-verified evidence.
+
+    ``tested_sha`` is the commit the qualification actually checked out and ran;
+    ``source_sha`` is the branch head that supplied the change, which on a pull
+    request is a different commit (the synthetic merge commit is tested). Both are
+    recorded under their own names, and the tested commit is never mislabelled as
+    the source.
+    """
     return {
         "schema_version": SCHEMA_VERSION,
         "milestone": "M1",
         "target": target,
-        "git_sha": git_sha,
+        "tested_sha": tested_sha,
+        "source_sha": source_sha,
         "test_summary": {
             "total": summary["total"],
             "passed": summary["passed"],
@@ -287,16 +297,26 @@ def write_report(path: Path, text: str) -> None:
     path.write_bytes(text.encode("utf-8"))
 
 
+def _validate_sha1(value: str, *, label: str) -> str:
+    """A full lowercase SHA-1 hex string, or a bounded evidence refusal."""
+    if not re.fullmatch(r"[0-9a-f]{40}", value):
+        raise EvidenceError(f"{label} must be a full lowercase SHA-1 hex string")
+    return value
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Emit the deterministic M1 qualification report.")
     parser.add_argument("--target", required=True, choices=["windows-x64", "linux-x64"])
-    parser.add_argument("--git-sha", required=True)
+    parser.add_argument("--tested-sha", required=True)
+    parser.add_argument("--source-sha", required=True)
     parser.add_argument("--junit", required=True, type=Path)
     parser.add_argument("--fixture-root", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
 
     try:
+        tested_sha = _validate_sha1(args.tested_sha, label="tested_sha")
+        source_sha = _validate_sha1(args.source_sha, label="source_sha")
         summary = parse_junit(args.junit)
         validate_smoke, identity_smoke, plan_summary = cli_smoke(
             args.fixture_root, executable=sys.executable
@@ -307,7 +327,8 @@ def main(argv: list[str] | None = None) -> int:
 
     report = build_report(
         target=args.target,
-        git_sha=args.git_sha,
+        tested_sha=tested_sha,
+        source_sha=source_sha,
         summary=summary,
         validate_smoke=validate_smoke,
         identity_smoke=identity_smoke,

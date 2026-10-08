@@ -54,15 +54,24 @@ ZERO_TEST_JUNIT = """\
 """
 
 
-def _report_args(tmp_path: Path, junit_text: str | None, output: Path) -> list[str]:
+def _report_args(
+    tmp_path: Path,
+    junit_text: str | None,
+    output: Path,
+    *,
+    tested_sha: str = "a" * 40,
+    source_sha: str = "b" * 40,
+) -> list[str]:
     junit = tmp_path / "pytest.xml"
     if junit_text is not None:
         junit.write_text(junit_text, encoding="utf-8")
     return [
         "--target",
         "windows-x64",
-        "--git-sha",
-        "a" * 40,
+        "--tested-sha",
+        tested_sha,
+        "--source-sha",
+        source_sha,
         "--junit",
         str(junit),
         "--fixture-root",
@@ -85,7 +94,8 @@ def test_a_clean_junit_and_cli_smoke_make_a_deterministic_report(
     report = json.loads(first.read_text(encoding="utf-8"))
     assert report["schema_version"] == m1_qualification.SCHEMA_VERSION
     assert report["target"] == "windows-x64"
-    assert report["git_sha"] == "a" * 40
+    assert report["tested_sha"] == "a" * 40
+    assert report["source_sha"] == "b" * 40
     assert report["test_summary"] == {
         "total": 3,
         "passed": 2,
@@ -109,6 +119,45 @@ def test_a_clean_junit_and_cli_smoke_make_a_deterministic_report(
         "distinct_execution_fingerprints": 1,
         "seeds": [11],
     }
+
+
+def test_a_push_provenance_records_the_same_commit_twice(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """On a push the tested commit is the source commit; both fields still exist."""
+    output = tmp_path / "report.json"
+    commit = "c" * 40
+    args = _report_args(tmp_path, CLEAN_JUNIT, output, tested_sha=commit, source_sha=commit)
+    assert m1_qualification.main(args) == 0, capsys.readouterr().err
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["tested_sha"] == report["source_sha"] == commit
+
+
+@pytest.mark.parametrize(
+    ("tested_sha", "source_sha"),
+    [
+        ("A" * 40, "b" * 40),
+        ("a" * 39, "b" * 40),
+        ("a" * 41, "b" * 40),
+        ("z" * 40, "b" * 40),
+    ],
+)
+def test_malformed_provenance_shas_are_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], tested_sha: str, source_sha: str
+) -> None:
+    args = _report_args(
+        tmp_path,
+        CLEAN_JUNIT,
+        tmp_path / "report.json",
+        tested_sha=tested_sha,
+        source_sha=source_sha,
+    )
+    assert m1_qualification.main(args) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "SHA-1" in captured.err
+    assert "Traceback" not in captured.err
+    assert not (tmp_path / "report.json").exists()
 
 
 def test_the_report_uses_canonical_lf_bytes(tmp_path: Path) -> None:
