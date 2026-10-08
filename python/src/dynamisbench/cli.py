@@ -119,13 +119,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 BenchmarkRelease,
                 EnvironmentDefinition,
                 RealizationDefinition,
-                SUTDefinition,
                 StudyDefinition,
+                SUTDefinition,
             )
             from dynamisbench.planning import (
                 FactorCase,
                 PlanningContext,
-                PlanningError,
                 plan_study,
             )
 

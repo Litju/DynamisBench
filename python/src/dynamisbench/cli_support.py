@@ -29,8 +29,8 @@ from dynamisbench.domain.spec import (
     RealizationDefinition,
     ReferenceDefinition,
     ScenarioDefinition,
-    SUTDefinition,
     StudyDefinition,
+    SUTDefinition,
     UncertaintyFactorDefinition,
 )
 from dynamisbench.domain.spec.base import DomainModel
@@ -92,7 +92,9 @@ def _read_json_object(path: Path) -> Any:
     except OSError as exc:
         raise CliInputError(f"cannot read {path.name}: {exc.strerror or exc}") from exc
     except json.JSONDecodeError as exc:
-        raise CliInputError(f"{path.name}: malformed JSON ({exc.msg} at line {exc.lineno})") from exc
+        raise CliInputError(
+            f"{path.name}: malformed JSON ({exc.msg} at line {exc.lineno})"
+        ) from exc
     if not isinstance(raw, dict):
         raise CliInputError(f"{path.name}: expected a JSON object at the top level")
     return raw

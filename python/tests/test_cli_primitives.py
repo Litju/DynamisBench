@@ -43,7 +43,8 @@ def test_spec_validate_succeeds_for_the_qualification_study() -> None:
 
 
 def test_spec_validate_refuses_an_invalid_spec() -> None:
-    invalid = FIXTURE_ROOT.parents[0] / "domain" / "invalid" / "benchmark_release.blank_intended_use.json"
+    invalid_dir = FIXTURE_ROOT.parents[0] / "domain" / "invalid"
+    invalid = invalid_dir / "benchmark_release.blank_intended_use.json"
     result = run_cli("spec", "validate", "--kind", "benchmark", str(invalid))
     assert result.returncode != 0
     assert result.stdout == ""
