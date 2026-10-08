@@ -278,7 +278,7 @@ jobs:
             echo "rustc: $(rustc --version)"
             echo "cargo: $(cargo --version)"
             echo "uv: $(uv --version)"
-            echo "python: $(cd python && uv run --frozen python --version)"
+            echo "python: $(uv run --project python --frozen python --version)"
             echo "runner: ${ImageOS:-unknown} ${ImageVersion:-unknown} ${RUNNER_OS}/${RUNNER_ARCH}"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Build the workbench (Tauri frontendDist)
