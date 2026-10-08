@@ -176,7 +176,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: m1-qualification-${{ matrix.name }}
-          path: evidence/m1-qualification-${{ matrix.name }}.json
+          path: python/evidence/m1-qualification-${{ matrix.name }}.json
           if-no-files-found: error
           retention-days: 90
 
