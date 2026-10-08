@@ -18,6 +18,7 @@ pub mod credential;
 pub mod launch;
 pub mod protocol;
 pub mod state;
+pub mod supervisor;
 
 pub use credential::{CredentialError, SessionCredential};
 pub use launch::{
@@ -26,3 +27,4 @@ pub use launch::{
 };
 pub use protocol::{parse_readiness, InvalidReadiness, Readiness};
 pub use state::{FailureCode, SessionSnapshot, SessionState, SessionStatus};
+pub use supervisor::{ShutdownOutcome, StartError, StateListener, Supervisor, SupervisorConfig};
