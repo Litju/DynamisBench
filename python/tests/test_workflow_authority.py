@@ -264,15 +264,27 @@ def test_platform_identity_publishes_image_and_toolchain_evidence() -> None:
     stale = [probe for probe in OBSOLETE_IDENTITY_PROBES if probe in recorded]
     assert not stale, f"hosted Linux is a real VM; obsolete runner probing: {stale}"
 
-    # Runner-local state is not scientific authority: only the identity gate writes
-    # a qualification artifact, so no other gate can quietly publish one.
-    extra = {
-        job_id
-        for job_id, job in _gates().items()
-        if job_id != IDENTITY_JOB
-        and any("upload-artifact" in str(step.get("uses", "")) for step in job["steps"])
+    # Runner-local state is not scientific authority: only the identity gate and
+    # the Python matrix may publish qualification artifacts, and each publishes
+    # exactly its own kind: the identity record and the M1 qualification report.
+    allowed = {
+        IDENTITY_JOB: ("platform-identity-",),
+        "python": ("m1-qualification-",),
     }
-    assert not extra, f"only the identity gate may publish qualification artifacts: {extra}"
+    offenders = {}
+    for job_id, job in _gates().items():
+        names = [
+            str((step.get("with") or {}).get("name", ""))
+            for step in job["steps"]
+            if str(step.get("uses", "")).startswith("actions/upload-artifact")
+        ]
+        if job_id in allowed:
+            bad = [name for name in names if not name.startswith(allowed[job_id])]
+            if bad:
+                offenders[job_id] = bad
+        elif names:
+            offenders[job_id] = names
+    assert not offenders, f"unexpected qualification artifacts published: {offenders}"
 
 
 def test_no_gate_is_marked_non_authoritative() -> None:
