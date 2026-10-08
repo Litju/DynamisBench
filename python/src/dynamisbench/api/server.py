@@ -29,6 +29,12 @@ shell never has to guess:
   decided by whether readiness was announced, never by the class of the exception: a listener
   that never opened and a server that died while serving are both failures, but only one of
   them happened before a supervisor was told where to connect.
+* **stdin is the supervisor's private channel.** After the readiness line, a control reader
+  (:mod:`dynamisbench.api.control`) accepts exactly one record — the shutdown request — and
+  treats EOF as supervisor loss the same way. A parent that asks for shutdown through the
+  protocol gets the same graceful path as one that asks by closing the pipe, and neither is
+  reachable before readiness: the channel opens only once the server is started, so control
+  input cannot race the handshake.
 """
 
 from __future__ import annotations
@@ -41,12 +47,13 @@ import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any, Literal
+from typing import IO, Any, Literal
 
 import uvicorn
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.types import ASGIApp
 
+from dynamisbench.api.control import ControlChannel
 from dynamisbench.api.routing import API_VERSION
 from dynamisbench.api.session import (
     RuntimeConfiguration,
@@ -270,12 +277,21 @@ def announce(port: int) -> None:
 
 
 class _SidecarServer(uvicorn.Server):
-    """Uvicorn, plus the one thing this sidecar adds: readiness after listening.
+    """Uvicorn, plus the two things this sidecar adds: readiness and the control channel.
 
     Overriding ``startup`` rather than polling ``started`` is what makes "only after listening"
     structural. The check inside it is what keeps that true if Uvicorn's own definition of
     started ever moves: nothing is announced unless the server says it has started, and a
     server that has not started is a startup failure rather than a readiness handshake.
+
+    The control channel is started in the same place and for the same reason. A parent that
+    wrote control input before the listener existed would otherwise be able to ask for a
+    shutdown of something that was never announced; opening the channel after the readiness
+    line means the only supervisor that can reach it is one that has already been told where to
+    connect. ``should_exit`` is the entire effect of a valid record or an EOF — the same flag a
+    caller of :func:`run_sidecar` sets through ``on_listening`` — so the shutdown path is
+    Uvicorn's own graceful one: stop accepting, close the listener, run the ASGI lifespan
+    shutdown, return.
 
     ``readiness_announced`` is the record of whether the line went out, and it is what the
     failure classification reads. Uvicorn raises ``SystemExit`` from inside this method when
@@ -291,10 +307,12 @@ class _SidecarServer(uvicorn.Server):
         config: uvicorn.Config,
         port: int,
         on_listening: Callable[[uvicorn.Server], None] | None = None,
+        control_stream: IO[str] | None = None,
     ) -> None:
         super().__init__(config)
         self._port = port
         self._on_listening = on_listening
+        self._control_stream = control_stream
         self.readiness_announced = False
 
     async def startup(self, sockets: list[socket.socket] | None = None) -> None:
@@ -303,8 +321,14 @@ class _SidecarServer(uvicorn.Server):
             raise RuntimeError("Uvicorn returned from startup without having started.")
         announce(self._port)
         self.readiness_announced = True
+        if self._control_stream is not None:
+            ControlChannel(self._control_stream, on_shutdown=self._request_shutdown).start()
         if self._on_listening is not None:
             self._on_listening(self)
+
+    def _request_shutdown(self) -> None:
+        """The only thing a control record or an EOF is allowed to do."""
+        self.should_exit = True
 
 
 def _failure_outcome(server: _SidecarServer) -> Exit:
@@ -327,6 +351,7 @@ def _failure_outcome(server: _SidecarServer) -> Exit:
 async def run_sidecar(
     sidecar: Sidecar,
     on_listening: Callable[[uvicorn.Server], None] | None = None,
+    control_stream: IO[str] | None = None,
 ) -> Exit:
     """Serve ``sidecar`` on the socket it already owns, until asked to stop.
 
@@ -335,6 +360,11 @@ async def run_sidecar(
     it was handed, run the ASGI shutdown and return. It is called after the readiness line,
     so a caller that shuts down in the callback is still a caller that was told the port.
 
+    ``control_stream`` is the parent's private control channel, opened after readiness. It is
+    explicit rather than defaulted to ``sys.stdin`` because :func:`run_sidecar` is also the
+    in-process seam the qualification gates use, and a test process's own stdin is not a
+    supervisor. :func:`serve` passes the real process's stdin.
+
     Every failure becomes an :class:`Exit`, because this is a supervised process: an
     exception that escapes here reaches a supervisor as an unhandled traceback and a code
     that means "crashed", which is a worse answer than a code that means which of the three
@@ -342,7 +372,9 @@ async def run_sidecar(
     classified by :func:`_failure_outcome` rather than by type, because the exception type no
     longer determines which of the two failures this was.
     """
-    server = _SidecarServer(uvicorn_configuration(sidecar), sidecar.port, on_listening)
+    server = _SidecarServer(
+        uvicorn_configuration(sidecar), sidecar.port, on_listening, control_stream
+    )
     try:
         await server.serve(sockets=[sidecar.socket])
         return Exit.CLEAN
@@ -362,6 +394,10 @@ def serve(environment: Mapping[str, str] | None = None) -> Exit:
     Configuration is read from the process environment, so the credential is inherited by
     this process and appears in neither the argument vector nor the log. A configuration
     problem is reported by naming the variable that is wrong, never its value.
+
+    The control channel is this process's own stdin, because this function is the process
+    entry point: the parent that spawned it owns the write end, and its EOF is how the
+    sidecar learns the supervisor is gone.
     """
     source = os.environ if environment is None else environment
     try:
@@ -376,7 +412,7 @@ def serve(environment: Mapping[str, str] | None = None) -> Exit:
         logger.error("The API sidecar could not bind %s.", LOOPBACK_HOST)
         return Exit.STARTUP_FAILED
 
-    return asyncio.run(run_sidecar(sidecar))
+    return asyncio.run(run_sidecar(sidecar, control_stream=sys.stdin))
 
 
 __all__ = [

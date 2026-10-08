@@ -73,18 +73,23 @@ as small and as inert as it was.
 """
 
 SESSION_MODULES = (
+    "control.py",
     "server.py",
     "session.py",
 )
-"""The session's own composition, added by DB-2.2 and reachable only by importing it directly.
+"""The session's own composition, added by DB-2.2 and DB-2.3 and reachable only by importing it
+directly.
 
-Two modules, deliberately split. One validates and enforces the session's credential and origin
-policy and imports no web server; one binds the socket and runs the server and imports Uvicorn.
-That split is the whole reason ``import dynamisbench.api`` still loads no server, and it is why
-neither is in ``__all__``: no advertised name of this package mentions a session or a credential.
+Three modules, deliberately split. One validates and enforces the session's credential and
+origin policy and imports no web server; one binds the socket and runs the server and imports
+Uvicorn; one reads the parent's private control channel and imports neither. That split is the
+whole reason ``import dynamisbench.api`` still loads no server, and it is why none is in
+``__all__``: no advertised name of this package mentions a session, a credential or a control
+record.
 """
 
-EXPECTED_MODULES = BOUNDARY_MODULES + SESSION_MODULES
+EXPECTED_MODULES = tuple(sorted((*BOUNDARY_MODULES, *SESSION_MODULES)))
+"""The union of the two groups, in the filesystem order the measurement produces."""
 
 FORBIDDEN_ENGINE_MODULES = frozenset(
     {"mujoco", "opensim", "simtk", "gym", "gymnasium", "pybullet", "brax", "dm_control"}
@@ -232,6 +237,7 @@ def test_no_api_module_depends_on_a_scientific_layer(filename: str) -> None:
     ("filename", "allowed"),
     [
         *((filename, ALLOWED_EXTERNAL_SURFACE) for filename in BOUNDARY_MODULES),
+        ("control.py", ALLOWED_EXTERNAL_SURFACE),
         ("session.py", ALLOWED_EXTERNAL_SURFACE),
         ("server.py", SESSION_EXTERNAL_SURFACE),
     ],
@@ -353,10 +359,10 @@ def test_an_exported_read_model_is_not_a_scientific_domain_model() -> None:
 
 
 def test_the_module_set_is_the_whole_package() -> None:
-    """Named so that adding an eighth is a reviewed change rather than a silent one.
+    """Named so that adding a ninth is a reviewed change rather than a silent one.
 
     Stated as two named groups because the modules are not equivalent: five describe the
-    application and are reachable from ``import dynamisbench.api``, and two belong to the
+    application and are reachable from ``import dynamisbench.api``, and three belong to the
     desktop session and are not.
     """
     assert API_MODULES == EXPECTED_MODULES
