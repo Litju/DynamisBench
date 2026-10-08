@@ -117,7 +117,9 @@ fn a_real_dbench_api_serve_session_is_reachable_authenticated_and_stopped_cleanl
     assert_eq!(ready.protocol_version, Some(1));
 
     let credential = supervisor
+        .session_bootstrap()
         .credential()
+        .cloned()
         .expect("a ready session holds the credential");
     assert_eq!(credential.expose().len(), 43);
 

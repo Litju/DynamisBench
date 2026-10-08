@@ -6,7 +6,7 @@
 //! thing that travels out of the process owner, and every field of it is chosen here rather
 //! than being derived from whatever the child happened to say.
 //!
-//! Two rules are structural rather than conventional:
+//! Three rules are structural rather than conventional:
 //!
 //! * **A snapshot cannot carry a credential.** [`SessionSnapshot`] has no such field and is
 //!   the only serializable type here; [`SessionState`] holds the credential beside the
@@ -15,6 +15,13 @@
 //! * **A failure has no free-form text.** [`FailureCode`] is an enum, and the frontend sees
 //!   one of its names or nothing — never a stderr line, a path, an exit code or a reason
 //!   string the child chose.
+//! * **A snapshot and its credential are only ever read together.** What the WebView needs
+//!   to bootstrap is not one value but a *pair*, and the pair is captured as one value —
+//!   [`SessionBootstrap`] — under a single critical section. Reading the two separately
+//!   looks harmless and is not: the monitor moves `ready → failed/stopped` on its own
+//!   thread, so two reads can straddle that transition and report `status = ready` with no
+//!   credential, which asks the frontend to call an address it cannot authenticate against.
+//!   [`SessionBootstrap`] exists so that response cannot be assembled from two instants.
 
 use serde::Serialize;
 
@@ -129,11 +136,42 @@ impl SessionSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StartRefused;
 
+/// One atomic capture of everything a bootstrap reader may publish.
+///
+/// The snapshot and the credential are captured together, so they always describe the same
+/// state version. The invariant is enforced on capture rather than trusted to the caller's
+/// use of two fields: a `ready` capture carries a credential and an origin, and any other
+/// capture carries neither — the credential is dropped unless the captured snapshot is
+/// `ready`, so a transition that raced this capture cannot leave a credential beside a
+/// non-ready status.
+///
+/// Its fields are private and there is no constructor that takes a snapshot and a credential
+/// separately, which is what makes the torn response unrepresentable rather than merely
+/// discouraged.
+#[derive(Debug)]
+pub struct SessionBootstrap {
+    snapshot: SessionSnapshot,
+    credential: Option<SessionCredential>,
+}
+
+impl SessionBootstrap {
+    /// The non-secret snapshot, captured with the credential beside it.
+    pub fn snapshot(&self) -> &SessionSnapshot {
+        &self.snapshot
+    }
+
+    /// The credential belonging to the captured state, if it was `ready`.
+    pub fn credential(&self) -> Option<&SessionCredential> {
+        self.credential.as_ref()
+    }
+}
+
 /// The current snapshot plus the credential that belongs to a ready session.
 ///
 /// The credential is deliberately not part of [`SessionSnapshot`]. It is set by the ready
-/// transition, dropped by every later one, and read only by the Tauri command that hands a
-/// ready session to the WebView — which is the single place the architecture allows it to go.
+/// transition, dropped by every later one, and read only through [`SessionState::bootstrap`]
+/// — the single capture that hands a ready session to the WebView, which is the only place
+/// the architecture allows it to go.
 #[derive(Debug)]
 pub struct SessionState {
     snapshot: SessionSnapshot,
@@ -160,9 +198,22 @@ impl SessionState {
         &self.snapshot
     }
 
-    /// The credential, present only while the session is ready.
-    pub fn credential(&self) -> Option<&SessionCredential> {
-        self.credential.as_ref()
+    /// Capture the snapshot and its credential together, under the caller's one lock.
+    ///
+    /// The whole reason this exists. Every transition runs under the same lock as this read,
+    /// so a capture describes exactly one state version, and the credential is reported only
+    /// for a captured `ready` state: a capture either has a status with an address and a
+    /// credential to use against it, or has neither.
+    pub fn bootstrap(&self) -> SessionBootstrap {
+        let credential = if self.snapshot.status == SessionStatus::Ready {
+            self.credential.clone()
+        } else {
+            None
+        };
+        SessionBootstrap {
+            snapshot: self.snapshot.clone(),
+            credential,
+        }
     }
 
     /// Enter `starting`, refusing a second concurrent session.
@@ -214,6 +265,18 @@ mod tests {
         SessionCredential::generate().expect("the operating system random source must exist")
     }
 
+    fn ready_state() -> SessionState {
+        let mut state = SessionState::stopped();
+        state.begin().expect("the first start is allowed");
+        state.mark_ready(
+            "http://127.0.0.1:49152".to_string(),
+            "v1".to_string(),
+            1,
+            credential(),
+        );
+        state
+    }
+
     #[test]
     fn the_lifecycle_starts_stopped_and_transitions_in_order() {
         let mut state = SessionState::stopped();
@@ -221,7 +284,7 @@ mod tests {
         assert_eq!(state.snapshot().status, SessionStatus::Stopped);
         assert_eq!(state.begin(), Ok(()));
         assert_eq!(state.snapshot().status, SessionStatus::Starting);
-        assert!(state.credential().is_none());
+        assert!(state.bootstrap().credential().is_none());
 
         state.mark_ready(
             "http://127.0.0.1:49152".to_string(),
@@ -237,7 +300,7 @@ mod tests {
         assert_eq!(ready.protocol_version, Some(1));
         assert!(!ready.restart_required);
         assert_eq!(ready.failure, None);
-        assert!(state.credential().is_some());
+        assert!(state.bootstrap().credential().is_some());
     }
 
     #[test]
@@ -260,15 +323,7 @@ mod tests {
 
     #[test]
     fn a_failed_session_drops_the_credential_and_keeps_the_bounded_failure() {
-        let mut state = SessionState::stopped();
-        state.begin().unwrap();
-        state.mark_ready(
-            "http://127.0.0.1:49152".to_string(),
-            "v1".to_string(),
-            1,
-            credential(),
-        );
-        assert!(state.credential().is_some());
+        let mut state = ready_state();
 
         state.mark_failed(FailureCode::UnexpectedExit, true);
 
@@ -280,24 +335,17 @@ mod tests {
             failed.origin, None,
             "a failed session has no address to report"
         );
-        assert!(state.credential().is_none());
+        assert!(state.bootstrap().credential().is_none());
     }
 
     #[test]
     fn a_stopped_session_drops_the_credential_too() {
-        let mut state = SessionState::stopped();
-        state.begin().unwrap();
-        state.mark_ready(
-            "http://127.0.0.1:49152".to_string(),
-            "v1".to_string(),
-            1,
-            credential(),
-        );
+        let mut state = ready_state();
 
         state.mark_stopped();
 
         assert_eq!(state.snapshot().status, SessionStatus::Stopped);
-        assert!(state.credential().is_none());
+        assert!(state.bootstrap().credential().is_none());
         assert_eq!(state.snapshot().failure, None);
     }
 
@@ -377,5 +425,107 @@ mod tests {
 
         assert!(!snapshot.restart_required);
         assert_eq!(snapshot.status, SessionStatus::Failed);
+    }
+
+    /// The regression this module's capture exists for: `ready` implies the address *and*
+    /// the credential, and nothing else implies either. Checked over every state a session
+    /// can be captured in, so it is not one path that happens to hold.
+    #[test]
+    fn a_capture_is_either_a_ready_session_with_a_credential_or_neither() {
+        let mut states = Vec::new();
+
+        states.push(("never started", SessionState::stopped()));
+
+        let mut starting = SessionState::stopped();
+        starting.begin().expect("the first start is allowed");
+        states.push(("starting", starting));
+
+        states.push(("ready", ready_state()));
+
+        let mut failed = ready_state();
+        failed.mark_failed(FailureCode::UnexpectedExit, true);
+        states.push(("failed after readiness", failed));
+
+        let mut stopped = ready_state();
+        stopped.mark_stopped();
+        states.push(("stopped after readiness", stopped));
+
+        for (label, state) in states {
+            let bootstrap = state.bootstrap();
+            let snapshot = bootstrap.snapshot();
+            let ready = snapshot.status == SessionStatus::Ready;
+
+            assert_eq!(
+                snapshot.origin.is_some(),
+                ready,
+                "{label}: an address exists only for a ready session"
+            );
+            assert_eq!(
+                snapshot.api_version.is_some(),
+                ready,
+                "{label}: an API version exists only for a ready session"
+            );
+            assert_eq!(
+                snapshot.protocol_version.is_some(),
+                ready,
+                "{label}: a protocol version exists only for a ready session"
+            );
+            assert_eq!(
+                bootstrap.credential().is_some(),
+                ready,
+                "{label}: a credential exists exactly when the session is ready"
+            );
+            assert_eq!(
+                snapshot.failure.is_some(),
+                snapshot.status == SessionStatus::Failed,
+                "{label}: only a failed session carries a failure"
+            );
+        }
+    }
+
+    /// The normalisation is not merely a consequence of the transitions being correct: a
+    /// capture drops the credential itself, so even a state that had been left inconsistent
+    /// cannot be reported as a ready session without one.
+    #[test]
+    fn a_capture_drops_a_credential_that_does_not_belong_to_a_ready_state() {
+        let inconsistent = SessionState {
+            snapshot: SessionSnapshot::stopped(),
+            credential: Some(credential()),
+        };
+
+        let bootstrap = inconsistent.bootstrap();
+
+        assert_eq!(bootstrap.snapshot().status, SessionStatus::Stopped);
+        assert!(bootstrap.credential().is_none());
+    }
+
+    #[test]
+    fn a_capture_is_unaffected_by_the_transitions_that_follow_it() {
+        let mut state = ready_state();
+
+        let captured_credential = state
+            .bootstrap()
+            .credential()
+            .expect("a ready session captures its credential")
+            .expose()
+            .to_string();
+        let captured_origin = state
+            .bootstrap()
+            .snapshot()
+            .origin
+            .clone()
+            .expect("a ready capture has the address it captured");
+
+        state.mark_failed(FailureCode::UnexpectedExit, true);
+
+        let after = state.bootstrap();
+        assert!(after.credential().is_none());
+        assert!(after.snapshot().origin.is_none());
+        assert_eq!(captured_origin, "http://127.0.0.1:49152");
+        assert_eq!(
+            captured_credential.len(),
+            43,
+            "the earlier capture still holds the secret it captured"
+        );
     }
 }

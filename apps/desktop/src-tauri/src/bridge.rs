@@ -15,6 +15,14 @@
 //! WebView that must use it — so its `Debug` is a redaction and its credential is populated
 //! from the session state only for a ready session. A `starting` or `failed` response has no
 //! credential and no origin, in the type's own construction rather than by convention.
+//!
+//! The whole response is built from one capture. [`Supervisor::session_bootstrap`] returns the
+//! snapshot and the credential together under a single lock, and [`ApiSessionResponse`] is
+//! constructed from that one value: reading a snapshot and a credential separately is not a
+//! style preference here, it is a torn answer waiting for the monitor's next transition —
+//! `status = ready` with `credential = null` is a response that sends the frontend to call an
+//! address it cannot authenticate against. So this module never sees the internal lock, never
+//! sees `SessionState`, and never reads the session twice.
 
 use std::fmt;
 use std::sync::Arc;
@@ -22,7 +30,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::State;
 
-use crate::sidecar::{SessionCredential, SessionSnapshot, SessionStatus, Supervisor};
+use crate::sidecar::{SessionBootstrap, SessionStatus, Supervisor};
 
 /// The one WebView this shell's targeted events are addressed to.
 pub const MAIN_WINDOW: &str = "main";
@@ -43,12 +51,13 @@ pub struct ApiSessionResponse {
 }
 
 impl ApiSessionResponse {
-    /// The response for one supervisor, from its current state.
+    /// The response for one supervisor, from one capture of its state.
     pub fn for_supervisor(supervisor: &Supervisor) -> Self {
-        Self::from_parts(&supervisor.snapshot(), supervisor.credential().as_ref())
+        Self::from_bootstrap(&supervisor.session_bootstrap())
     }
 
-    fn from_parts(snapshot: &SessionSnapshot, credential: Option<&SessionCredential>) -> Self {
+    fn from_bootstrap(bootstrap: &SessionBootstrap) -> Self {
+        let snapshot = bootstrap.snapshot();
         let ready = snapshot.status == SessionStatus::Ready;
         Self {
             status: snapshot.status,
@@ -56,10 +65,12 @@ impl ApiSessionResponse {
             api_version: snapshot.api_version.clone(),
             protocol_version: snapshot.protocol_version,
             // The one place the credential is rendered as text for the WebView, and only for
-            // the state that has an API to call. A stale credential beside a non-ready
-            // snapshot is dropped rather than reported.
+            // the state that has an API to call. The capture already withholds it from a
+            // non-ready state, so this guard restates that rather than relying on it.
             credential: if ready {
-                credential.map(|credential| credential.expose().to_string())
+                bootstrap
+                    .credential()
+                    .map(|credential| credential.expose().to_string())
             } else {
                 None
             },
@@ -99,14 +110,26 @@ mod tests {
     use serde_json::json;
 
     use super::{ApiSessionResponse, API_STATUS_EVENT, MAIN_WINDOW};
-    use crate::sidecar::{FailureCode, SessionCredential, SessionSnapshot, SessionStatus};
+    use crate::sidecar::{
+        FailureCode, SessionBootstrap, SessionCredential, SessionSnapshot, SessionState,
+        SessionStatus,
+    };
 
     fn credential() -> SessionCredential {
         SessionCredential::generate().expect("the operating system random source must exist")
     }
 
-    fn ready_snapshot() -> SessionSnapshot {
-        SessionSnapshot::ready("http://127.0.0.1:49152".to_string(), "v1".to_string(), 1)
+    /// A ready session, with the credential a real one would hold.
+    fn ready_bootstrap() -> SessionBootstrap {
+        let mut state = SessionState::stopped();
+        state.begin().expect("the first start is admitted");
+        state.mark_ready(
+            "http://127.0.0.1:49152".to_string(),
+            "v1".to_string(),
+            1,
+            credential(),
+        );
+        state.bootstrap()
     }
 
     #[test]
@@ -117,32 +140,43 @@ mod tests {
 
     #[test]
     fn a_ready_response_carries_the_credential_and_the_real_origin() {
-        let credential = credential();
-        let response = ApiSessionResponse::from_parts(&ready_snapshot(), Some(&credential));
+        let bootstrap = ready_bootstrap();
+
+        let response = ApiSessionResponse::from_bootstrap(&bootstrap);
 
         assert_eq!(response.status, SessionStatus::Ready);
         assert_eq!(response.origin.as_deref(), Some("http://127.0.0.1:49152"));
         assert_eq!(response.api_version.as_deref(), Some("v1"));
         assert_eq!(response.protocol_version, Some(1));
-        assert_eq!(response.credential.as_deref(), Some(credential.expose()));
+        assert_eq!(
+            response.credential.as_deref(),
+            bootstrap.credential().map(SessionCredential::expose),
+            "the credential is the one the same capture carried"
+        );
+        assert_eq!(response.credential.as_ref().unwrap().len(), 43);
         assert!(!response.restart_required);
         assert_eq!(response.failure, None);
     }
 
     #[test]
-    fn a_failed_response_carries_no_credential_and_no_fake_origin() {
+    fn a_non_ready_response_carries_no_credential_and_no_fake_origin() {
         for status in [
             SessionStatus::Starting,
             SessionStatus::Failed,
             SessionStatus::Stopped,
         ] {
-            let snapshot = match status {
-                SessionStatus::Starting => SessionSnapshot::starting(),
-                SessionStatus::Failed => SessionSnapshot::failed(FailureCode::UnexpectedExit, true),
-                _ => SessionSnapshot::stopped(),
-            };
+            let mut state = SessionState::stopped();
+            state.begin().expect("the first start is admitted");
+            match status {
+                SessionStatus::Starting => {}
+                SessionStatus::Failed => {
+                    state.mark_failed(FailureCode::UnexpectedExit, true);
+                }
+                SessionStatus::Stopped => state.mark_stopped(),
+                SessionStatus::Ready => unreachable!("ready has its own gate"),
+            }
 
-            let response = ApiSessionResponse::from_parts(&snapshot, Some(&credential()));
+            let response = ApiSessionResponse::from_bootstrap(&state.bootstrap());
 
             assert_eq!(response.status, status);
             assert_eq!(
@@ -155,15 +189,36 @@ mod tests {
         }
     }
 
+    /// A session that has been ready and then ended: the two fields the WebView uses together
+    /// must disappear together.
+    #[test]
+    fn an_ended_session_reports_neither_an_address_nor_a_credential() {
+        let mut state = SessionState::stopped();
+        state.begin().unwrap();
+        state.mark_ready(
+            "http://127.0.0.1:49152".to_string(),
+            "v1".to_string(),
+            1,
+            credential(),
+        );
+        let ready = ApiSessionResponse::from_bootstrap(&state.bootstrap());
+        assert_eq!(ready.credential.is_some(), ready.origin.is_some());
+
+        state.mark_failed(FailureCode::UnexpectedExit, true);
+
+        let ended = ApiSessionResponse::from_bootstrap(&state.bootstrap());
+        assert_eq!(ended.status, SessionStatus::Failed);
+        assert_eq!(ended.credential, None);
+        assert_eq!(ended.origin, None);
+        assert!(ended.restart_required);
+        assert_eq!(ended.failure, Some(FailureCode::UnexpectedExit));
+    }
+
     #[test]
     fn the_response_serializes_with_exactly_the_published_fields() {
-        let credential = credential();
+        let bootstrap = ready_bootstrap();
 
-        let value = serde_json::to_value(ApiSessionResponse::from_parts(
-            &ready_snapshot(),
-            Some(&credential),
-        ))
-        .unwrap();
+        let value = serde_json::to_value(ApiSessionResponse::from_bootstrap(&bootstrap)).unwrap();
 
         assert_eq!(
             value,
@@ -172,7 +227,7 @@ mod tests {
                 "origin": "http://127.0.0.1:49152",
                 "api_version": "v1",
                 "protocol_version": 1,
-                "credential": credential.expose(),
+                "credential": bootstrap.credential().unwrap().expose(),
                 "restart_required": false,
                 "failure": null,
             })
@@ -182,12 +237,11 @@ mod tests {
 
     #[test]
     fn the_response_debug_never_contains_the_credential() {
-        let credential = credential();
-        let response = ApiSessionResponse::from_parts(&ready_snapshot(), Some(&credential));
+        let response = ApiSessionResponse::from_bootstrap(&ready_bootstrap());
 
         let debug = format!("{response:?}");
 
-        assert!(!debug.contains(credential.expose()));
+        assert!(!debug.contains(response.credential.as_ref().unwrap()));
         assert!(debug.contains("[redacted]"));
     }
 
@@ -195,7 +249,12 @@ mod tests {
     fn the_lifecycle_event_payload_has_no_credential_field_and_never_names_one() {
         let credential = credential();
 
-        let value = serde_json::to_value(ready_snapshot()).unwrap();
+        let value = serde_json::to_value(SessionSnapshot::ready(
+            "http://127.0.0.1:49152".to_string(),
+            "v1".to_string(),
+            1,
+        ))
+        .unwrap();
 
         assert!(value.get("credential").is_none());
         assert!(value.get("token").is_none());

@@ -26,5 +26,5 @@ pub use launch::{
     launch_spec, packaged_sidecar_path, repository_root, LaunchMode, LaunchSpec,
 };
 pub use protocol::{parse_readiness, InvalidReadiness, Readiness};
-pub use state::{FailureCode, SessionSnapshot, SessionState, SessionStatus};
+pub use state::{FailureCode, SessionBootstrap, SessionSnapshot, SessionState, SessionStatus};
 pub use supervisor::{ShutdownOutcome, StartError, StateListener, Supervisor, SupervisorConfig};

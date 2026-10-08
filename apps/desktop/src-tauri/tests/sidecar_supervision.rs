@@ -126,7 +126,9 @@ fn a_ready_session_reports_the_announced_origin_and_stops_on_the_record() {
     assert_eq!(ready.protocol_version, Some(1));
     assert!(!ready.restart_required);
     let credential = supervisor
+        .session_bootstrap()
         .credential()
+        .cloned()
         .expect("a ready session holds its credential");
     assert_eq!(credential.expose().len(), 43);
 
@@ -144,7 +146,7 @@ fn a_ready_session_reports_the_announced_origin_and_stops_on_the_record() {
         "a stopped session reports no address"
     );
     assert!(
-        supervisor.credential().is_none(),
+        supervisor.session_bootstrap().credential().is_none(),
         "the credential dies with the session"
     );
 
@@ -253,7 +255,7 @@ sys.exit(0)
 
     assert_eq!(failed.failure, Some(FailureCode::UnexpectedExit));
     assert!(failed.restart_required);
-    assert!(supervisor.credential().is_none());
+    assert!(supervisor.session_bootstrap().credential().is_none());
 }
 
 #[test]
@@ -338,7 +340,50 @@ fn a_shutdown_requested_while_starting_contains_the_child_and_stops_the_session(
     let result = handle.join().expect("the start thread must not panic");
     assert_eq!(result, Err(StartError::Stopped));
     assert_eq!(supervisor.snapshot().status, SessionStatus::Stopped);
-    assert!(supervisor.credential().is_none());
+    assert!(supervisor.session_bootstrap().credential().is_none());
+}
+
+// =====================================================================================
+// The atomic bootstrap capture: one read, one state version.
+// =====================================================================================
+
+#[test]
+fn the_bootstrap_capture_never_straddles_a_lifecycle_transition() {
+    let (supervisor, _) = supervisor(fast_config());
+
+    supervisor
+        .start(python_spec(&ready_then_shutdown_script()))
+        .expect("ready");
+
+    let ready = supervisor.session_bootstrap();
+    assert_eq!(ready.snapshot().status, SessionStatus::Ready);
+    assert_eq!(
+        ready.snapshot().origin.as_deref(),
+        Some("http://127.0.0.1:45999")
+    );
+    assert_eq!(ready.snapshot().api_version.as_deref(), Some("v1"));
+    let credential = ready
+        .credential()
+        .cloned()
+        .expect("a ready capture carries the credential it captured with it");
+    assert_eq!(credential.expose().len(), 43);
+
+    assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::Graceful);
+
+    let stopped = supervisor.session_bootstrap();
+    assert_eq!(stopped.snapshot().status, SessionStatus::Stopped);
+    assert_eq!(stopped.snapshot().origin, None);
+    assert_eq!(stopped.snapshot().api_version, None);
+    assert_eq!(stopped.snapshot().protocol_version, None);
+    assert!(
+        stopped.credential().is_none(),
+        "the ended session reports neither an address nor a credential, which is the pair \
+         the torn response used to split across two reads"
+    );
+
+    // The transition that followed did not reach back into the earlier capture.
+    assert_eq!(ready.snapshot().status, SessionStatus::Ready);
+    assert_eq!(credential.expose().len(), 43);
 }
 
 fn supervisor_spec_for_second_attempt() -> LaunchSpec {

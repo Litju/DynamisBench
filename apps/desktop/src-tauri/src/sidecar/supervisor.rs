@@ -36,7 +36,9 @@ use crate::sidecar::credential::SessionCredential;
 use crate::sidecar::launch::LaunchSpec;
 use crate::sidecar::protocol::{parse_readiness, shutdown_line};
 use crate::sidecar::state::StartRefused;
-use crate::sidecar::state::{FailureCode, SessionSnapshot, SessionState, SessionStatus};
+use crate::sidecar::state::{
+    FailureCode, SessionBootstrap, SessionSnapshot, SessionState, SessionStatus,
+};
 
 /// The environment variable carrying the session credential to the child.
 ///
@@ -148,14 +150,19 @@ impl Supervisor {
         }
     }
 
-    /// The current lifecycle snapshot, for the `get_api_session` command.
+    /// The current lifecycle snapshot: non-secret, and always one state version.
     pub fn snapshot(&self) -> SessionSnapshot {
         lock(&self.state).snapshot().clone()
     }
 
-    /// The credential, present only while the session is ready.
-    pub fn credential(&self) -> Option<SessionCredential> {
-        lock(&self.state).credential().cloned()
+    /// The whole WebView bootstrap — snapshot and credential — from one critical section.
+    ///
+    /// The single replacement for reading the snapshot and a credential separately. There is
+    /// deliberately no credential accessor beside it: a response that paired one state
+    /// version's address with another state version's credential is exactly what two
+    /// independent reads can produce, so the supervisor does not offer that shape to anyone.
+    pub fn session_bootstrap(&self) -> SessionBootstrap {
+        lock(&self.state).bootstrap()
     }
 
     /// Spawn and supervise the one child, blocking until readiness resolves.
@@ -609,14 +616,16 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     use super::{
-        ShutdownOutcome, StartError, Supervisor, SupervisorConfig, ALLOWED_ORIGINS_VARIABLE,
+        lock, ShutdownOutcome, StartError, Supervisor, SupervisorConfig, ALLOWED_ORIGINS_VARIABLE,
         SESSION_TOKEN_VARIABLE,
     };
-    use crate::sidecar::state::{FailureCode, SessionStatus};
+    use crate::sidecar::credential::SessionCredential;
+    use crate::sidecar::launch::LaunchSpec;
+    use crate::sidecar::state::{FailureCode, SessionState, SessionStatus};
 
     fn quiet_supervisor() -> Supervisor {
         Supervisor::new(
@@ -669,5 +678,76 @@ mod tests {
         assert!(supervisor.begin_exit());
         assert!(!supervisor.begin_exit());
         assert!(!supervisor.begin_exit());
+    }
+
+    /// The defect, made deterministic: the two reads this replaces are reproduced against the
+    /// real state, with the monitor's transition forced into the gap between them.
+    ///
+    /// There is no timing here. The transition is not raced for — it is placed exactly where
+    /// the second read would begin, so the torn pair is a fact about the *composition*, not a
+    /// window that has to be caught.
+    #[test]
+    fn reading_the_snapshot_and_the_credential_separately_straddles_a_transition() {
+        let state = Arc::new(Mutex::new(SessionState::stopped()));
+
+        {
+            let mut held = lock(&state);
+            held.begin().expect("the first start is admitted");
+            held.mark_ready(
+                "http://127.0.0.1:49152".into(),
+                "v1".into(),
+                1,
+                SessionCredential::generate().unwrap(),
+            );
+        }
+
+        // Read #1, exactly as the bridge used to read it.
+        let snapshot = lock(&state).snapshot().clone();
+
+        // The monitor's own transition, forced into the gap.
+        lock(&state).mark_stopped();
+
+        // Read #2, exactly as the bridge used to read it.
+        let credential = lock(&state).bootstrap().credential().cloned();
+
+        assert_eq!(
+            snapshot.status,
+            SessionStatus::Ready,
+            "the first read saw a ready session"
+        );
+        assert_eq!(
+            snapshot.origin.as_deref(),
+            Some("http://127.0.0.1:49152"),
+            "and with an address"
+        );
+        assert!(
+            credential.is_none(),
+            "the second read saw a stopped session: paired, this is status=ready with \
+             credential=null, a response the WebView cannot act on"
+        );
+
+        // The replacement, captured at the same instant, cannot straddle anything.
+        let bootstrap = lock(&state).bootstrap();
+        assert_eq!(bootstrap.snapshot().status, SessionStatus::Stopped);
+        assert_eq!(bootstrap.snapshot().origin, None);
+        assert!(bootstrap.credential().is_none());
+    }
+
+    #[test]
+    fn a_capture_never_publishes_a_credential_for_a_session_that_is_not_ready() {
+        let supervisor = quiet_supervisor();
+
+        let result = supervisor.start(LaunchSpec {
+            program: "definitely-not-a-real-executable-dynamisbench".into(),
+            args: Vec::new(),
+            cwd: ".".into(),
+            origins: vec!["http://localhost:5173"],
+        });
+        assert_eq!(result, Err(StartError::Failed(FailureCode::SpawnFailed)));
+
+        let bootstrap = supervisor.session_bootstrap();
+        assert_eq!(bootstrap.snapshot().status, SessionStatus::Failed);
+        assert_eq!(bootstrap.snapshot().origin, None);
+        assert!(bootstrap.credential().is_none());
     }
 }

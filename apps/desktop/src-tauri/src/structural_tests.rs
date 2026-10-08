@@ -53,6 +53,23 @@ fn concatenated_sources(relative: &str) -> String {
         .join("\n")
 }
 
+/// A module's production code, with its documentation comments and tests removed.
+///
+/// The assertions below are about what the shipped surface *is*. Comments are stripped so
+/// prose cannot satisfy a gate, and the test module is dropped so a test that uses the same
+/// names cannot break one — the point is that the *code* has no other way in.
+fn module_source(relative: &str) -> String {
+    let contents = read(relative);
+    let production: &str = contents
+        .split_once("#[cfg(test)]")
+        .map_or(contents.as_str(), |(head, _)| head);
+    production
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
 fn the_capability_file_grants_no_permission_at_all() {
     let capabilities = read("capabilities/default.json");
@@ -152,4 +169,46 @@ fn the_command_surface_is_the_one_bootstrap_command() {
         1,
         "one command, so the surface cannot grow without this gate noticing"
     );
+    assert!(
+        sources.contains("pub fn get_api_session(supervisor: State<'_, Arc<Supervisor>>)"),
+        "the command takes the supervisor and nothing else: no launch specification, no \
+         executable, no argument a WebView could choose"
+    );
+}
+
+#[test]
+fn the_bootstrap_response_cannot_be_assembled_from_two_reads() {
+    let bridge = module_source("src/bridge.rs");
+
+    assert!(
+        bridge.contains("supervisor.session_bootstrap()"),
+        "the response must come from one capture of snapshot and credential together"
+    );
+    for banned in [
+        "supervisor.snapshot()",
+        "supervisor.credential()",
+        "SessionState",
+        "Mutex",
+    ] {
+        assert!(
+            !bridge.contains(banned),
+            "the bridge must not read the session twice or reach its lock; found {banned}"
+        );
+    }
+}
+
+#[test]
+fn the_supervisor_offers_the_credential_only_through_the_atomic_capture() {
+    let supervisor = module_source("src/sidecar/supervisor.rs");
+
+    assert!(
+        supervisor.contains("pub fn session_bootstrap(&self) -> SessionBootstrap"),
+        "the one way out of the session state is the atomic capture"
+    );
+    for banned in ["pub fn credential("] {
+        assert!(
+            !supervisor.contains(banned),
+            "no accessor may pair a snapshot with a separately read credential; found {banned}"
+        );
+    }
 }
