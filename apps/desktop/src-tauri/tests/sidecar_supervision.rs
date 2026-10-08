@@ -392,6 +392,111 @@ fn supervisor_spec_for_second_attempt() -> LaunchSpec {
     python_spec("import sys; sys.exit(1)")
 }
 
+// =====================================================================================
+// The protocol contract holds through a requested shutdown, not up to it.
+// =====================================================================================
+
+#[test]
+fn a_second_stdout_line_after_the_shutdown_record_is_a_protocol_violation() {
+    let (supervisor, _) = supervisor(fast_config());
+    let script = format!(
+        r#"
+import sys
+print('{READY}', flush=True)
+line = sys.stdin.readline()
+if line.strip() != '{SHUTDOWN}':
+    sys.exit(3)
+print('a forbidden second line after readiness', flush=True)
+sys.exit(0)
+"#
+    );
+
+    supervisor.start(python_spec(&script)).expect("ready");
+
+    let outcome = supervisor.request_shutdown();
+
+    assert_eq!(
+        outcome,
+        ShutdownOutcome::Forced,
+        "exit code 0 does not excuse writing to the protocol channel"
+    );
+    let failed = supervisor.snapshot();
+    assert_eq!(failed.status, SessionStatus::Failed);
+    assert_eq!(failed.failure, Some(FailureCode::ProtocolViolation));
+    assert!(!failed.restart_required);
+    assert_eq!(failed.origin, None);
+    assert!(supervisor.session_bootstrap().credential().is_none());
+}
+
+#[test]
+fn a_child_that_closes_stdout_before_exiting_zero_after_the_record_is_graceful() {
+    let (supervisor, _) = supervisor(fast_config());
+    let pid_file = std::env::temp_dir().join(format!(
+        "dynamisbench-res376-eof-before-exit-{}.pid",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&pid_file);
+    // stdout is closed strictly before the process ends, which is the ordering the shutdown
+    // has to survive: EOF first, exit second, and neither may decide alone.
+    let script = format!(
+        r#"
+import os, sys, time
+print('{READY}', flush=True)
+with open(r'{pid}', 'w') as handle:
+    handle.write(str(os.getpid()))
+line = sys.stdin.readline()
+if line.strip() != '{SHUTDOWN}':
+    sys.exit(3)
+sys.stdout.close()
+time.sleep(0.4)
+sys.exit(0)
+"#,
+        pid = pid_file.display()
+    );
+
+    supervisor.start(python_spec(&script)).expect("ready");
+    let pid = wait_for_pid_file(&pid_file, Duration::from_secs(10));
+    assert!(process_is_alive(pid), "the fixture child must be running");
+
+    let outcome = supervisor.request_shutdown();
+
+    assert_eq!(outcome, ShutdownOutcome::Graceful);
+    let stopped = supervisor.snapshot();
+    assert_eq!(stopped.status, SessionStatus::Stopped);
+    assert_eq!(stopped.failure, None);
+    wait_until_dead(pid, Duration::from_secs(10));
+    let _ = std::fs::remove_file(&pid_file);
+}
+
+#[test]
+fn a_child_that_exits_non_zero_after_the_record_is_an_unexpected_exit() {
+    let (supervisor, _) = supervisor(fast_config());
+    let script = format!(
+        r#"
+import sys
+print('{READY}', flush=True)
+line = sys.stdin.readline()
+if line.strip() != '{SHUTDOWN}':
+    sys.exit(3)
+sys.stdout.close()
+sys.exit(7)
+"#
+    );
+
+    supervisor.start(python_spec(&script)).expect("ready");
+
+    let outcome = supervisor.request_shutdown();
+
+    assert_eq!(outcome, ShutdownOutcome::Forced);
+    let failed = supervisor.snapshot();
+    assert_eq!(failed.status, SessionStatus::Failed);
+    assert_eq!(failed.failure, Some(FailureCode::UnexpectedExit));
+    assert!(
+        !failed.restart_required,
+        "a session that was asked to stop and did not stop cleanly is not a crash"
+    );
+}
+
 fn wait_for_pid_file(path: &Path, timeout: Duration) -> u32 {
     let deadline = Instant::now() + timeout;
     loop {

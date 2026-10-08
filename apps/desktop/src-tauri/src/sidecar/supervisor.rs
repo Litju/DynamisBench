@@ -14,9 +14,11 @@
 //!   violation; an unsolicited exit is `unexpected_exit` with `restart_required = true`.
 //!   There is no automatic restart, and no path that spawns a second child.
 //! * **Shutdown** through the child's stdin: the exact record, flushed, then stdin closed so
-//!   the child's own EOF path is a second chance. A bounded deadline follows; exit code 0 is
-//!   the only graceful success. A deadline that expires is containment: force-terminate,
-//!   reap, and record `shutdown_timeout` — never called graceful.
+//!   the child's own EOF path is a second chance. The protocol channel is still watched
+//!   throughout — see [`graceful_shutdown`] — so the one-readiness-line contract does not
+//!   relax when the shutdown begins. A bounded deadline follows; exit code 0 with a quiet
+//!   stdout is the only graceful success. A deadline that expires is containment:
+//!   force-terminate, reap, and record `shutdown_timeout` — never called graceful.
 //!
 //! The thread model is deliberately plain (`std::thread` + `mpsc`). A supervisor that needs
 //! an async runtime to wait on one child's pipes would be a much larger surface than the
@@ -25,7 +27,7 @@
 //! until the child is gone or contained.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -56,6 +58,13 @@ pub const MAX_PROTOCOL_LINE_BYTES: usize = 64 * 1024;
 
 /// How often the monitor wakes to poll the child while waiting for an event.
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// How often a requested shutdown re-examines the process while it waits.
+///
+/// Tighter than [`POLL_INTERVAL`] because this is the phase that ends the desktop session:
+/// the deadline it guards is a few seconds long and the exit it waits for should be noticed
+/// promptly rather than up to a tenth of a second after it happened.
+const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// Extra time the caller waits beyond the monitor's own deadlines before giving up on it.
 ///
@@ -409,8 +418,11 @@ fn serve(
     loop {
         match command_rx.try_recv() {
             Ok(SupervisorCommand::Shutdown { reply }) => {
+                // The protocol channel is handed to the shutdown rather than abandoned: one
+                // readiness line per session holds until the child is reaped, not until the
+                // shutdown record is written.
                 let (outcome, failure) =
-                    graceful_shutdown(&mut child, stdin.take(), config.shutdown_timeout);
+                    graceful_shutdown(&mut child, stdin.take(), &lines_rx, config.shutdown_timeout);
                 match failure {
                     None => lock(&state).mark_stopped(),
                     Some(code) => lock(&state).mark_failed(code, false),
@@ -539,13 +551,29 @@ fn pending_shutdown(command_rx: &Receiver<SupervisorCommand>) -> Option<Sender<S
     }
 }
 
-/// Ask through stdin, then wait a bounded time for exit code 0.
+/// Ask through stdin, then wait — watching the child's stdout throughout — for it to exit 0.
 ///
-/// Returns the outcome to report and, when the session must be recorded as failed, the
-/// bounded failure code. `None` means the child exited 0 and the session may be `stopped`.
+/// The shutdown does not relax the protocol. It is the same channel the serving phase
+/// watches and the same rule it enforces: after readiness, stdout belongs to no one. A
+/// second line is still a [`FailureCode::ProtocolViolation`] and is terminated, reaped, and
+/// reported as [`ShutdownOutcome::Forced`] however politely the child then exits.
+///
+/// Two facts about a stopping child arrive independently and in either order — stdout
+/// closes, and the process exits — so neither is allowed to decide alone:
+///
+/// * stdout is only treated as finished on a `ProtocolEvent::Eof` (or the channel
+///   disconnecting), which is the reader thread's own report that it has nothing left;
+/// * a clean exit is only *graceful* once stdout is finished as well, so a line the child
+///   wrote on its way out is still observed and still refused rather than lost in the gap;
+/// * if stdout closes first and the child then exits non-zero, the exit decides:
+///   `unexpected_exit` / [`ShutdownOutcome::Forced`];
+/// * if the deadline passes first, the child is force-terminated, reaped, and recorded as
+///   `shutdown_timeout` — unless it had already exited 0, which the process table reports
+///   whether or not the pipe was inherited by a grandchild.
 fn graceful_shutdown(
     child: &mut Child,
     stdin: Option<ChildStdin>,
+    lines_rx: &Receiver<ProtocolEvent>,
     timeout: Duration,
 ) -> (ShutdownOutcome, Option<FailureCode>) {
     if let Some(mut stdin) = stdin {
@@ -557,24 +585,60 @@ fn graceful_shutdown(
     }
 
     let deadline = Instant::now() + timeout;
+    let mut stdout_finished = false;
+    let mut exit: Option<ExitStatus> = None;
+
     loop {
-        match child.try_wait() {
-            Ok(Some(status)) if status.success() => return (ShutdownOutcome::Graceful, None),
-            Ok(Some(_)) => {
-                return (ShutdownOutcome::Forced, Some(FailureCode::UnexpectedExit));
-            }
-            Ok(None) => {
-                if Instant::now() >= deadline {
+        if !stdout_finished {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match lines_rx.recv_timeout(remaining.min(SHUTDOWN_POLL_INTERVAL)) {
+                Ok(ProtocolEvent::Line(_)) | Ok(ProtocolEvent::Malformed) => {
                     terminate_and_reap(child);
-                    return (ShutdownOutcome::Forced, Some(FailureCode::ShutdownTimeout));
+                    return (
+                        ShutdownOutcome::Forced,
+                        Some(FailureCode::ProtocolViolation),
+                    );
                 }
-                thread::sleep(Duration::from_millis(10));
-            }
-            Err(_) => {
-                terminate_and_reap(child);
-                return (ShutdownOutcome::Forced, Some(FailureCode::UnexpectedExit));
+                Ok(ProtocolEvent::Eof) | Err(RecvTimeoutError::Disconnected) => {
+                    stdout_finished = true;
+                }
+                Err(RecvTimeoutError::Timeout) => {}
             }
         }
+
+        if exit.is_none() {
+            match child.try_wait() {
+                Ok(Some(status)) => exit = Some(status),
+                Ok(None) => {}
+                Err(_) => {
+                    terminate_and_reap(child);
+                    return (ShutdownOutcome::Forced, Some(FailureCode::UnexpectedExit));
+                }
+            }
+        }
+
+        match exit {
+            Some(status) if status.success() && stdout_finished => {
+                return (ShutdownOutcome::Graceful, None);
+            }
+            Some(status) if status.success() && Instant::now() >= deadline => {
+                // The process says it stopped cleanly and the deadline has passed without a
+                // final word on stdout. The exit status is a fact about the process; the
+                // unanswered protocol question cannot be turned into a failure that would
+                // force-kill a child that has already gone.
+                return (ShutdownOutcome::Graceful, None);
+            }
+            Some(_) => {
+                return (ShutdownOutcome::Forced, Some(FailureCode::UnexpectedExit));
+            }
+            None => {}
+        }
+
+        if Instant::now() >= deadline {
+            terminate_and_reap(child);
+            return (ShutdownOutcome::Forced, Some(FailureCode::ShutdownTimeout));
+        }
+        thread::sleep(SHUTDOWN_POLL_INTERVAL);
     }
 }
 
