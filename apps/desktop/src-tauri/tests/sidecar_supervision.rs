@@ -506,6 +506,65 @@ sys.exit(7)
 }
 
 // =====================================================================================
+// A shutdown arriving after the session has already ended must be told so at once.
+// =====================================================================================
+
+#[test]
+fn a_shutdown_after_an_unsolicited_death_finds_no_monitor_to_wait_for() {
+    let (supervisor, _) = supervisor(fast_config());
+    let script = format!(
+        r#"
+import sys, time
+print('{READY}', flush=True)
+time.sleep(0.4)
+sys.exit(0)
+"#
+    );
+
+    supervisor.start(python_spec(&script)).expect("ready");
+    let failed = wait_for_status(&supervisor, SessionStatus::Failed, Duration::from_secs(10));
+    assert_eq!(failed.failure, Some(FailureCode::UnexpectedExit));
+
+    let started = Instant::now();
+
+    assert_eq!(
+        supervisor.request_shutdown(),
+        ShutdownOutcome::NotRunning,
+        "the child died and was reaped before the failure was published, so the record must \
+         already report nothing to address"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "the answer must be immediate; a bounded wait here means the phase outlived the \
+         session it belonged to"
+    );
+}
+
+#[test]
+fn a_shutdown_after_a_shutdown_requested_while_starting_finds_no_monitor_to_wait_for() {
+    let (supervisor, _) = supervisor(SupervisorConfig {
+        startup_timeout: Duration::from_secs(30),
+        shutdown_timeout: Duration::from_secs(2),
+    });
+    let starting = Arc::clone(&supervisor);
+    let handle = thread::spawn(move || starting.start(python_spec("import time; time.sleep(60)")));
+
+    wait_for_starting(&supervisor, Duration::from_secs(10));
+    assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::Forced);
+    assert_eq!(
+        handle.join().expect("the start thread must not panic"),
+        Err(StartError::Stopped)
+    );
+
+    let started = Instant::now();
+    assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::NotRunning);
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "a resolved startup shutdown must not leave an addressable monitor behind"
+    );
+}
+
+// =====================================================================================
 // The start/exit fence: two orderings, both forced, neither raced for.
 // =====================================================================================
 

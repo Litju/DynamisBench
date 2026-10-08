@@ -490,6 +490,12 @@ impl Supervisor {
                 Ok(outcome) => outcome,
                 // The monitor owns this deadline; arriving here means it is wedged, and
                 // containment is the only safe claim.
+                //
+                // The one ordinary way to arrive here is a child that died in the same instant
+                // the exit was requested: the request was accepted while the record still read
+                // `running`, and the monitor reaped the child without reading the command. That
+                // answer is safe — containment is a claim about the process, and the process is
+                // already contained — and it is bounded, not a leak.
                 Err(_) => ShutdownOutcome::Forced,
             },
             // The monitor is gone, so the child it owned is gone: nothing to stop.
@@ -522,9 +528,11 @@ impl Supervisor {
 
 /// The whole child's life, on one thread, from the child it was handed to its reap.
 ///
-/// The wrapper owns the only exit from the record: when the thread returns for any reason,
-/// the command channel is withdrawn and the phase becomes `terminated`, so a shutdown that
-/// arrives afterwards is told the truth — there is no monitor and no child left to address.
+/// The wrapper owns the only exit from the record: if the thread returns for any reason the
+/// command channel is withdrawn and the phase becomes `terminated`, so a shutdown that arrives
+/// afterwards is told the truth — there is no monitor and no child left to address. Every path
+/// that ends the session already did this before publishing, so reaching here is the redundant
+/// case rather than the relied-on one.
 fn monitor(
     child: Child,
     stdout: ChildStdout,
@@ -583,11 +591,7 @@ fn supervise(
     loop {
         if let Some(outcome) = pending_shutdown(&command_rx) {
             terminate_and_reap(&mut child);
-            {
-                let mut control = lock(&gate.control);
-                control.session.mark_stopped();
-            }
-            publish(&gate, &listener);
+            stop(&gate, &listener);
             let _ = startup.send(StartupResolution::Stopped);
             let _ = outcome.send(ShutdownOutcome::Forced);
             return;
@@ -680,14 +684,7 @@ fn serve(
                 // shutdown record is written.
                 let (outcome, failure) =
                     graceful_shutdown(&mut child, stdin.take(), &lines_rx, config.shutdown_timeout);
-                {
-                    let mut control = lock(&gate.control);
-                    match failure {
-                        None => control.session.mark_stopped(),
-                        Some(code) => control.session.mark_failed(code, false),
-                    }
-                }
-                publish(&gate, &listener);
+                end_requested_shutdown(&gate, &listener, failure);
                 let _ = reply.send(outcome);
                 return;
             }
@@ -917,6 +914,12 @@ fn terminate_and_reap(child: &mut Child) {
 }
 
 /// Write a failed snapshot and notify, in that order.
+///
+/// The phase moves to `terminated` in the *same* critical section as the failure and before
+/// the snapshot is published. That ordering is what keeps a late `request_shutdown` from
+/// finding a session it can still address after the child has been reaped: a caller that has
+/// observed the published failure — or the `StartError` that resolved a failed start — cannot
+/// then be told the monitor is still running.
 fn fail(
     gate: &Arc<Gate>,
     listener: &Arc<StateListener>,
@@ -926,7 +929,42 @@ fn fail(
     {
         let mut control = lock(&gate.control);
         control.session.mark_failed(code, restart_required);
+        control.terminated();
     }
+    gate.announce();
+    publish(gate, listener);
+}
+
+/// End a session that did not fail, in the same critical section and in the same order as
+/// [`fail`]: the public state, then the supervisor's phase, then the published snapshot.
+fn stop(gate: &Arc<Gate>, listener: &Arc<StateListener>) {
+    {
+        let mut control = lock(&gate.control);
+        control.session.mark_stopped();
+        control.terminated();
+    }
+    gate.announce();
+    publish(gate, listener);
+}
+
+/// End a requested shutdown, whichever way it resolved, on the same terms as [`fail`].
+///
+/// A shutdown that was answered is over whatever it produced, so the record stops offering the
+/// monitor for anything afterwards.
+fn end_requested_shutdown(
+    gate: &Arc<Gate>,
+    listener: &Arc<StateListener>,
+    failure: Option<FailureCode>,
+) {
+    {
+        let mut control = lock(&gate.control);
+        match failure {
+            None => control.session.mark_stopped(),
+            Some(code) => control.session.mark_failed(code, false),
+        }
+        control.terminated();
+    }
+    gate.announce();
     publish(gate, listener);
 }
 
@@ -950,16 +988,17 @@ mod tests {
     use std::io;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex, PoisonError};
     use std::time::Duration;
 
     use super::{
-        ShutdownOutcome, StartError, Supervisor, SupervisorConfig, ALLOWED_ORIGINS_VARIABLE,
+        end_requested_shutdown, fail, lock, stop, Gate, Phase, ShutdownOutcome, StartError,
+        StateListener, Supervisor, SupervisorConfig, ALLOWED_ORIGINS_VARIABLE,
         SESSION_TOKEN_VARIABLE,
     };
     use crate::sidecar::credential::SessionCredential;
     use crate::sidecar::launch::LaunchSpec;
-    use crate::sidecar::state::{FailureCode, SessionStatus};
+    use crate::sidecar::state::{FailureCode, SessionState, SessionStatus};
 
     fn quiet_supervisor() -> Supervisor {
         Supervisor::new(
@@ -1202,5 +1241,100 @@ mod tests {
         assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::NotRunning);
         assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::NotRunning);
         assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::NotRunning);
+    }
+
+    /// A start that resolved as failed has already ended its session, so the record must not
+    /// still be offering the monitor to the caller that is told about it.
+    ///
+    /// This is the ordering a failed start loses if the session's own transition and the phase
+    /// transition are separate critical sections: `start` returns as soon as it has read its
+    /// resolution, which is before the monitor thread has finished unwinding, so a shutdown
+    /// called immediately afterwards finds a channel nobody is reading and waits out its whole
+    /// grace period to be told `Forced`. The phase has to move with the session, not after it.
+    #[test]
+    fn a_start_that_failed_leaves_nothing_to_address() {
+        for _ in 0..16 {
+            let supervisor = quiet_supervisor();
+
+            let result = supervisor.start(unreachable_spec());
+            assert_eq!(result, Err(StartError::Failed(FailureCode::SpawnFailed)));
+
+            assert_eq!(
+                supervisor.request_shutdown(),
+                ShutdownOutcome::NotRunning,
+                "the child was never created, so the record must already say so"
+            );
+        }
+    }
+
+    /// No terminal transition may leave the record offering a monitor that is gone.
+    ///
+    /// Checked at the moment the snapshot is published rather than after the calling thread has
+    /// finished unwinding: a listener runs outside the critical section, so it can read the
+    /// phase that accompanies the snapshot, and anything that reacts to that snapshot — the
+    /// WebView, or the `start` call waiting on the resolution — must already see a terminated
+    /// record. This is deterministic; the failure it prevents was a lost thread race.
+    #[test]
+    fn every_terminal_transition_withdraws_the_monitor_before_publishing() {
+        let terminals: [(&str, fn(&Arc<Gate>, &Arc<StateListener>)); 3] = [
+            ("fail", |gate, listener| {
+                fail(gate, listener, FailureCode::StartupTimeout, false)
+            }),
+            ("stop", |gate, listener| stop(gate, listener)),
+            ("end_requested_shutdown", |gate, listener| {
+                end_requested_shutdown(gate, listener, None)
+            }),
+        ];
+
+        for (label, terminate) in terminals {
+            let gate = Arc::new(Gate::new());
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let observed = Arc::clone(&seen);
+            let inspected = Arc::clone(&gate);
+            let listener: Arc<StateListener> = Arc::new(move |snapshot| {
+                observed
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push((snapshot.status, lock(&inspected.control).phase));
+            });
+
+            {
+                let mut control = lock(&gate.control);
+                control.admit_start().expect("the first start is admitted");
+                control.session.mark_ready(
+                    "http://127.0.0.1:49152".into(),
+                    "v1".into(),
+                    1,
+                    SessionCredential::generate().unwrap(),
+                );
+                // A channel nobody will ever read, exactly like a monitor that has just ended.
+                control.established(mpsc::channel().0);
+            }
+            assert_eq!(lock(&gate.control).phase, Phase::Running);
+
+            terminate(&gate, &listener);
+
+            let published = seen
+                .lock()
+                .expect("the observation lock is not poisoned")
+                .clone();
+            assert_eq!(
+                published.len(),
+                1,
+                "{label}: the terminal snapshot must be published exactly once"
+            );
+            assert_eq!(
+                published[0].1,
+                Phase::Terminated,
+                "{label}: a caller reacting to the published snapshot must not find a monitor \
+                 still addressable"
+            );
+            let control = lock(&gate.control);
+            assert_eq!(control.phase, Phase::Terminated, "{label}");
+            assert!(
+                control.commands.is_none(),
+                "{label}: a channel to a monitor that has gone must be withdrawn"
+            );
+        }
     }
 }
