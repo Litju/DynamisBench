@@ -1,0 +1,9 @@
+{
+  "case_id": "case-a",
+  "values": [
+    {
+      "factor_id": "f.m1.stiffness",
+      "value": 1.0
+    }
+  ]
+}

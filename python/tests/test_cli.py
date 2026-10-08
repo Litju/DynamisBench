@@ -127,7 +127,18 @@ def test_the_command_line_has_no_reserved_options() -> None:
             offered.update(action.option_strings)
 
     assert not offered & set(RESERVED_OPTIONS)
-    assert offered == {"-h", "--help", "--version"}
+    assert offered == {
+        "-h",
+        "--help",
+        "--version",
+        "--kind",
+        "--study",
+        "--benchmark",
+        "--realization",
+        "--sut",
+        "--environment",
+        "--factor-case",
+    }
 
 
 def test_bare_invocation_succeeds_and_prints_nothing() -> None:

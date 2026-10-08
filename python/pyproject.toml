@@ -60,7 +60,7 @@ select = ["B", "E", "F", "I", "N", "UP", "W"]
 known-first-party = ["dynamisbench"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "tools"]
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.12"

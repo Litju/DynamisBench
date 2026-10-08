@@ -1,0 +1,67 @@
+{
+  "study_id": "study.m1.qualification",
+  "version": "1.0.0",
+  "label": "M1 qualification study",
+  "description": "Compact study for M1 infrastructure qualification.",
+  "research_question": "Does the M1 kernel compile a plan deterministically?",
+  "analysis_plan": "Compile the plan once and verify run count and fingerprint summary.",
+  "replicates": 2,
+  "benchmarks": [
+    {
+      "identifier": "db.m1-qual",
+      "version": "1.0.0"
+    }
+  ],
+  "realizations": [
+    {
+      "identifier": "rl.m1.minimal",
+      "version": "1.0.0"
+    }
+  ],
+  "systems_under_test": [
+    {
+      "identifier": "sut.m1.controller",
+      "version": "1.0.0"
+    }
+  ],
+  "environments": [
+    {
+      "identifier": "env.m1.x86-64",
+      "version": "1.0.0"
+    }
+  ],
+  "required_capabilities": [
+    {
+      "capability": "forward_dynamics",
+      "essential": true,
+      "rationale": "forward_dynamics is required by this definition"
+    }
+  ],
+  "factors": [
+    {
+      "factor_id": "f.m1.stiffness",
+      "label": "Contact stiffness scale",
+      "description": "Varied factor covering the M1 qualification factor case.",
+      "role": "factor",
+      "quantity": "q.m1.height",
+      "target": {
+        "kind": "realization",
+        "identifier": "rl.m1.minimal",
+        "parameter": "contact-stiffness"
+      },
+      "distribution": {
+        "kind": "uniform",
+        "lower": 0.8,
+        "upper": 1.2
+      },
+      "notes": []
+    }
+  ],
+  "outcomes": [
+    "q.m1.height"
+  ],
+  "seeds": [
+    11
+  ],
+  "notes": []
+}

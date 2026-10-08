@@ -1,0 +1,22 @@
+{
+  "environment_id": "env.m1.x86-64",
+  "version": "1.0.0",
+  "label": "M1 minimal environment",
+  "description": "Compact environment for M1 infrastructure qualification.",
+  "requirements": [
+    {
+      "component": "python",
+      "kind": "runtime",
+      "specifier": {
+        "clauses": [
+          {
+            "comparator": "greater_than_or_equal",
+            "version": "3.12"
+          }
+        ]
+      },
+      "purpose": null
+    }
+  ],
+  "notes": []
+}

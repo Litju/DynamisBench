@@ -1,0 +1,116 @@
+{
+  "benchmark_id": "db.m1-qual",
+  "version": "1.0.0",
+  "label": "M1 qualification benchmark",
+  "description": "Compact benchmark that exists only to qualify the M1 scientific kernel.",
+  "intended_use": "Infrastructure qualification of planning, identity, and evidence tooling.",
+  "intended_non_use": "Not a scientific claim and not a model validation.",
+  "conceptual_model": "Minimal one-quantity jump model used for infrastructure qualification.",
+  "claim_ceiling": "Software infrastructure qualification only.",
+  "quantities": [
+    {
+      "quantity_id": "q.m1.height",
+      "version": "1.0.0",
+      "label": "M1 jump height",
+      "description": "Minimal canonical quantity for the M1 qualification plan.",
+      "dimension": {
+        "length": 1,
+        "mass": 0,
+        "time": 0,
+        "electric_current": 0,
+        "temperature": 0,
+        "amount_of_substance": 0,
+        "luminous_intensity": 0
+      },
+      "unit": {
+        "expression": "m"
+      },
+      "frame": {
+        "frame_id": "world",
+        "parent": "global",
+        "axis_labels": ["x", "y", "z"],
+        "handedness": "right",
+        "description": "Right-handed world frame with the vertical along +z."
+      },
+      "sign_convention": {
+        "positive_direction": "upward from the standing value",
+        "notes": []
+      },
+      "time_basis": {
+        "kind": "relative_to_start",
+        "origin": null
+      },
+      "sampling": {
+        "kind": "uniform",
+        "period_s": null,
+        "rate_hz": 100.0,
+        "notes": []
+      },
+      "body_inclusion": {
+        "included": ["com"],
+        "excluded": [],
+        "aggregation": "single",
+        "notes": []
+      },
+      "uncertainty": {
+        "characterization": "none; infrastructure fixture only",
+        "notes": []
+      },
+      "notes": []
+    }
+  ],
+  "scenarios": [
+    {
+      "scenario_id": "sc.m1.jump",
+      "version": "1.0.0",
+      "label": "M1 minimal jump",
+      "description": "Minimal scenario for M1 qualification.",
+      "duration_s": 1.0,
+      "initial_conditions": [
+        {
+          "quantity": "q.m1.height",
+          "value": 0.0,
+          "unit": {
+            "expression": "m"
+          }
+        }
+      ],
+      "events": [],
+      "required_capabilities": [
+        {
+          "capability": "forward_dynamics",
+          "essential": true,
+          "rationale": "forward_dynamics is required by this definition"
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "metrics": [
+    {
+      "metric_id": "m.m1.height_rmse",
+      "version": "1.0.0",
+      "label": "M1 height RMSE",
+      "description": "Root mean square error of canonical jump height.",
+      "quantity": "q.m1.height",
+      "aggregation": {
+        "method": "mean",
+        "window_start_s": 0.0,
+        "window_end_s": 1.0
+      },
+      "criterion": {
+        "operator": "less",
+        "threshold": 0.01
+      },
+      "notes": []
+    }
+  ],
+  "references": [],
+  "credibility_hierarchy": ["benchmark_reference_case"],
+  "requirements": [],
+  "assumptions": [],
+  "applicability_domain": [],
+  "known_discrepancies": [],
+  "uncertainty_expectations": [],
+  "notes": []
+}

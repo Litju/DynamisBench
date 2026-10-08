@@ -162,9 +162,23 @@ jobs:
       - name: Type check (Pyright)
         run: uv run pyright
       - name: Test (pytest + Hypothesis)
-        run: uv run pytest
+        run: uv run pytest --junitxml=evidence/pytest.xml
         env:
           HYPOTHESIS_PROFILE: ci
+      - name: Generate the M1 qualification report
+        run: >
+          uv run python tools/m1_qualification.py
+          --target ${{ matrix.name }}
+          --git-sha ${{ github.event.pull_request.head.sha || github.sha }}
+          --junit evidence/pytest.xml
+          --fixture-root tests/fixtures/m1_qualification
+          --output evidence/m1-qualification-${{ matrix.name }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: m1-qualification-${{ matrix.name }}
+          path: python/evidence/m1-qualification-${{ matrix.name }}.json
+          if-no-files-found: error
+          retention-days: 90
 
   frontend:
     name: frontend (${{ matrix.name }})
