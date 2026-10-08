@@ -10,18 +10,26 @@
 //!
 //! Every test is bounded: `wait_for` asserts on a deadline instead of sleeping forever, and
 //! every `Supervisor` is either shut down or was failed by the time its test ends.
+//!
+//! The interleavings here are *forced*, not waited for. The spawn seam in
+//! [`Supervisor::with_spawner`] hands the test a place to stop a start at an exact point —
+//! between admitting it and creating the child, and between creating the child and
+//! publishing its command channel — so the exit/start orderings are decided by barriers and
+//! channels rather than by how fast the operating system schedules threads.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use dynamisbench_desktop_lib::sidecar::launch::{locked_interpreter, repository_root};
 use dynamisbench_desktop_lib::sidecar::{
-    FailureCode, LaunchSpec, SessionSnapshot, SessionStatus, ShutdownOutcome, StartError,
-    StateListener, Supervisor, SupervisorConfig,
+    spawn_sidecar, FailureCode, LaunchSpec, SessionSnapshot, SessionStatus, ShutdownOutcome,
+    SpawnSidecar, StartError, StateListener, Supervisor, SupervisorConfig,
 };
 
 const READY: &str = r#"{"kind":"dynamisbench.api.ready","protocol_version":1,"api_version":"v1","host":"127.0.0.1","port":45999}"#;
@@ -343,6 +351,12 @@ fn a_shutdown_requested_while_starting_contains_the_child_and_stops_the_session(
     assert!(supervisor.session_bootstrap().credential().is_none());
 }
 
+fn supervisor_spec_for_second_attempt() -> LaunchSpec {
+    // Never spawned: the refusal is checked before anything runs. A real interpreter keeps
+    // the spec honest if the refusal ever regresses.
+    python_spec("import sys; sys.exit(1)")
+}
+
 // =====================================================================================
 // The atomic bootstrap capture: one read, one state version.
 // =====================================================================================
@@ -384,12 +398,6 @@ fn the_bootstrap_capture_never_straddles_a_lifecycle_transition() {
     // The transition that followed did not reach back into the earlier capture.
     assert_eq!(ready.snapshot().status, SessionStatus::Ready);
     assert_eq!(credential.expose().len(), 43);
-}
-
-fn supervisor_spec_for_second_attempt() -> LaunchSpec {
-    // Never spawned: the refusal is checked before anything runs. A real interpreter keeps
-    // the spec honest if the refusal ever regresses.
-    python_spec("import sys; sys.exit(1)")
 }
 
 // =====================================================================================
@@ -495,6 +503,150 @@ sys.exit(7)
         !failed.restart_required,
         "a session that was asked to stop and did not stop cleanly is not a crash"
     );
+}
+
+// =====================================================================================
+// The start/exit fence: two orderings, both forced, neither raced for.
+// =====================================================================================
+
+#[test]
+fn an_exit_that_wins_first_stops_the_start_and_never_reaches_the_spawn() {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&attempts);
+    let (_, listener) = recorder();
+    let supervisor = Supervisor::with_spawner(
+        fast_config(),
+        listener,
+        Arc::new(move |_spec, _credential| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            Err(std::io::Error::other("the fixture is never spawned"))
+        }),
+    );
+
+    assert!(supervisor.begin_exit());
+
+    let result = supervisor.start(python_spec(&ready_then_shutdown_script()));
+
+    assert_eq!(result, Err(StartError::Stopped));
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        0,
+        "the spawn seam must record zero attempts once the desktop has claimed its exit"
+    );
+    assert_eq!(
+        supervisor.snapshot().status,
+        SessionStatus::Stopped,
+        "no session was ever begun"
+    );
+    assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::NotRunning);
+}
+
+#[test]
+fn an_exit_that_wins_after_the_start_reservation_reaches_the_monitor_and_reaps_the_child() {
+    let (spawn_entered_tx, spawn_entered_rx) = mpsc::channel::<()>();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    // The supervisor may be shared across threads, so its spawner must be `Sync`; the release
+    // handshake therefore lives behind a lock instead of moving the receiver into it.
+    let release = Mutex::new(release_rx);
+    let spawner: Arc<SpawnSidecar> = Arc::new(move |spec, credential| {
+        let _ = spawn_entered_tx.send(());
+        release
+            .lock()
+            .expect("the release lock is not poisoned")
+            .recv()
+            .expect("the test must release the spawn attempt");
+        spawn_sidecar(spec, credential)
+    });
+    let (_, listener) = recorder();
+    let supervisor = Arc::new(Supervisor::with_spawner(fast_config(), listener, spawner));
+    let pid_file = std::env::temp_dir().join(format!(
+        "dynamisbench-res376-exit-after-reservation-{}.pid",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&pid_file);
+    let script = format!(
+        r#"
+import os, sys
+print('{READY}', flush=True)
+with open(r'{pid}', 'w') as handle:
+    handle.write(str(os.getpid()))
+line = sys.stdin.readline()
+sys.exit(0 if line.strip() == '{SHUTDOWN}' else 3)
+"#,
+        pid = pid_file.display()
+    );
+
+    // The start is stopped inside its own reservation: admitted, credential generated, and
+    // not yet a child.
+    let starting = Arc::clone(&supervisor);
+    let start = thread::spawn(move || starting.start(python_spec(&script)));
+    spawn_entered_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the start must reach its spawn attempt");
+
+    // The desktop claims its exit while that start is still in flight.
+    let exiting = Arc::clone(&supervisor);
+    let (claimed_tx, claimed_rx) = mpsc::channel::<()>();
+    let (proceed_tx, proceed_rx) = mpsc::channel::<()>();
+    let (outcome_tx, outcome_rx) = mpsc::channel();
+    thread::spawn(move || {
+        assert!(
+            exiting.begin_exit(),
+            "the first exit claim is always admitted"
+        );
+        let _ = claimed_tx.send(());
+        proceed_rx
+            .recv()
+            .expect("the test must let the exit reach the monitor");
+        let _ = outcome_tx.send(exiting.request_shutdown());
+    });
+    claimed_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the exit must claim the session");
+    assert!(
+        outcome_rx.try_recv().is_err(),
+        "the exit cannot conclude yet: a child has been admitted and is being created"
+    );
+
+    // Only now does the reservation resolve into a live child.
+    release_tx.send(()).expect("the start must be released");
+    wait_for_status(&supervisor, SessionStatus::Ready, Duration::from_secs(10));
+    let pid = wait_for_pid_file(&pid_file, Duration::from_secs(10));
+    assert!(process_is_alive(pid), "the child must be serving");
+
+    proceed_tx
+        .send(())
+        .expect("the exit must reach the monitor");
+    let outcome = outcome_rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the exit must be answered once the child is gone");
+
+    let result = start.join().expect("the start thread must not panic");
+    assert_eq!(result, Ok(()), "the child really did reach readiness");
+    assert_eq!(
+        outcome,
+        ShutdownOutcome::Graceful,
+        "the exit reached the monitor instead of reporting nothing to stop"
+    );
+    assert_eq!(supervisor.snapshot().status, SessionStatus::Stopped);
+    wait_until_dead(pid, Duration::from_secs(10));
+    let _ = std::fs::remove_file(&pid_file);
+}
+
+#[test]
+fn a_repeated_exit_claim_is_still_idempotent_after_a_real_session() {
+    let (supervisor, _) = supervisor(fast_config());
+
+    supervisor
+        .start(python_spec(&ready_then_shutdown_script()))
+        .expect("ready");
+
+    assert!(supervisor.begin_exit());
+    assert!(!supervisor.begin_exit());
+    assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::Graceful);
+    assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::NotRunning);
+    assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::NotRunning);
+    assert_eq!(supervisor.snapshot().status, SessionStatus::Stopped);
 }
 
 fn wait_for_pid_file(path: &Path, timeout: Duration) -> u32 {

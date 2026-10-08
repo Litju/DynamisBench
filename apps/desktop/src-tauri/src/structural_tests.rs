@@ -205,10 +205,32 @@ fn the_supervisor_offers_the_credential_only_through_the_atomic_capture() {
         supervisor.contains("pub fn session_bootstrap(&self) -> SessionBootstrap"),
         "the one way out of the session state is the atomic capture"
     );
-    for banned in ["pub fn credential("] {
+    for banned in ["pub fn credential(", "pub fn snapshot_and_credential"] {
         assert!(
             !supervisor.contains(banned),
             "no accessor may pair a snapshot with a separately read credential; found {banned}"
+        );
+    }
+}
+
+#[test]
+fn the_start_and_exit_fence_is_one_mutex_not_several_independent_facts() {
+    let supervisor = module_source("src/sidecar/supervisor.rs");
+
+    assert!(
+        supervisor.contains("struct Gate"),
+        "the lifecycle record and the start/exit decision share one gate"
+    );
+    for banned in [
+        "AtomicBool",
+        "Ordering::SeqCst",
+        "thread::sleep(Duration::from_millis(1",
+        "retry",
+    ] {
+        assert!(
+            !supervisor.contains(banned),
+            "the fence must be one critical section, not an independent atomic or a retry; \
+             found {banned}"
         );
     }
 }

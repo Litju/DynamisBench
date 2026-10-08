@@ -12,6 +12,12 @@
 //! `ExitRequested` is fenced once, the child is asked to stop through its stdin control
 //! channel, and a deadline expiring means force-termination and reaping — containment is
 //! recorded as such, and no child outlives the session.
+//!
+//! The exit claim and the start admission are the same decision, taken under one lock in the
+//! supervisor. So an exit either wins before any child exists — in which case the startup
+//! thread's `start` is refused and no process is created — or loses to a start that has
+//! already produced an addressable child, which the shutdown then reaches. There is no
+//! interleaving in which the desktop leaves believing there was nothing to stop.
 
 pub mod bridge;
 pub mod sidecar;
@@ -24,7 +30,8 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager, RunEvent};
 
 use crate::sidecar::{
-    current_launch_mode, launch_spec, SessionSnapshot, StateListener, Supervisor, SupervisorConfig,
+    current_launch_mode, launch_spec, SessionSnapshot, StartError, StateListener, Supervisor,
+    SupervisorConfig,
 };
 
 /// Build and run the DynamisBench desktop shell.
@@ -41,9 +48,16 @@ pub fn run() {
             app.manage(Arc::clone(&supervisor));
 
             std::thread::spawn(move || {
-                if let Err(failure) = supervisor.start(launch_spec(current_launch_mode())) {
+                match supervisor.start(launch_spec(current_launch_mode())) {
+                    Ok(()) => {}
+                    // The desktop claimed its exit before this start was admitted, so the fence
+                    // refused it and no child was created. That is the fence working, not a
+                    // session failure, and there is nothing to report about it.
+                    Err(StartError::Stopped) => {}
                     // A bounded code, never the child's output and never the credential.
-                    eprintln!("dynamisbench: the API sidecar session is not ready: {failure:?}");
+                    Err(failure) => {
+                        eprintln!("dynamisbench: the API sidecar session is not ready: {failure:?}")
+                    }
                 }
             });
             Ok(())

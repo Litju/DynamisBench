@@ -14,11 +14,23 @@
 //!   violation; an unsolicited exit is `unexpected_exit` with `restart_required = true`.
 //!   There is no automatic restart, and no path that spawns a second child.
 //! * **Shutdown** through the child's stdin: the exact record, flushed, then stdin closed so
-//!   the child's own EOF path is a second chance. The protocol channel is still watched
-//!   throughout — see [`graceful_shutdown`] — so the one-readiness-line contract does not
-//!   relax when the shutdown begins. A bounded deadline follows; exit code 0 with a quiet
-//!   stdout is the only graceful success. A deadline that expires is containment:
-//!   force-terminate, reap, and record `shutdown_timeout` — never called graceful.
+//!   the child's own EOF path is a second chance. A bounded deadline follows; exit code 0 is
+//!   the only graceful success. A deadline that expires is containment: force-terminate,
+//!   reap, and record `shutdown_timeout` — never called graceful.
+//!
+//! Two properties are structural here rather than conventional, and both are why there is
+//! exactly one lock in this module:
+//!
+//! * **A requested shutdown does not stop watching stdout.** The protocol channel stays
+//!   observed from the moment the shutdown record is written until the child is reaped, so
+//!   "exactly one readiness line per session" is enforced during shutdown too. A child that
+//!   writes a second line and *then* exits 0 is a protocol violation that was force-contained,
+//!   not a graceful shutdown.
+//! * **A start and a desktop exit cannot both be in flight.** [`Supervisor::admit_start`]
+//!   refuses a start once the desktop has claimed its exit, and
+//!   [`Supervisor::request_shutdown`] waits out a start that has already been admitted instead
+//!   of reporting that there is nothing to stop. There is no interleaving in which
+//!   `request_shutdown` answers `NotRunning` and a child is spawned afterwards.
 //!
 //! The thread model is deliberately plain (`std::thread` + `mpsc`). A supervisor that needs
 //! an async runtime to wait on one child's pipes would be a much larger surface than the
@@ -27,19 +39,17 @@
 //! until the child is gone or contained.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::sidecar::credential::SessionCredential;
 use crate::sidecar::launch::LaunchSpec;
 use crate::sidecar::protocol::{parse_readiness, shutdown_line};
-use crate::sidecar::state::StartRefused;
 use crate::sidecar::state::{
-    FailureCode, SessionBootstrap, SessionSnapshot, SessionState, SessionStatus,
+    FailureCode, SessionBootstrap, SessionSnapshot, SessionState, StartRefused,
 };
 
 /// The environment variable carrying the session credential to the child.
@@ -100,7 +110,8 @@ pub type StateListener = dyn Fn(&SessionSnapshot) + Send + Sync + 'static;
 /// What a shutdown request actually achieved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShutdownOutcome {
-    /// The child exited 0 after being asked through the control channel.
+    /// The child exited 0 after being asked through the control channel, having written
+    /// nothing further to the protocol channel.
     Graceful,
     /// The child was force-terminated and reaped; `shutdown_timeout` or `unexpected_exit`
     /// is recorded in the session state.
@@ -120,14 +131,104 @@ pub enum StartError {
     Stopped,
 }
 
-/// The process owner for one desktop session's API sidecar.
-pub struct Supervisor {
-    config: SupervisorConfig,
-    state: Arc<Mutex<SessionState>>,
-    listener: Arc<StateListener>,
-    commands: Mutex<Option<Sender<SupervisorCommand>>>,
-    shutdown_begun: AtomicBool,
-    exit_begun: AtomicBool,
+/// How the one child is created.
+///
+/// The product always uses [`spawn_sidecar`]. This indirection exists so qualification can
+/// count spawn attempts and reach a forced interleaving without a real process — it is not a
+/// configuration surface: the [`LaunchSpec`] still comes from the fixed launch resolution, no
+/// WebView input reaches it, and nothing about the launch becomes caller-chosen.
+pub type SpawnSidecar = dyn Fn(&LaunchSpec, &SessionCredential) -> io::Result<Child> + Send + Sync;
+
+/// Where a session is in the supervisor's own lifecycle.
+///
+/// This is not the vocabulary the WebView sees — that is [`crate::sidecar::SessionStatus`] —
+/// but the authority for two questions that the public state alone cannot answer: may a start
+/// proceed, and is there a monitor that a shutdown can be addressed to.
+///
+/// [`Phase::StartReserved`] is what makes the start/exit race impossible. It is the window
+/// between admitting a start and publishing the monitor's command channel, and while it is
+/// held neither a second start nor an exit may conclude that nothing is running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    /// No start has been admitted and none is in flight.
+    Idle,
+    /// A start has been admitted; the child is being created and no channel exists yet.
+    StartReserved,
+    /// The monitor is running and its command channel is established.
+    Running,
+    /// A shutdown has been delivered to the monitor and is in progress.
+    Exiting,
+    /// The child is gone: never spawned, contained, or reaped.
+    Terminated,
+}
+
+/// The session's public state beside the supervisor's own control decisions, under one lock.
+///
+/// [`crate::sidecar::SessionState`] is what the WebView is told; this record is what the
+/// supervisor is allowed to decide. They share a mutex because the two must not be readable
+/// at different instants: a WebView bootstrap capture and an "is the desktop exiting" claim
+/// that disagree is the defect this module exists to prevent.
+#[derive(Debug)]
+struct Control {
+    session: SessionState,
+    phase: Phase,
+    exit_claimed: bool,
+    commands: Option<Sender<SupervisorCommand>>,
+}
+
+impl Control {
+    fn new() -> Self {
+        Self {
+            session: SessionState::stopped(),
+            phase: Phase::Idle,
+            exit_claimed: false,
+            commands: None,
+        }
+    }
+
+    /// Admit a start, or refuse it.
+    ///
+    /// Refusal has two distinct reasons and they are kept apart because they are different
+    /// facts: a session that is already starting or ready is [`StartError::Refused`], while a
+    /// desktop that has claimed its exit is [`StartError::Stopped`] — the session is over and
+    /// no later start may create a child.
+    fn admit_start(&mut self) -> Result<(), StartError> {
+        if self.exit_claimed {
+            return Err(StartError::Stopped);
+        }
+        self.session.begin().map_err(StartError::Refused)?;
+        self.phase = Phase::StartReserved;
+        Ok(())
+    }
+
+    /// Claim the one desktop-exit cleanup, returning false for every later claimant.
+    fn admit_exit(&mut self) -> bool {
+        if self.exit_claimed {
+            return false;
+        }
+        self.exit_claimed = true;
+        true
+    }
+
+    /// Publish the monitor's command channel: the reservation is resolved and addressable.
+    fn established(&mut self, commands: Sender<SupervisorCommand>) {
+        self.commands = Some(commands);
+        self.phase = Phase::Running;
+    }
+
+    /// The child is gone; nothing is addressable and no start may follow.
+    fn terminated(&mut self) {
+        self.commands = None;
+        self.phase = Phase::Terminated;
+    }
+
+    fn snapshot(&self) -> SessionSnapshot {
+        self.session.snapshot().clone()
+    }
+
+    fn bootstrap(&self) -> SessionBootstrap {
+        self.session.bootstrap()
+    }
 }
 
 enum SupervisorCommand {
@@ -146,32 +247,103 @@ enum ProtocolEvent {
     Malformed,
 }
 
+/// The one lock every supervision decision goes through.
+///
+/// [`Control`] is the record; [`Condvar::resolved`] exists so a shutdown request that arrives
+/// inside a start's reservation can wait for that reservation to resolve instead of reporting
+/// that there is nothing to stop. It is the wait — not a sleep, and not a retry — that makes
+/// "exit wins before spawn" and "start wins before exit" the only two possible orders.
+struct Gate {
+    control: Mutex<Control>,
+    resolved: Condvar,
+}
+
+impl Gate {
+    fn new() -> Self {
+        Self {
+            control: Mutex::new(Control::new()),
+            resolved: Condvar::new(),
+        }
+    }
+
+    /// Announce that the record changed, after the guard is released.
+    ///
+    /// Called outside the critical section so a waiter is not woken only to block on a lock
+    /// the notifier is still holding.
+    fn announce(&self) {
+        self.resolved.notify_all();
+    }
+}
+
+/// The child between spawn and the monitor thread that owns it.
+///
+/// `std::process::Child` does not stop its process when dropped, so a monitor thread that
+/// cannot be created would leak the child it was created for. The slot is shared so the
+/// failed spawn can still reach the process and contain it.
+struct ChildSlot(Mutex<Option<Child>>);
+
+impl ChildSlot {
+    fn new(child: Child) -> Arc<Self> {
+        Arc::new(Self(Mutex::new(Some(child))))
+    }
+
+    fn take(&self) -> Option<Child> {
+        lock(&self.0).take()
+    }
+}
+
+/// The process owner for one desktop session's API sidecar.
+pub struct Supervisor {
+    config: SupervisorConfig,
+    gate: Arc<Gate>,
+    listener: Arc<StateListener>,
+    spawn_sidecar: Arc<SpawnSidecar>,
+}
+
 impl Supervisor {
     /// A supervisor that owns no process yet.
     pub fn new(config: SupervisorConfig, listener: Arc<StateListener>) -> Self {
+        Self::with_spawner(
+            config,
+            listener,
+            Arc::new(|spec, credential| spawn_sidecar(spec, credential)),
+        )
+    }
+
+    /// A supervisor whose child creation is wrapped by `spawner`.
+    ///
+    /// A qualification seam, not a second production path: [`Supervisor::new`] is the only
+    /// constructor the shell uses, and the seam can neither change the resolved command nor
+    /// be reached from the WebView. It exists so "the exit won, so no child was spawned" and
+    /// "the exit arrived while the spawn was still in flight" can both be forced as exact
+    /// orderings rather than hunted for.
+    pub fn with_spawner(
+        config: SupervisorConfig,
+        listener: Arc<StateListener>,
+        spawner: Arc<SpawnSidecar>,
+    ) -> Self {
         Self {
             config,
-            state: Arc::new(Mutex::new(SessionState::stopped())),
+            gate: Arc::new(Gate::new()),
             listener,
-            commands: Mutex::new(None),
-            shutdown_begun: AtomicBool::new(false),
-            exit_begun: AtomicBool::new(false),
+            spawn_sidecar: spawner,
         }
     }
 
     /// The current lifecycle snapshot: non-secret, and always one state version.
     pub fn snapshot(&self) -> SessionSnapshot {
-        lock(&self.state).snapshot().clone()
+        lock(&self.gate.control).snapshot()
     }
 
     /// The whole WebView bootstrap — snapshot and credential — from one critical section.
     ///
-    /// The single replacement for reading the snapshot and a credential separately. There is
-    /// deliberately no credential accessor beside it: a response that paired one state
-    /// version's address with another state version's credential is exactly what two
-    /// independent reads can produce, so the supervisor does not offer that shape to anyone.
+    /// The single replacement for reading [`Supervisor::snapshot`] and a credential
+    /// separately. There is deliberately no credential accessor beside it: a response that
+    /// paired one state version's address with another state version's credential is exactly
+    /// what the previous pair of reads could produce, so the supervisor does not offer that
+    /// shape to any caller.
     pub fn session_bootstrap(&self) -> SessionBootstrap {
-        lock(&self.state).bootstrap()
+        lock(&self.gate.control).bootstrap()
     }
 
     /// Spawn and supervise the one child, blocking until readiness resolves.
@@ -181,45 +353,80 @@ impl Supervisor {
     /// `credential_unavailable` session failure rather than an error the caller must handle.
     ///
     /// `Ok` means the session is ready and the credential is held; `Err` means the session
-    /// is failed or was refused, with the reason already published to the listener.
+    /// is failed, was refused, or the desktop claimed its exit first — in which case no child
+    /// was created.
     pub fn start(&self, spec: LaunchSpec) -> Result<(), StartError> {
         {
-            let mut state = lock(&self.state);
-            state.begin().map_err(StartError::Refused)?;
+            // Admission and reservation in one critical section: from here until the command
+            // channel is published, this session is claimed, and a shutdown that arrives in
+            // that window waits for it rather than concluding nothing is running.
+            lock(&self.gate.control).admit_start()?;
         }
+        publish(&self.gate, &self.listener);
 
         let credential = match SessionCredential::generate() {
             Ok(credential) => credential,
             Err(_) => {
-                fail(
-                    &self.state,
-                    &self.listener,
-                    FailureCode::CredentialUnavailable,
-                    false,
-                );
+                self.end_session(FailureCode::CredentialUnavailable, false);
                 return Err(StartError::Failed(FailureCode::CredentialUnavailable));
             }
         };
-        publish(&self.state, &self.listener);
+
+        let mut child = match (self.spawn_sidecar)(&spec, &credential) {
+            Ok(child) => child,
+            Err(_) => {
+                self.end_session(FailureCode::SpawnFailed, false);
+                return Err(StartError::Failed(FailureCode::SpawnFailed));
+            }
+        };
+
+        let (Some(stdout), Some(stderr), Some(stdin)) =
+            (child.stdout.take(), child.stderr.take(), child.stdin.take())
+        else {
+            // Cannot happen with `Stdio::piped`, and if it did, nothing can be supervised.
+            terminate_and_reap(&mut child);
+            self.end_session(FailureCode::SpawnFailed, false);
+            return Err(StartError::Failed(FailureCode::SpawnFailed));
+        };
 
         let (command_tx, command_rx) = mpsc::channel();
-        *lock(&self.commands) = Some(command_tx);
+        {
+            let mut control = lock(&self.gate.control);
+            control.established(command_tx);
+        }
+        self.gate.announce();
 
+        let slot = ChildSlot::new(child);
+        let handed_over = Arc::clone(&slot);
         let (startup_tx, startup_rx) = mpsc::channel();
-        let state = Arc::clone(&self.state);
+        let gate = Arc::clone(&self.gate);
         let listener = Arc::clone(&self.listener);
         let config = self.config;
         let builder = thread::Builder::new().name("dynamisbench-sidecar-monitor".to_string());
         if builder
             .spawn(move || {
+                let child = handed_over
+                    .take()
+                    .expect("the monitor thread is the only holder of the child slot");
                 monitor(
-                    spec, credential, config, state, listener, command_rx, startup_tx,
-                )
+                    child,
+                    stdout,
+                    stderr,
+                    Some(stdin),
+                    credential,
+                    config,
+                    gate,
+                    listener,
+                    command_rx,
+                    startup_tx,
+                );
             })
             .is_err()
         {
-            lock(&self.state).mark_failed(FailureCode::SpawnFailed, false);
-            publish(&self.state, &self.listener);
+            if let Some(mut orphaned) = slot.take() {
+                terminate_and_reap(&mut orphaned);
+            }
+            self.end_session(FailureCode::SpawnFailed, false);
             return Err(StartError::Failed(FailureCode::SpawnFailed));
         }
 
@@ -236,72 +443,132 @@ impl Supervisor {
     ///
     /// Idempotent: the first caller performs the shutdown, and every later caller is told
     /// there is no running session. There is no second record and no second child.
+    ///
+    /// The one answer this must never give while a child is still coming is `NotRunning`. A
+    /// start that has been admitted holds a reservation, so this waits for that reservation
+    /// to resolve into a command channel (the child is addressable) or into a terminated
+    /// session (no child exists). The wait is bounded by the same outer grace used for a
+    /// wedged monitor.
     pub fn request_shutdown(&self) -> ShutdownOutcome {
-        if matches!(
-            self.snapshot().status,
-            SessionStatus::Stopped | SessionStatus::Failed
-        ) {
-            return ShutdownOutcome::NotRunning;
-        }
-        if self.shutdown_begun.swap(true, Ordering::SeqCst) {
-            return ShutdownOutcome::NotRunning;
-        }
-
-        let sender = lock(&self.commands).clone();
-        let Some(sender) = sender else {
-            return ShutdownOutcome::NotRunning;
+        let commands = {
+            let mut control = lock(&self.gate.control);
+            let deadline = Instant::now() + self.config.startup_timeout + OUTER_GRACE;
+            loop {
+                match control.phase {
+                    Phase::Running => {
+                        control.phase = Phase::Exiting;
+                        match control.commands.clone() {
+                            Some(commands) => break commands,
+                            None => return ShutdownOutcome::NotRunning,
+                        }
+                    }
+                    Phase::StartReserved => {
+                        let remaining = deadline.saturating_duration_since(Instant::now());
+                        if remaining.is_zero() {
+                            // The reservation never resolved, which no reachable path does.
+                            // Containment is the honest answer: never `NotRunning`, which
+                            // would tell the desktop there is provably no child to leave.
+                            return ShutdownOutcome::Forced;
+                        }
+                        let (guard, _) = self
+                            .gate
+                            .resolved
+                            .wait_timeout(control, remaining)
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                        control = guard;
+                    }
+                    Phase::Idle | Phase::Exiting | Phase::Terminated => {
+                        return ShutdownOutcome::NotRunning;
+                    }
+                }
+            }
         };
-        let (reply_tx, reply_rx) = mpsc::channel();
-        if sender
-            .send(SupervisorCommand::Shutdown { reply: reply_tx })
-            .is_err()
-        {
-            return ShutdownOutcome::NotRunning;
-        }
-        match reply_rx.recv_timeout(self.config.shutdown_timeout + OUTER_GRACE) {
-            Ok(outcome) => outcome,
-            Err(_) => ShutdownOutcome::Forced,
+
+        let (reply, reply_rx) = mpsc::channel();
+        match commands.send(SupervisorCommand::Shutdown { reply }) {
+            Ok(()) => match reply_rx.recv_timeout(self.config.shutdown_timeout + OUTER_GRACE) {
+                Ok(outcome) => outcome,
+                // The monitor owns this deadline; arriving here means it is wedged, and
+                // containment is the only safe claim.
+                Err(_) => ShutdownOutcome::Forced,
+            },
+            // The monitor is gone, so the child it owned is gone: nothing to stop.
+            Err(_) => ShutdownOutcome::NotRunning,
         }
     }
 
     /// Claim the one desktop-exit cleanup, returning false for every later claimant.
     ///
-    /// The fence for repeated exit events: whoever swaps this first performs the graceful
-    /// shutdown and the final exit; everyone else does nothing.
+    /// The fence for repeated exit events: whoever claims this first performs the graceful
+    /// shutdown and the final exit; everyone else does nothing. Claiming it also closes the
+    /// session to future starts, which is what stops a background startup thread from
+    /// creating a child after the desktop has decided to leave.
     pub fn begin_exit(&self) -> bool {
-        !self.exit_begun.swap(true, Ordering::SeqCst)
+        lock(&self.gate.control).admit_exit()
+    }
+
+    /// A start that cannot proceed: no child was created, so record the failure and release
+    /// the reservation, waking anything waiting on it.
+    fn end_session(&self, code: FailureCode, restart_required: bool) {
+        {
+            let mut control = lock(&self.gate.control);
+            control.session.mark_failed(code, restart_required);
+            control.terminated();
+        }
+        self.gate.announce();
+        publish(&self.gate, &self.listener);
     }
 }
 
-/// The whole child's life, on one thread, from spawn to reap.
+/// The whole child's life, on one thread, from the child it was handed to its reap.
+///
+/// The wrapper owns the only exit from the record: when the thread returns for any reason,
+/// the command channel is withdrawn and the phase becomes `terminated`, so a shutdown that
+/// arrives afterwards is told the truth — there is no monitor and no child left to address.
 fn monitor(
-    spec: LaunchSpec,
+    child: Child,
+    stdout: ChildStdout,
+    stderr: ChildStderr,
+    stdin: Option<ChildStdin>,
     credential: SessionCredential,
     config: SupervisorConfig,
-    state: Arc<Mutex<SessionState>>,
+    gate: Arc<Gate>,
     listener: Arc<StateListener>,
     command_rx: Receiver<SupervisorCommand>,
     startup: Sender<StartupResolution>,
 ) {
-    let mut child = match spawn_child(&spec, &credential) {
-        Ok(child) => child,
-        Err(_) => {
-            fail(&state, &listener, FailureCode::SpawnFailed, false);
-            let _ = startup.send(StartupResolution::Failed(FailureCode::SpawnFailed));
-            return;
-        }
-    };
+    supervise(
+        child,
+        stdout,
+        stderr,
+        stdin,
+        credential,
+        config,
+        Arc::clone(&gate),
+        Arc::clone(&listener),
+        command_rx,
+        startup,
+    );
+    {
+        let mut control = lock(&gate.control);
+        control.terminated();
+    }
+    gate.announce();
+}
 
-    let (Some(stdout), Some(stderr), Some(stdin)) =
-        (child.stdout.take(), child.stderr.take(), child.stdin.take())
-    else {
-        // Cannot happen with `Stdio::piped`, and if it did, nothing can be supervised.
-        terminate_and_reap(&mut child);
-        fail(&state, &listener, FailureCode::SpawnFailed, false);
-        let _ = startup.send(StartupResolution::Failed(FailureCode::SpawnFailed));
-        return;
-    };
-
+#[allow(clippy::too_many_arguments)]
+fn supervise(
+    mut child: Child,
+    stdout: ChildStdout,
+    stderr: ChildStderr,
+    stdin: Option<ChildStdin>,
+    credential: SessionCredential,
+    config: SupervisorConfig,
+    gate: Arc<Gate>,
+    listener: Arc<StateListener>,
+    command_rx: Receiver<SupervisorCommand>,
+    startup: Sender<StartupResolution>,
+) {
     let (lines_tx, lines_rx) = mpsc::channel();
     let _ = thread::Builder::new()
         .name("dynamisbench-sidecar-stdout".to_string())
@@ -311,14 +578,16 @@ fn monitor(
         .spawn(move || drain(stderr));
 
     let deadline = Instant::now() + config.startup_timeout;
-    let stdin = Some(stdin);
 
     // Startup: the first stdout line is either the exact readiness record or a failure.
     loop {
         if let Some(outcome) = pending_shutdown(&command_rx) {
             terminate_and_reap(&mut child);
-            lock(&state).mark_stopped();
-            publish(&state, &listener);
+            {
+                let mut control = lock(&gate.control);
+                control.session.mark_stopped();
+            }
+            publish(&gate, &listener);
             let _ = startup.send(StartupResolution::Stopped);
             let _ = outcome.send(ShutdownOutcome::Forced);
             return;
@@ -328,25 +597,23 @@ fn monitor(
         match lines_rx.recv_timeout(remaining.min(POLL_INTERVAL)) {
             Ok(ProtocolEvent::Line(line)) => match parse_readiness(&line) {
                 Ok(readiness) => {
-                    lock(&state).mark_ready(
-                        readiness.origin(),
-                        readiness.api_version.clone(),
-                        readiness.protocol_version,
-                        credential,
-                    );
-                    publish(&state, &listener);
+                    {
+                        let mut control = lock(&gate.control);
+                        control.session.mark_ready(
+                            readiness.origin(),
+                            readiness.api_version.clone(),
+                            readiness.protocol_version,
+                            credential,
+                        );
+                    }
+                    publish(&gate, &listener);
                     let _ = startup.send(StartupResolution::Ready);
-                    serve(child, stdin, command_rx, lines_rx, config, state, listener);
+                    serve(child, stdin, command_rx, lines_rx, config, gate, listener);
                     return;
                 }
                 Err(_) => {
                     terminate_and_reap(&mut child);
-                    fail(
-                        &state,
-                        &listener,
-                        FailureCode::ReadinessProtocolError,
-                        false,
-                    );
+                    fail(&gate, &listener, FailureCode::ReadinessProtocolError, false);
                     let _ = startup.send(StartupResolution::Failed(
                         FailureCode::ReadinessProtocolError,
                     ));
@@ -355,18 +622,13 @@ fn monitor(
             },
             Ok(ProtocolEvent::Eof) => {
                 terminate_and_reap(&mut child);
-                fail(&state, &listener, FailureCode::SidecarStartupExit, false);
+                fail(&gate, &listener, FailureCode::SidecarStartupExit, false);
                 let _ = startup.send(StartupResolution::Failed(FailureCode::SidecarStartupExit));
                 return;
             }
             Ok(ProtocolEvent::Malformed) => {
                 terminate_and_reap(&mut child);
-                fail(
-                    &state,
-                    &listener,
-                    FailureCode::ReadinessProtocolError,
-                    false,
-                );
+                fail(&gate, &listener, FailureCode::ReadinessProtocolError, false);
                 let _ = startup.send(StartupResolution::Failed(
                     FailureCode::ReadinessProtocolError,
                 ));
@@ -375,13 +637,13 @@ fn monitor(
             Err(RecvTimeoutError::Timeout) => {
                 if Instant::now() >= deadline {
                     terminate_and_reap(&mut child);
-                    fail(&state, &listener, FailureCode::StartupTimeout, false);
+                    fail(&gate, &listener, FailureCode::StartupTimeout, false);
                     let _ = startup.send(StartupResolution::Failed(FailureCode::StartupTimeout));
                     return;
                 }
                 if matches!(child.try_wait(), Ok(Some(_))) {
                     terminate_and_reap(&mut child);
-                    fail(&state, &listener, FailureCode::SidecarStartupExit, false);
+                    fail(&gate, &listener, FailureCode::SidecarStartupExit, false);
                     let _ =
                         startup.send(StartupResolution::Failed(FailureCode::SidecarStartupExit));
                     return;
@@ -389,12 +651,7 @@ fn monitor(
             }
             Err(RecvTimeoutError::Disconnected) => {
                 terminate_and_reap(&mut child);
-                fail(
-                    &state,
-                    &listener,
-                    FailureCode::ReadinessProtocolError,
-                    false,
-                );
+                fail(&gate, &listener, FailureCode::ReadinessProtocolError, false);
                 let _ = startup.send(StartupResolution::Failed(
                     FailureCode::ReadinessProtocolError,
                 ));
@@ -411,7 +668,7 @@ fn serve(
     command_rx: Receiver<SupervisorCommand>,
     lines_rx: Receiver<ProtocolEvent>,
     config: SupervisorConfig,
-    state: Arc<Mutex<SessionState>>,
+    gate: Arc<Gate>,
     listener: Arc<StateListener>,
 ) {
     let mut stdin = stdin;
@@ -423,11 +680,14 @@ fn serve(
                 // shutdown record is written.
                 let (outcome, failure) =
                     graceful_shutdown(&mut child, stdin.take(), &lines_rx, config.shutdown_timeout);
-                match failure {
-                    None => lock(&state).mark_stopped(),
-                    Some(code) => lock(&state).mark_failed(code, false),
+                {
+                    let mut control = lock(&gate.control);
+                    match failure {
+                        None => control.session.mark_stopped(),
+                        Some(code) => control.session.mark_failed(code, false),
+                    }
                 }
-                publish(&state, &listener);
+                publish(&gate, &listener);
                 let _ = reply.send(outcome);
                 return;
             }
@@ -438,24 +698,24 @@ fn serve(
         match lines_rx.recv_timeout(POLL_INTERVAL) {
             Ok(ProtocolEvent::Line(_)) | Ok(ProtocolEvent::Malformed) => {
                 terminate_and_reap(&mut child);
-                fail(&state, &listener, FailureCode::ProtocolViolation, true);
+                fail(&gate, &listener, FailureCode::ProtocolViolation, true);
                 return;
             }
             Ok(ProtocolEvent::Eof) => {
                 terminate_and_reap(&mut child);
-                fail(&state, &listener, FailureCode::UnexpectedExit, true);
+                fail(&gate, &listener, FailureCode::UnexpectedExit, true);
                 return;
             }
             Err(RecvTimeoutError::Timeout) => {
                 if matches!(child.try_wait(), Ok(Some(_))) {
                     terminate_and_reap(&mut child);
-                    fail(&state, &listener, FailureCode::UnexpectedExit, true);
+                    fail(&gate, &listener, FailureCode::UnexpectedExit, true);
                     return;
                 }
             }
             Err(RecvTimeoutError::Disconnected) => {
                 terminate_and_reap(&mut child);
-                fail(&state, &listener, FailureCode::ProtocolViolation, true);
+                fail(&gate, &listener, FailureCode::ProtocolViolation, true);
                 return;
             }
         }
@@ -463,7 +723,11 @@ fn serve(
 }
 
 /// Build the child command: fixed spec, environment-only secrets, piped stdio, no console.
-fn spawn_child(spec: &LaunchSpec, credential: &SessionCredential) -> io::Result<Child> {
+///
+/// The one place a process is created. Public so a qualification spawn seam can delegate to
+/// the production path instead of re-implementing it; it is not called with anything the
+/// WebView can influence.
+pub fn spawn_sidecar(spec: &LaunchSpec, credential: &SessionCredential) -> io::Result<Child> {
     let origins = serde_json::to_string(&spec.origins)
         .expect("a vector of static strings cannot fail to serialize");
     let mut command = Command::new(&spec.program);
@@ -654,18 +918,21 @@ fn terminate_and_reap(child: &mut Child) {
 
 /// Write a failed snapshot and notify, in that order.
 fn fail(
-    state: &Arc<Mutex<SessionState>>,
+    gate: &Arc<Gate>,
     listener: &Arc<StateListener>,
     code: FailureCode,
     restart_required: bool,
 ) {
-    lock(state).mark_failed(code, restart_required);
-    publish(state, listener);
+    {
+        let mut control = lock(&gate.control);
+        control.session.mark_failed(code, restart_required);
+    }
+    publish(gate, listener);
 }
 
-/// Hand the listener the current snapshot without holding the state lock across the call.
-fn publish(state: &Arc<Mutex<SessionState>>, listener: &Arc<StateListener>) {
-    let snapshot = lock(state).snapshot().clone();
+/// Hand the listener the current snapshot without holding the control lock across the call.
+fn publish(gate: &Arc<Gate>, listener: &Arc<StateListener>) {
+    let snapshot = lock(&gate.control).snapshot();
     listener(&snapshot);
 }
 
@@ -680,16 +947,19 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::io;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+    use std::sync::Arc;
     use std::time::Duration;
 
     use super::{
-        lock, ShutdownOutcome, StartError, Supervisor, SupervisorConfig, ALLOWED_ORIGINS_VARIABLE,
+        ShutdownOutcome, StartError, Supervisor, SupervisorConfig, ALLOWED_ORIGINS_VARIABLE,
         SESSION_TOKEN_VARIABLE,
     };
     use crate::sidecar::credential::SessionCredential;
     use crate::sidecar::launch::LaunchSpec;
-    use crate::sidecar::state::{FailureCode, SessionState, SessionStatus};
+    use crate::sidecar::state::{FailureCode, SessionStatus};
 
     fn quiet_supervisor() -> Supervisor {
         Supervisor::new(
@@ -699,6 +969,15 @@ mod tests {
             },
             Arc::new(|_snapshot| {}),
         )
+    }
+
+    fn unreachable_spec() -> LaunchSpec {
+        LaunchSpec {
+            program: "definitely-not-a-real-executable-dynamisbench".into(),
+            args: Vec::new(),
+            cwd: ".".into(),
+            origins: vec!["http://localhost:5173"],
+        }
     }
 
     #[test]
@@ -719,14 +998,8 @@ mod tests {
     #[test]
     fn a_spawn_that_cannot_happen_is_a_bounded_failure_not_a_panic() {
         let supervisor = quiet_supervisor();
-        let missing = crate::sidecar::launch::LaunchSpec {
-            program: "definitely-not-a-real-executable-dynamisbench".into(),
-            args: Vec::new(),
-            cwd: ".".into(),
-            origins: vec!["http://localhost:5173"],
-        };
 
-        let result = supervisor.start(missing);
+        let result = supervisor.start(unreachable_spec());
 
         assert_eq!(result, Err(StartError::Failed(FailureCode::SpawnFailed)));
         let snapshot = supervisor.snapshot();
@@ -744,35 +1017,37 @@ mod tests {
         assert!(!supervisor.begin_exit());
     }
 
+    // ---------------------------------------------------------------------------------
+    // The atomic bootstrap capture.
+    // ---------------------------------------------------------------------------------
+
     /// The defect, made deterministic: the two reads this replaces are reproduced against the
-    /// real state, with the monitor's transition forced into the gap between them.
+    /// real record, with the transition forced into the gap between them.
     ///
     /// There is no timing here. The transition is not raced for — it is placed exactly where
     /// the second read would begin, so the torn pair is a fact about the *composition*, not a
     /// window that has to be caught.
     #[test]
     fn reading_the_snapshot_and_the_credential_separately_straddles_a_transition() {
-        let state = Arc::new(Mutex::new(SessionState::stopped()));
+        let gate = super::Gate::new();
+        let credential = SessionCredential::generate().unwrap();
 
         {
-            let mut held = lock(&state);
-            held.begin().expect("the first start is admitted");
-            held.mark_ready(
-                "http://127.0.0.1:49152".into(),
-                "v1".into(),
-                1,
-                SessionCredential::generate().unwrap(),
-            );
+            let mut control = super::lock(&gate.control);
+            control.admit_start().expect("the first start is admitted");
+            control
+                .session
+                .mark_ready("http://127.0.0.1:49152".into(), "v1".into(), 1, credential);
         }
 
         // Read #1, exactly as the bridge used to read it.
-        let snapshot = lock(&state).snapshot().clone();
+        let snapshot = super::lock(&gate.control).snapshot();
 
         // The monitor's own transition, forced into the gap.
-        lock(&state).mark_stopped();
+        super::lock(&gate.control).session.mark_stopped();
 
         // Read #2, exactly as the bridge used to read it.
-        let credential = lock(&state).bootstrap().credential().cloned();
+        let credential = super::lock(&gate.control).bootstrap().credential().cloned();
 
         assert_eq!(
             snapshot.status,
@@ -791,7 +1066,7 @@ mod tests {
         );
 
         // The replacement, captured at the same instant, cannot straddle anything.
-        let bootstrap = lock(&state).bootstrap();
+        let bootstrap = super::lock(&gate.control).bootstrap();
         assert_eq!(bootstrap.snapshot().status, SessionStatus::Stopped);
         assert_eq!(bootstrap.snapshot().origin, None);
         assert!(bootstrap.credential().is_none());
@@ -801,17 +1076,131 @@ mod tests {
     fn a_capture_never_publishes_a_credential_for_a_session_that_is_not_ready() {
         let supervisor = quiet_supervisor();
 
-        let result = supervisor.start(LaunchSpec {
-            program: "definitely-not-a-real-executable-dynamisbench".into(),
-            args: Vec::new(),
-            cwd: ".".into(),
-            origins: vec!["http://localhost:5173"],
-        });
+        let result = supervisor.start(unreachable_spec());
         assert_eq!(result, Err(StartError::Failed(FailureCode::SpawnFailed)));
 
         let bootstrap = supervisor.session_bootstrap();
         assert_eq!(bootstrap.snapshot().status, SessionStatus::Failed);
         assert_eq!(bootstrap.snapshot().origin, None);
         assert!(bootstrap.credential().is_none());
+    }
+
+    // ---------------------------------------------------------------------------------
+    // The start/exit fence.
+    // ---------------------------------------------------------------------------------
+
+    #[test]
+    fn a_start_after_the_exit_claim_is_refused_and_never_spawns() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&attempts);
+        let published = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&published);
+        let supervisor = Supervisor::with_spawner(
+            SupervisorConfig::default(),
+            Arc::new(move |snapshot| {
+                recorded
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(snapshot.status)
+            }),
+            Arc::new(move |_spec, _credential| {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Err(io::Error::other("the fixture never gets to run"))
+            }),
+        );
+
+        assert!(supervisor.begin_exit());
+
+        let result = supervisor.start(unreachable_spec());
+
+        assert_eq!(
+            result,
+            Err(StartError::Stopped),
+            "an exit has claimed the session, so this start is stopped rather than failed"
+        );
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            0,
+            "no spawn may be attempted once the desktop is exiting"
+        );
+        assert_eq!(
+            supervisor.snapshot().status,
+            SessionStatus::Stopped,
+            "a refused start must not publish a starting session"
+        );
+        assert!(
+            published.lock().unwrap().is_empty(),
+            "a refused start must not publish any lifecycle state"
+        );
+        assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::NotRunning);
+    }
+
+    #[test]
+    fn a_shutdown_inside_a_start_reservation_waits_for_it_instead_of_reporting_nothing() {
+        let (entered_tx, entered_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        // The spawner has to be `Sync` because the supervisor may be shared, so the release
+        // handshake lives behind a lock rather than being moved into the closure.
+        let release = std::sync::Mutex::new(release_rx);
+        let supervisor = Arc::new(Supervisor::with_spawner(
+            SupervisorConfig::default(),
+            Arc::new(|_snapshot| {}),
+            Arc::new(move |_spec, _credential| {
+                // Held inside the reservation: the child has not been created, and the
+                // command channel does not exist yet.
+                let _ = entered_tx.send(());
+                let release = release.lock().expect("the release lock is not poisoned");
+                let _ = release.recv();
+                Err(io::Error::other("the fixture child is never created"))
+            }),
+        ));
+
+        let starting = Arc::clone(&supervisor);
+        let start = std::thread::spawn(move || starting.start(unreachable_spec()));
+        entered_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the start reached its spawn attempt");
+
+        let exiting = Arc::clone(&supervisor);
+        let (outcome_tx, outcome_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = outcome_tx.send(exiting.request_shutdown());
+        });
+
+        assert!(
+            outcome_rx.try_recv().is_err(),
+            "the exit must wait: a child is being created and cannot be reported as absent"
+        );
+
+        release_tx
+            .send(())
+            .expect("the start must be released to resolve its reservation");
+
+        let result = start.join().expect("the start thread must not panic");
+        let outcome = outcome_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the exit must resolve once the reservation does");
+
+        assert_eq!(result, Err(StartError::Failed(FailureCode::SpawnFailed)));
+        assert_eq!(
+            outcome,
+            ShutdownOutcome::NotRunning,
+            "once the reservation has resolved into a terminated session, and only then, \
+             there is provably no child to stop"
+        );
+    }
+
+    #[test]
+    fn a_repeated_shutdown_after_a_terminated_session_still_reports_nothing_to_stop() {
+        let supervisor = quiet_supervisor();
+
+        assert_eq!(
+            supervisor.start(unreachable_spec()),
+            Err(StartError::Failed(FailureCode::SpawnFailed))
+        );
+
+        assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::NotRunning);
+        assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::NotRunning);
+        assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::NotRunning);
     }
 }
