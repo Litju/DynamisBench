@@ -258,6 +258,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri -> target
+      # The Rust tests include the real Rust ↔ Python supervision boundary: they spawn
+      # `python -m dynamisbench api serve` from the repository's locked environment. The
+      # environment is built here explicitly from the lockfile rather than relying on any
+      # interpreter the image happens to ship.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Resolve the locked Python environment
+        working-directory: python
+        run: uv sync --frozen
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
       - name: Record resolved desktop toolchain
@@ -267,9 +277,13 @@ jobs:
             echo "pnpm: $(pnpm --version)"
             echo "rustc: $(rustc --version)"
             echo "cargo: $(cargo --version)"
+            echo "uv: $(uv --version)"
+            echo "python: $(cd python && uv run --frozen python --version)"
             echo "runner: ${ImageOS:-unknown} ${ImageVersion:-unknown} ${RUNNER_OS}/${RUNNER_ARCH}"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Build the workbench (Tauri frontendDist)
         run: pnpm run build
+      - name: Test the desktop shell (Rust)
+        run: cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
       - name: Build the Tauri desktop shell
         run: cargo build --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
