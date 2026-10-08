@@ -149,11 +149,13 @@ def test_bare_invocation_succeeds_and_prints_nothing() -> None:
 
 
 def test_the_version_option_is_answered_without_loading_the_application_stack() -> None:
-    """``dbench --version`` must not import FastAPI or Uvicorn to print two words.
+    """``dbench --version`` must not import the application stack or the scientific kernel.
 
     A sidecar's own entry point pulling the application stack into every invocation would make
     the cheapest command the slowest one, and the import it avoids is the same import that could
-    one day have a side effect.
+    one day have a side effect. The same argument applies to the M1 kernel: planning, domain,
+    and identity are loaded by the commands that use them, never by a question about the
+    program's own name.
     """
     probe = "\n".join(
         [
@@ -164,7 +166,20 @@ def test_the_version_option_is_answered_without_loading_the_application_stack() 
             "        main(['--version'])",
             "except SystemExit:",
             "    pass",
-            "loaded = {'fastapi', 'uvicorn'} & {name.split('.')[0] for name in sys.modules}",
+            "forbidden = (",
+            "    'fastapi',",
+            "    'uvicorn',",
+            "    'pydantic',",
+            "    'dynamisbench.api',",
+            "    'dynamisbench.domain',",
+            "    'dynamisbench.identity',",
+            "    'dynamisbench.planning',",
+            ")",
+            "loaded = {",
+            "    name",
+            "    for name in sys.modules",
+            "    if any(name == item or name.startswith(item + '.') for item in forbidden)",
+            "}",
             "print('loaded=' + ','.join(sorted(loaded)))",
         ]
     )

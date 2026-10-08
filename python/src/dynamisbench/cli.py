@@ -3,12 +3,16 @@
 DB-1.1 exposes the entry point only. Product commands arrive with the issues that
 own them; command behaviour must stay engine-independent (ADR-001).
 
-One command exists, and it has no options. ``dbench api serve`` starts the session-secured
-localhost sidecar (RES-375) and takes its credential and its origin list from the process
-environment, so there is nothing to pass on the command line: no ``--host`` to widen the
-bind, no ``--token`` to leak the credential into the process list, no ``--workers`` or
-``--reload`` to turn a supervised sidecar into a fleet. Every one of those is a decision
-that belongs to the desktop session, and a flag would be a way to make it in the wrong place.
+The surface today: ``dbench --version`` / ``--help`` answer without loading the
+application stack; ``dbench api serve`` starts the session-secured localhost
+sidecar (RES-375) and takes its credential and its origin list from the process
+environment, so there is nothing to pass on the command line: no ``--host`` to
+widen the bind, no ``--token`` to leak the credential into the process list, no
+``--workers`` or ``--reload`` to turn a supervised sidecar into a fleet. Every
+one of those is a decision that belongs to the desktop session, and a flag would
+be a way to make it in the wrong place. The JSON-only inspection and compilation
+primitives (``dbench spec validate``, ``dbench identity inspect``,
+``dbench plan compile``) are M1's CLI evidence surface.
 """
 
 from __future__ import annotations
@@ -21,15 +25,20 @@ from pathlib import Path
 from typing import Any
 
 from dynamisbench import __version__
-from dynamisbench.cli_support import (
-    SPEC_KINDS,
-    CliInputError,
-    describe_identity,
-    load_json_model,
-    load_spec,
-    spec_summary,
+
+_SPEC_KIND_NAMES = (
+    "benchmark",
+    "realization",
+    "scenario",
+    "quantity",
+    "metric",
+    "reference",
+    "sut",
+    "environment",
+    "study",
+    "factor",
 )
-from dynamisbench.planning.errors import PlanningError
+"""Cheap parser vocabulary; the validated registry lives in ``cli_support``."""
 
 
 def _machine_json(value: Any) -> str:
@@ -64,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
         "validate",
         help="Validate one JSON spec against its existing Pydantic model.",
     )
-    validate.add_argument("--kind", required=True, choices=sorted(SPEC_KINDS))
+    validate.add_argument("--kind", required=True, choices=sorted(_SPEC_KIND_NAMES))
     validate.add_argument("file", type=Path, help="JSON file to validate.")
 
     identity = commands.add_parser("identity", help="Semantic identity inspection.")
@@ -73,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
         "inspect",
         help="Inspect the semantic digest of one validated JSON spec.",
     )
-    inspect.add_argument("--kind", required=True, choices=sorted(SPEC_KINDS))
+    inspect.add_argument("--kind", required=True, choices=sorted(_SPEC_KIND_NAMES))
     inspect.add_argument("file", type=Path, help="JSON file to inspect.")
 
     plan = commands.add_parser("plan", help="Study planning.")
@@ -102,6 +111,26 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         return serve()
 
+    if (
+        getattr(arguments, "spec_command", None) is None
+        and getattr(arguments, "identity_command", None) is None
+        and getattr(arguments, "plan_command", None) is None
+    ):
+        return 0
+
+    # Only the commands that actually need the heavy modules pay for them. ``dbench
+    # --version``/``--help`` exit during ``parse_args`` and a bare invocation returns
+    # above, so neither reaches this import boundary.
+    from dynamisbench.cli_support import (
+        CliInputError,
+        _bounded_errors,
+        describe_identity,
+        load_json_model,
+        load_spec,
+        spec_summary,
+    )
+    from dynamisbench.planning.errors import PlanningError
+
     try:
         if getattr(arguments, "spec_command", None) == "validate":
             model = load_spec(arguments.kind, arguments.file)
@@ -115,6 +144,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         if getattr(arguments, "plan_command", None) == "compile":
+            from pydantic import ValidationError
+
             from dynamisbench.domain.spec import (
                 BenchmarkRelease,
                 EnvironmentDefinition,
@@ -129,20 +160,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
 
             study = load_json_model(StudyDefinition, arguments.study)
-            context = PlanningContext(
-                benchmarks=tuple(
-                    load_json_model(BenchmarkRelease, path) for path in arguments.benchmark
-                ),
-                realizations=tuple(
-                    load_json_model(RealizationDefinition, path) for path in arguments.realization
-                ),
-                systems_under_test=tuple(
-                    load_json_model(SUTDefinition, path) for path in arguments.sut
-                ),
-                environments=tuple(
-                    load_json_model(EnvironmentDefinition, path) for path in arguments.environment
-                ),
-            )
+            try:
+                context = PlanningContext(
+                    benchmarks=tuple(
+                        load_json_model(BenchmarkRelease, path) for path in arguments.benchmark
+                    ),
+                    realizations=tuple(
+                        load_json_model(RealizationDefinition, path)
+                        for path in arguments.realization
+                    ),
+                    systems_under_test=tuple(
+                        load_json_model(SUTDefinition, path) for path in arguments.sut
+                    ),
+                    environments=tuple(
+                        load_json_model(EnvironmentDefinition, path)
+                        for path in arguments.environment
+                    ),
+                )
+            except ValidationError as exc:
+                raise CliInputError(f"invalid planning authority ({_bounded_errors(exc)})") from exc
             factor_cases = tuple(
                 load_json_model(FactorCase, path) for path in arguments.factor_case
             )

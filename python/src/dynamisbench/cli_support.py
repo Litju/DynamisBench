@@ -91,6 +91,8 @@ def _read_json_object(path: Path) -> Any:
         raw: Any = json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
         raise CliInputError(f"cannot read {path.name}: {exc.strerror or exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise CliInputError(f"{path.name}: invalid UTF-8") from exc
     except json.JSONDecodeError as exc:
         raise CliInputError(
             f"{path.name}: malformed JSON ({exc.msg} at line {exc.lineno})"
