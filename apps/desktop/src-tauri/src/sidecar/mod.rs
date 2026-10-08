@@ -22,8 +22,8 @@ pub mod supervisor;
 
 pub use credential::{CredentialError, SessionCredential};
 pub use launch::{
-    allowed_origins, allowed_origins_json, development_launch_spec, launch_spec,
-    packaged_sidecar_path, repository_root, LaunchMode, LaunchSpec,
+    allowed_origins, allowed_origins_json, current_launch_mode, development_launch_spec,
+    launch_spec, packaged_sidecar_path, repository_root, LaunchMode, LaunchSpec,
 };
 pub use protocol::{parse_readiness, InvalidReadiness, Readiness};
 pub use state::{FailureCode, SessionSnapshot, SessionState, SessionStatus};

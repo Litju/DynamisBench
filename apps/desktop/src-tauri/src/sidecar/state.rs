@@ -44,6 +44,8 @@ pub enum SessionStatus {
 pub enum FailureCode {
     /// The child process could not be created at all.
     SpawnFailed,
+    /// The operating system random source could not produce a session credential.
+    CredentialUnavailable,
     /// No valid readiness record arrived before the startup deadline.
     StartupTimeout,
     /// The first stdout line was not the exact protocol v1 readiness record.
@@ -352,6 +354,7 @@ mod tests {
     fn every_failure_code_is_bounded_and_named() {
         let codes = [
             (FailureCode::SpawnFailed, "spawn_failed"),
+            (FailureCode::CredentialUnavailable, "credential_unavailable"),
             (FailureCode::StartupTimeout, "startup_timeout"),
             (
                 FailureCode::ReadinessProtocolError,

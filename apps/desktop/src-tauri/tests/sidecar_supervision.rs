@@ -20,8 +20,8 @@ use std::time::{Duration, Instant};
 
 use dynamisbench_desktop_lib::sidecar::launch::{locked_interpreter, repository_root};
 use dynamisbench_desktop_lib::sidecar::{
-    FailureCode, LaunchSpec, SessionCredential, SessionSnapshot, SessionStatus, ShutdownOutcome,
-    StartError, StateListener, Supervisor, SupervisorConfig,
+    FailureCode, LaunchSpec, SessionSnapshot, SessionStatus, ShutdownOutcome, StartError,
+    StateListener, Supervisor, SupervisorConfig,
 };
 
 const READY: &str = r#"{"kind":"dynamisbench.api.ready","protocol_version":1,"api_version":"v1","host":"127.0.0.1","port":45999}"#;
@@ -62,10 +62,6 @@ fn python_spec(script: &str) -> LaunchSpec {
         cwd: repository_root(),
         origins: vec!["http://localhost:5173"],
     }
-}
-
-fn credential() -> SessionCredential {
-    SessionCredential::generate().expect("the operating system random source must exist")
 }
 
 fn recorder() -> (Arc<Mutex<Vec<SessionSnapshot>>>, Arc<StateListener>) {
@@ -120,7 +116,7 @@ fn a_ready_session_reports_the_announced_origin_and_stops_on_the_record() {
     let (supervisor, snapshots) = supervisor(fast_config());
 
     supervisor
-        .start(python_spec(&ready_then_shutdown_script()), credential())
+        .start(python_spec(&ready_then_shutdown_script()))
         .expect("the child announces readiness immediately");
 
     let ready = supervisor.snapshot();
@@ -129,7 +125,10 @@ fn a_ready_session_reports_the_announced_origin_and_stops_on_the_record() {
     assert_eq!(ready.api_version.as_deref(), Some("v1"));
     assert_eq!(ready.protocol_version, Some(1));
     assert!(!ready.restart_required);
-    assert!(supervisor.credential().is_some());
+    let credential = supervisor
+        .credential()
+        .expect("a ready session holds its credential");
+    assert_eq!(credential.expose().len(), 43);
 
     assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::Graceful);
     assert_eq!(
@@ -170,10 +169,10 @@ fn a_second_start_is_refused_while_the_session_is_ready() {
     let (supervisor, _) = supervisor(fast_config());
 
     supervisor
-        .start(python_spec(&ready_then_shutdown_script()), credential())
+        .start(python_spec(&ready_then_shutdown_script()))
         .expect("ready");
 
-    let second = supervisor.start(supervisor_spec_for_second_attempt(), credential());
+    let second = supervisor.start(supervisor_spec_for_second_attempt());
 
     assert!(matches!(second, Err(StartError::Refused(_))));
     assert_eq!(supervisor.snapshot().status, SessionStatus::Ready);
@@ -189,7 +188,7 @@ fn a_child_that_never_announces_readiness_is_a_bounded_startup_timeout() {
     });
 
     let started = Instant::now();
-    let result = supervisor.start(python_spec("import time; time.sleep(60)"), credential());
+    let result = supervisor.start(python_spec("import time; time.sleep(60)"));
 
     assert_eq!(result, Err(StartError::Failed(FailureCode::StartupTimeout)));
     assert!(
@@ -207,10 +206,9 @@ fn a_child_that_never_announces_readiness_is_a_bounded_startup_timeout() {
 fn a_first_line_that_is_not_the_protocol_is_a_readiness_protocol_error() {
     let (supervisor, _) = supervisor(fast_config());
 
-    let result = supervisor.start(
-        python_spec("import time; print('hello there', flush=True); time.sleep(60)"),
-        credential(),
-    );
+    let result = supervisor.start(python_spec(
+        "import time; print('hello there', flush=True); time.sleep(60)",
+    ));
 
     assert_eq!(
         result,
@@ -226,7 +224,7 @@ fn a_first_line_that_is_not_the_protocol_is_a_readiness_protocol_error() {
 fn a_child_that_exits_before_readiness_is_a_startup_exit() {
     let (supervisor, _) = supervisor(fast_config());
 
-    let result = supervisor.start(python_spec("import sys; sys.exit(7)"), credential());
+    let result = supervisor.start(python_spec("import sys; sys.exit(7)"));
 
     assert_eq!(
         result,
@@ -249,9 +247,7 @@ sys.exit(0)
 "#
     );
 
-    supervisor
-        .start(python_spec(&script), credential())
-        .expect("ready");
+    supervisor.start(python_spec(&script)).expect("ready");
 
     let failed = wait_for_status(&supervisor, SessionStatus::Failed, Duration::from_secs(10));
 
@@ -272,9 +268,7 @@ time.sleep(60)
 "#
     );
 
-    supervisor
-        .start(python_spec(&script), credential())
-        .expect("ready");
+    supervisor.start(python_spec(&script)).expect("ready");
 
     let failed = wait_for_status(&supervisor, SessionStatus::Failed, Duration::from_secs(10));
 
@@ -304,9 +298,7 @@ time.sleep(60)
         pid = pid_file.display()
     );
 
-    supervisor
-        .start(python_spec(&script), credential())
-        .expect("ready");
+    supervisor.start(python_spec(&script)).expect("ready");
     let pid = wait_for_pid_file(&pid_file, Duration::from_secs(10));
     assert!(process_is_alive(pid), "the fixture child must be running");
 
@@ -338,9 +330,7 @@ fn a_shutdown_requested_while_starting_contains_the_child_and_stops_the_session(
     });
     let starting = Arc::clone(&supervisor);
 
-    let handle = thread::spawn(move || {
-        starting.start(python_spec("import time; time.sleep(60)"), credential())
-    });
+    let handle = thread::spawn(move || starting.start(python_spec("import time; time.sleep(60)")));
 
     wait_for_starting(&supervisor, Duration::from_secs(10));
     assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::Forced);

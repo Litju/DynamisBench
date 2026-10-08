@@ -160,13 +160,30 @@ impl Supervisor {
 
     /// Spawn and supervise the one child, blocking until readiness resolves.
     ///
+    /// The credential is generated here, before the spawn, because the child's environment is
+    /// the first and only thing that needs it; an entropy failure is a bounded
+    /// `credential_unavailable` session failure rather than an error the caller must handle.
+    ///
     /// `Ok` means the session is ready and the credential is held; `Err` means the session
     /// is failed or was refused, with the reason already published to the listener.
-    pub fn start(&self, spec: LaunchSpec, credential: SessionCredential) -> Result<(), StartError> {
+    pub fn start(&self, spec: LaunchSpec) -> Result<(), StartError> {
         {
             let mut state = lock(&self.state);
             state.begin().map_err(StartError::Refused)?;
         }
+
+        let credential = match SessionCredential::generate() {
+            Ok(credential) => credential,
+            Err(_) => {
+                fail(
+                    &self.state,
+                    &self.listener,
+                    FailureCode::CredentialUnavailable,
+                    false,
+                );
+                return Err(StartError::Failed(FailureCode::CredentialUnavailable));
+            }
+        };
         publish(&self.state, &self.listener);
 
         let (command_tx, command_rx) = mpsc::channel();
@@ -599,7 +616,6 @@ mod tests {
         ShutdownOutcome, StartError, Supervisor, SupervisorConfig, ALLOWED_ORIGINS_VARIABLE,
         SESSION_TOKEN_VARIABLE,
     };
-    use crate::sidecar::credential::SessionCredential;
     use crate::sidecar::state::{FailureCode, SessionStatus};
 
     fn quiet_supervisor() -> Supervisor {
@@ -637,10 +653,7 @@ mod tests {
             origins: vec!["http://localhost:5173"],
         };
 
-        let result = supervisor.start(
-            missing,
-            SessionCredential::generate().expect("the OS random source must exist"),
-        );
+        let result = supervisor.start(missing);
 
         assert_eq!(result, Err(StartError::Failed(FailureCode::SpawnFailed)));
         let snapshot = supervisor.snapshot();
