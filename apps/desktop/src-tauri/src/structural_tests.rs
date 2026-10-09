@@ -234,3 +234,62 @@ fn the_start_and_exit_fence_is_one_mutex_not_several_independent_facts() {
         );
     }
 }
+
+/// The containment contract RES-376's exit path rests on: a final desktop exit may proceed
+/// only on a proof that no child was created, that it exited gracefully, or that it was
+/// force-terminated and reaped.
+#[test]
+fn no_wait_in_the_supervisor_can_expire_into_a_containment_claim() {
+    let supervisor = module_source("src/sidecar/supervisor.rs");
+
+    // The previous shape answered `Forced` when `wait_timeout` expired, which is how a
+    // reservation deadline could report containment about a process that did not exist.
+    assert!(
+        !supervisor.contains("wait_timeout"),
+        "an expired wait is evidence about a clock, not about a process; the supervisor must \
+         wait for the owner's proof rather than bound the wait"
+    );
+    assert!(
+        supervisor.contains("reply_rx.recv()"),
+        "a shutdown waits for the owner's answer"
+    );
+    assert!(
+        supervisor.contains("fn recorded_proof"),
+        "and when the command cannot be delivered it waits for the conclusion the owner \
+         recorded"
+    );
+    assert!(
+        supervisor.contains("pub fn terminal_proof"),
+        "the proof is readable, so an exit can be gated on it"
+    );
+}
+
+/// The preferred design the review asked for: the owner performs the process creation, not
+/// the caller, so a shutdown that arrives mid-creation has an owner to address.
+#[test]
+fn the_process_creation_is_owned_not_performed_by_the_caller() {
+    let supervisor = module_source("src/sidecar/supervisor.rs");
+
+    let start = supervisor
+        .split_once("pub fn start(&self")
+        .map(|(_, tail)| tail.split("pub fn").next().unwrap_or_default())
+        .unwrap_or_default();
+    assert!(
+        !start.contains("(spawner)("),
+        "`start` must not create the process itself: a caller that spawns before publishing \
+         the owner leaves a creation nothing can address"
+    );
+    assert!(
+        start.contains("control.established(commands)"),
+        "the owner's channel is published while the start is admitted, in one critical section"
+    );
+    assert!(
+        supervisor.contains("Owned(Sender<SupervisorCommand>)"),
+        "the channel lives in the phase, so being addressable and being the owner cannot \
+         disagree"
+    );
+    assert!(
+        !supervisor.contains("commands: Option<Sender<SupervisorCommand>>"),
+        "a channel beside the phase could be withdrawn without withdrawing addressability"
+    );
+}
