@@ -39,7 +39,20 @@ open is :meth:`Workspace.resolve`, which has already proved containment. That is
 keeps this abstraction from becoming the unrestricted filesystem access the local API is
 forbidden to expose (Architecture section 13).
 
-This package implements the *location and boundary* only. Manifests, checksums, run
+Two further modules read what a workspace already holds, and are deliberately *after*
+that boundary rather than inside it:
+
+* :mod:`dynamisbench.workspace.source_authority` — the declared category/kind contract,
+  the strict JSON/YAML authoring loader, validation against the existing domain models,
+  and the semantic identity of what was validated.
+* :mod:`dynamisbench.workspace.discovery` — a read-only walk of the declared source
+  categories that reports locators and bounded structural issues, in a fixed order.
+
+Neither invents a rule about *what* authority means — both read the domain's kind
+registry and the identity pipeline that M1 established — and neither writes, creates, or
+normalises anything. They are the location layer's own answer to "what is in here",
+published only through locators, so that adding them cannot reintroduce a path as a
+handle. This package implements the *location and boundary* only. Manifests, checksums, run
 sealing, atomic staging-to-sealed promotion, and evidence verification belong to DB-1.5
 (RES-231), which builds on these locations; there is no DuckDB here, because a rebuildable
 projection needs a boundary before it needs a database.

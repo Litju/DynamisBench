@@ -50,8 +50,31 @@ ASSET_BYTES = b"<mujoco><worldbody/></mujoco>"
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src" / "dynamisbench"
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "domain" / "valid"
 REALIZATION_FIXTURE = FIXTURE_ROOT / REALIZATION
-WORKSPACE_MODULES = ("__init__.py", "authority.py", "paths.py", "workspace.py")
-"""Named so that adding a workspace module is a reviewed change, not a silent one."""
+
+LOCATION_MODULES = ("__init__.py", "authority.py", "paths.py", "workspace.py")
+"""Where authority may live, and nothing else. Named so a change is reviewed.
+
+These four are the location layer: they turn roots into declared locations and a
+reference into a proved path. They import the standard library and this project and nothing
+else, because the claim they exist to hold — "a location must not be able to reach a hash"
+— is a statement about what they *cannot* have compiled in. If one of them could reach the
+identity pipeline it could also reach it through a convenience method that looked innocent,
+which is precisely the accident this rule prevents.
+"""
+
+READING_MODULES = ("discovery.py", "source_authority.py")
+"""Reading what a workspace holds, deliberately after the location boundary.
+
+RES-377 adds two modules that read authority rather than locate it: the category/kind
+contract plus the strict authoring loader, and the read-only discovery walk. They need the
+domain's kind registry, the validated models, the identity pipeline, and PyYAML, so the
+location rules above do not apply to them. The rule that still does is the reason the two
+groups are named separately: the hash these modules take is over a validated model, never
+over a path. ``test_the_reader_never_puts_a_path_into_a_digest`` is the gate that makes
+that structural rather than aspirational.
+"""
+
+WORKSPACE_MODULES = LOCATION_MODULES + READING_MODULES
 
 ALLOWED_IMPORT_ROOTS = frozenset(
     {
@@ -76,7 +99,40 @@ enforced rather than asserted: adding a storage abstraction, a database driver, 
 filesystem watcher to this package fails this gate.
 """
 
-FORBIDDEN_ROOTS = frozenset({"dynamisbench.identity", "mujoco", "opensim", "simtk", "gym"})
+FORBIDDEN_ROOTS = frozenset(
+    {
+        "dynamisbench.identity",
+        "fastapi",
+        "starlette",
+        "uvicorn",
+        "mujoco",
+        "opensim",
+        "simtk",
+        "gym",
+        "gymnasium",
+        "pybullet",
+        "brax",
+        "dm_control",
+    }
+)
+"""Nothing in the workspace package may import these, whatever group it is in.
+
+``identity`` is in the list for the location layer, where it is the rule; for the reading
+modules it is the reverse — they *must* reach it, and ``READER_IMPORT_ROOTS`` states the
+whole permitted surface. Everything else is barred from every group, because a workspace
+that could import a web framework would invert the direction the architecture states: the
+API reads the workspace, never the other way round.
+"""
+
+READER_IMPORT_ROOTS = ALLOWED_IMPORT_ROOTS | {"json", "os", "pydantic", "yaml"}
+"""The complete import surface of RES-377's reading modules.
+
+An allow-list that is the location layer's plus the four things reading authority needs:
+``json`` and ``os`` for the loader's I/O, Pydantic for the validated models, PyYAML for
+YAML authoring, and ``dynamisbench`` for the domain and identity pipelines. An
+allow-list rather than a deny-list, so a future import is a decision this file has to
+record — which is the same shape of rule the location layer has always had.
+"""
 
 
 def imported_roots(path: Path) -> set[str]:
@@ -240,18 +296,45 @@ def test_a_relative_asset_reference_is_the_only_one_that_can_be_authored() -> No
         )
 
 
-@pytest.mark.parametrize("filename", WORKSPACE_MODULES)
-def test_the_workspace_package_imports_no_third_party_code(filename: str) -> None:
+@pytest.mark.parametrize("filename", LOCATION_MODULES)
+def test_the_location_layer_imports_no_third_party_code(filename: str) -> None:
     unexpected = imported_roots(PACKAGE_ROOT / "workspace" / filename) - ALLOWED_IMPORT_ROOTS
     assert not unexpected, f"{filename} imports {sorted(unexpected)}"
 
 
-@pytest.mark.parametrize("filename", WORKSPACE_MODULES)
-def test_the_workspace_package_never_reaches_into_identity(filename: str) -> None:
+@pytest.mark.parametrize("filename", READING_MODULES)
+def test_the_reader_modules_import_only_the_reading_stack(filename: str) -> None:
+    """RES-377's reading modules have a wider surface, and a stated one.
+
+    A location must reach the domain to ask which model a kind validates to, the identity
+    pipeline to digest one, and PyYAML to read YAML. What it must still not reach is
+    everything that would make it more than a reader: no web framework, no simulator, no
+    execution, planning, evidence, or query layer, and nothing that writes. An exhaustive
+    allow-list rather than a deny-list, so a future import is a decision this file has to
+    record.
+    """
+    unexpected = imported_roots(PACKAGE_ROOT / "workspace" / filename) - READER_IMPORT_ROOTS
+    assert not unexpected, f"{filename} imports {sorted(unexpected)}"
+
+
+@pytest.mark.parametrize("filename", LOCATION_MODULES)
+def test_the_location_layer_never_reaches_into_identity(filename: str) -> None:
     """A location must not be able to reach a hash. The reverse is equally true: identity
-    must not be reachable *through* the workspace, or a path could be handed to
+    must not be reachable *through* a location, or a path could be handed to
     ``semantic_sha256`` by an innocent-looking convenience method."""
     assert not imported_roots(PACKAGE_ROOT / "workspace" / filename) & FORBIDDEN_ROOTS
+
+
+@pytest.mark.parametrize("filename", WORKSPACE_MODULES)
+def test_no_workspace_module_imports_the_application_or_a_simulator(filename: str) -> None:
+    """FastAPI must not arrive through the workspace, and neither must an engine.
+
+    The location layer is reachable from the API boundary, so an application import in it
+    would invert the direction the architecture states: the API reads the workspace, never
+    the other way round.
+    """
+    unexpected = imported_roots(PACKAGE_ROOT / "workspace" / filename) & FORBIDDEN_ROOTS
+    assert not unexpected, f"{filename} imports {sorted(unexpected)}"
 
 
 @pytest.mark.parametrize("filename", ("canonical.py", "semantic.py", "digests.py"))
@@ -261,7 +344,98 @@ def test_identity_cannot_see_a_workspace(filename: str) -> None:
     assert "dynamisbench.workspace" not in imported_roots(PACKAGE_ROOT / "identity" / filename)
 
 
-def test_the_workspace_package_is_the_four_modules_this_gate_sealed() -> None:
-    assert sorted(path.name for path in (PACKAGE_ROOT / "workspace").glob("*.py")) == sorted(
-        WORKSPACE_MODULES
+def test_a_validated_model_hashes_the_same_wherever_its_workspace_is(tmp_path: Path) -> None:
+    """The relaxed rule, proved rather than argued.
+
+    ``source_authority`` is now the one workspace module that computes a digest, which is
+    what RES-377 asks it to do. The property that matters and must survive that is the
+    original one: the digest is over validated *meaning*, so the same definition read
+    through two workspaces at different absolute roots digests identically, and neither
+    root's path or directory name is present in the canonical bytes.
+    """
+    from dynamisbench.domain.spec import RealizationDefinition
+    from dynamisbench.identity import canonical_semantic_bytes, semantic_sha256
+    from dynamisbench.workspace.source_authority import SourceLocator, inspect_locator
+
+    digests: list[str] = []
+    for label in ("first", "second-in-a-completely-different-place"):
+        roots, paths = populated_workspace(tmp_path, label)
+        workspace = open_workspace(roots.source, roots.evidence)
+        segments = ("realization", *REALIZATION_LOGICAL)
+        document = json.loads(REALIZATION_FIXTURE.read_text(encoding="utf-8"))
+
+        # Filed under the declared kind directory, because that is where authority lives;
+        # the file above sits directly under the category and would be a misplaced entry.
+        destination = workspace.resolve_source(SourceCategory.REALIZATIONS, "/".join(segments))
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(REALIZATION_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+
+        inspection = inspect_locator(
+            workspace,
+            SourceLocator(
+                category=SourceCategory.REALIZATIONS, kind="realization", segments=segments
+            ),
+        )
+
+        assert inspection.valid is True, inspection.diagnostics
+        assert inspection.identity is not None
+        digests.append(inspection.identity.digest.hex)
+
+        canonical = canonical_semantic_bytes(RealizationDefinition.model_validate(document))
+        assert inspection.identity.digest == semantic_sha256(
+            RealizationDefinition.model_validate(document)
+        )
+        text = canonical.decode("utf-8")
+        assert paths["source_root"] not in text
+        assert paths["evidence_root"] not in text
+        assert Path(paths["source_root"]).name not in text
+
+    assert digests[0] == digests[1]
+
+
+def test_the_identity_of_an_invalid_document_is_never_computed(tmp_path: Path) -> None:
+    """A digest is only ever over validated meaning, so a refusal has none.
+
+    The relaxed rule permits the workspace to hash; it does not permit it to hash
+    *anything*. This is the half that keeps "authority" meaningful: an invalid document
+    reports diagnostics and no identity, rather than a digest over bytes that were never
+    shown to be a definition.
+    """
+    workspace = initialize_workspace(
+        tmp_path / "source", tmp_path / "evidence", sources=[SourceCategory.REALIZATIONS]
     )
+    path = workspace.resolve_source(SourceCategory.REALIZATIONS, "realization/broken.yaml")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("realization_id: not-a-valid-identifier\n", encoding="utf-8")
+
+    from dynamisbench.workspace.source_authority import SourceLocator, inspect_locator
+
+    inspection = inspect_locator(
+        workspace,
+        SourceLocator(
+            category=SourceCategory.REALIZATIONS,
+            kind="realization",
+            segments=("realization", "broken.yaml"),
+        ),
+    )
+
+    assert inspection.valid is False
+    assert inspection.identity is None
+    assert inspection.content is None
+    assert inspection.diagnostics
+
+
+def test_the_location_layer_is_the_modules_this_gate_sealed() -> None:
+    """The location layer is exactly four modules; the rest is reviewed separately.
+
+    The reading modules RES-377 adds are held to a different rule, stated in
+    ``READING_MODULES`` and checked by
+    ``test_the_reader_modules_import_only_the_reading_stack``. A module appearing in the
+    package without being named in either group is a failure, and one appearing in the
+    *location* group without being named here is a failure — so the line between "where
+    authority lives" and "what is in it" stays a reviewed decision rather than something
+    that drifts as files are added.
+    """
+    present = sorted(path.name for path in (PACKAGE_ROOT / "workspace").glob("*.py"))
+    assert present == sorted(WORKSPACE_MODULES)
+    assert set(LOCATION_MODULES) & set(READING_MODULES) == set()
