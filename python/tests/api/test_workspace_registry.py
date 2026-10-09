@@ -21,8 +21,9 @@ request and wrong under two is the failure this module exists to prevent.
 from __future__ import annotations
 
 import json
+import os
 import threading
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -99,7 +100,7 @@ def test_a_registration_is_keyed_on_normalised_roots(
     evidence = workspace.evidence_root
 
     first = registry.open(str(source), str(evidence))
-    second = registry.open(str(source) + "\\", str(evidence / "."))
+    second = registry.open(str(source) + os.sep, str(evidence / "."))
 
     assert second.identifier == first.identifier
 
@@ -165,9 +166,9 @@ def test_workspace_identifiers_carry_no_information(registry, workspace) -> None
     assert str(workspace.source_root) not in identifier
     assert str(workspace.evidence_root) not in identifier
     assert workspace.source_root.name not in identifier
-    assert workspace.source_root.drive not in identifier
+    drive = PureWindowsPath(workspace.source_root).drive
+    assert drive not in identifier
     assert ":" not in identifier
-    assert "\\" not in identifier
     assert "/" not in identifier
 
 
