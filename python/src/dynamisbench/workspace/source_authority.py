@@ -73,6 +73,7 @@ __all__ = [
     "SourceDiagnostic",
     "SourceInspection",
     "SourceLocator",
+    "ValidationStatus",
     "document_identity",
     "format_of_suffix",
     "kind_for_segments",
@@ -105,6 +106,18 @@ class AuthoringFormat(StrEnum):
 
     JSON = "json"
     YAML = "yaml"
+
+
+class ValidationStatus(StrEnum):
+    """Whether one authority document validated as the kind its directory declares.
+
+    Two values, deliberately. There is no "partially valid" state, because a document
+    either produced a validated domain model with a semantic identity or it did not, and
+    a third value would be a way to report an artifact as usable and unusable at once.
+    """
+
+    VALID = "valid"
+    INVALID = "invalid"
 
 
 AUTHORING_SUFFIXES: Final[Mapping[str, AuthoringFormat]] = MappingProxyType(
