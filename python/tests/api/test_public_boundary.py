@@ -11,34 +11,42 @@ on a measured import, where an indirect call cannot hide.
 
 What is checked:
 
-* **A closed module set, in two groups.** Five boundary modules, reachable from
-  ``import dynamisbench.api``, and the two session modules DB-2.2 adds, reachable only by
-  importing them directly. An eighth is a reviewed change rather than a silent one.
+* **A closed module set, in three groups.** Five boundary modules, reachable from
+  ``import dynamisbench.api``, the two session modules DB-2.2/DB-2.3 add and which are
+  reachable only by importing them directly, and the two workspace-reading modules
+  DB-2.4 (RES-377) adds. A tenth is a reviewed change rather than a silent one.
 * **No simulator, in transit or in source.** The repository-wide isolation gate already
   walks every file; this one names the package, so a regression says which boundary broke.
-* **No dependency on any scientific layer.** ``api`` may import the package root and its
-  own modules. It may not import ``execution``, ``adapters``, ``query``, ``evidence``,
-  ``workspace``, ``planning``, ``domain``, ``normalization`` or ``evaluation`` — measured on
-  a fresh import as well as on the source, because a transitive arrival would make the API
-  process depend on a layer it is supposed to describe. This is the gate that makes
-  "FastAPI is not authority" structural rather than aspirational.
+* **No dependency on a layer that acts.** ``api`` may import the package root, its own
+  modules, and the two layers it reads authority *through*: ``workspace``, whose job is
+  resolving a reference to a path proved inside its root, and the domain's kind registry.
+  It may not import ``execution``, ``adapters``, ``query``, ``evidence``, ``planning``,
+  ``normalization`` or ``evaluation`` — each one decides something, and a boundary that
+  imported one could start deciding it too. ``identity`` is still forbidden directly: a
+  digest in this package's own source is how a read model would start claiming to *be*
+  the identity, and the workspace reader is the layer that owns that.
 * **A closed direct third-party surface.** ``fastapi``, ``pydantic`` and ``starlette``
-  everywhere, and ``uvicorn`` in ``server.py`` alone. FastAPI's and Pydantic's own closures are
-  absent on purpose: they are their dependencies, pinned by them, and a gate that listed them
-  could be satisfied by adding one directly.
-* **Nothing from the future stack, early.** The import must not pull in DuckDB or any numerical
-  package, and must not pull in Uvicorn - even though the sidecar module exists beside it and
-  ``uvicorn`` is a declared runtime dependency. That is what keeps "importing this package
-  starts no server" true by construction rather than by convention.
+  everywhere. FastAPI's and Pydantic's own closures are absent on purpose: they are their
+  dependencies, pinned by them, and a gate that listed them could be satisfied by adding
+  one directly.
+* **Nothing from the future stack, early.** The import must not pull in DuckDB or any
+  numerical package, and must not pull in Uvicorn - even though the sidecar module exists
+  beside it and ``uvicorn`` is a declared runtime dependency. That is what keeps
+  "importing this package starts no server" true by construction rather than by
+  convention.
 * **A public surface with no authority vocabulary and no control plane.** No exported name
-  may mention a benchmark, workspace, evidence, seal, plan, run, execution, worker, queue,
-  session or credential — the shapes an API would acquire as soon as it started owning the
-  things it is supposed to describe.
+  may mention a credential, a seal, a plan, a run, an execution, a worker, a queue, a
+  session, evidence or a manifest — the shapes an API would acquire as soon as it started
+  owning the things it is supposed to describe.
 * **Read models that are not domain models.** Checked on the MRO, because the failure this
   prevents is a single import line, and it is the one that would make application metadata
   claim to be digested scientific authority.
+* **No path ever enters a response.** A route that reached for ``pathlib`` to build a
+  logical reference, and a read model that could hold one, are both checked structurally —
+  because an absolute path in a response is how a local API becomes a filesystem
+  disclosure.
 * **A correct OpenAPI document**, served over HTTP and equal to the in-process one, with
-  exactly the two versioned routes and typed response models for both.
+  the versioned routes it publishes and typed response models for all of them.
 """
 
 from __future__ import annotations
@@ -88,8 +96,26 @@ whole reason ``import dynamisbench.api`` still loads no server, and it is why no
 record.
 """
 
-EXPECTED_MODULES = tuple(sorted((*BOUNDARY_MODULES, *SESSION_MODULES)))
-"""The union of the two groups, in the filesystem order the measurement produces."""
+READER_MODULES = (
+    "workspace_registry.py",
+    "workspaces.py",
+)
+"""The workspace-reading surface DB-2.4 (RES-377) adds, reachable only through ``create_app``.
+
+Two modules, and the split between them is the whole reason the boundary survived the change.
+``workspace_registry`` holds the application's in-memory map of open workspaces and nothing
+else — no scientific type, no filesystem, no validation. ``workspaces`` is the only module in
+this package that imports the workspace layer, the domain's kind registry, and the reader that
+validates and digests. Keeping them apart means the two concerns "remember which workspaces
+this process has open" and "make an HTTP read model of an authority document" are separately
+reviewable, and means the measured-import gate can name exactly one module as the reader.
+
+Neither module is in ``__all__``: the API advertises its application surface, and a workspace
+route's read models are reached by the routes that publish them.
+"""
+
+EXPECTED_MODULES = tuple(sorted((*BOUNDARY_MODULES, *SESSION_MODULES, *READER_MODULES)))
+"""The union of the three groups, in the filesystem order the measurement produces."""
 
 FORBIDDEN_ENGINE_MODULES = frozenset(
     {"mujoco", "opensim", "simtk", "gym", "gymnasium", "pybullet", "brax", "dm_control"}
@@ -97,24 +123,32 @@ FORBIDDEN_ENGINE_MODULES = frozenset(
 
 FORBIDDEN_FIRST_PARTY = (
     "dynamisbench.adapters",
-    "dynamisbench.domain",
     "dynamisbench.evaluation",
     "dynamisbench.evidence",
     "dynamisbench.execution",
-    "dynamisbench.identity",
     "dynamisbench.normalization",
     "dynamisbench.planning",
     "dynamisbench.query",
-    "dynamisbench.workspace",
 )
-"""Every layer the application boundary may not depend on.
+"""Every layer the application boundary may not depend on, directly or in transit.
 
-``execution`` and ``adapters`` are the two named by ADR-016 and ADR-017: the API never
-runs a simulation and never speaks an engine's language. The rest are here for the same
-reason — each one owns scientific meaning that an HTTP response must not restate, and an
-import is how a response would start doing that. ``identity`` is included because a
-digest in a response body is how an application metadata field would start looking like a
-scientific identity.
+``execution`` and ``adapters`` are the two ADR-016 and ADR-017 name: the API never runs a
+simulation and never speaks an engine's language. The rest are here for the same reason —
+each one *decides* something, and an import is how a boundary would start deciding it too.
+``evidence`` seals; ``planning`` compiles; ``query`` builds a projection; ``normalization``
+and ``evaluation`` derive meaning. None of that is describing.
+
+``workspace``, ``domain`` and ``identity`` are deliberately **not** here, and that is a
+reviewed change DB-2.4 (RES-377) makes rather than an oversight. The API now legitimately
+reads authority: ``workspace`` resolves a reference to a path proved inside its root,
+``domain`` says which model a declared kind validates to, and ``identity`` digests a
+validated model. All three are allowed to exactly one module each, and to no other —
+``READER_MODULES`` names which. The gate below enforces the narrowing, and
+
+``test_no_digest_reaches_an_api_module_directly`` keeps the identity prohibition in force
+for every module in this package except the one reader, because a digest computed in an API
+module rather than in the workspace layer is how a read model would start claiming to be
+the identity.
 """
 
 ALLOWED_EXTERNAL_SURFACE = frozenset({"fastapi", "pydantic", "starlette"})
@@ -135,6 +169,17 @@ The application boundary must load no server when it is imported - that is what 
 this package starts nothing" true by construction. The sidecar must import Uvicorn to run one.
 Keeping the two apart, and stating the wider surface only for the server, means a module that
 reaches for Uvicorn to answer a request still fails here.
+"""
+
+READER_ALLOWED_ROOTS = frozenset(
+    {"dynamisbench.workspace", "dynamisbench.domain", "dynamisbench.identity"}
+)
+"""What a reader module may reach that no other module may.
+
+The three layers that answer "what is this authority document". Each is permitted to the two
+reader modules only, and the per-module gate below narrows ``identity`` further still: it is
+reachable only through the workspace package, never directly. That is what keeps a digest out
+of a read model that was not assembled by the layer that owns digests.
 """
 
 FIRST_PARTY = frozenset({"dynamisbench"})
@@ -158,7 +203,15 @@ FORBIDDEN_EXPORTS = (
     "worker",
     "workspace",
 )
-"""Words that would mean the API had started owning the thing it describes."""
+"""Words that would mean the API had started owning the thing it describes.
+
+Substring matching on the advertised names, so the gate names the risk rather than enumerating
+today's violations. ``install_error_contract`` is here on purpose: the error contract is
+application surface, and a name like ``workspace_service`` would pass every other gate in this
+file. DB-2.4 keeps ``workspace`` in the list and keeps its own read models out of ``__all__``
+by importing them from the modules that publish them, so the ban is about the *package's*
+surface and not about the existence of workspace routes.
+"""
 
 FORBIDDEN_MEASURED_IMPORTS = frozenset(
     {"uvicorn", "duckdb", "numpy", "scipy", "pyarrow", "pandas", "arrow"}
@@ -223,14 +276,37 @@ def test_the_api_package_imports_no_simulator_library(filename: str) -> None:
 
 
 @pytest.mark.parametrize("filename", API_MODULES)
-def test_no_api_module_depends_on_a_scientific_layer(filename: str) -> None:
+def test_no_api_module_depends_on_a_layer_that_acts(filename: str) -> None:
+    """The measured half of "the API describes, it does not run".
+
+    Read on the source, because a dependency is written down whether or not it is ever
+    exercised. The narrowing DB-2.4 makes — that ``workspace``, ``domain`` and ``identity``
+    are allowed to the reader modules — is applied here as well as in the measured import
+    gate, so a module cannot reach them by being renamed.
+    """
     imported = _imported_first_party(API_ROOT / filename)
-    offending = sorted(
-        name
-        for name in imported
-        if any(name.startswith(forbidden) for forbidden in FORBIDDEN_FIRST_PARTY)
+    allowed = READER_ALLOWED_ROOTS if filename in READER_MODULES else ()
+    forbidden = tuple(
+        prefix
+        for prefix in FORBIDDEN_FIRST_PARTY
+        if filename not in READER_MODULES or prefix not in allowed
     )
+    offending = sorted(name for name in imported if any(name.startswith(p) for p in forbidden))
     assert offending == [], f"{filename} imports {offending}"
+
+
+@pytest.mark.parametrize("filename", API_MODULES)
+def test_no_digest_reaches_an_api_module_directly(filename: str) -> None:
+    """``identity`` is reachable only *through* the workspace, never directly.
+
+    A digest computed inside an API module is the one import that would make a read model
+    claim to be scientific identity. The workspace reader is the layer that owns it, so the
+    API asks that layer for a digest and takes a value back; it does not compute one.
+    """
+    imported = _imported_first_party(API_ROOT / filename)
+    assert "dynamisbench.identity" not in imported, (
+        f"{filename} imports identity directly; a digest must be asked of the workspace layer"
+    )
 
 
 @pytest.mark.parametrize(
@@ -269,19 +345,17 @@ def test_importing_the_api_package_loads_no_simulator_library() -> None:
     assert not loaded & FORBIDDEN_ENGINE_MODULES
 
 
-def test_importing_the_api_package_loads_no_scientific_layer() -> None:
-    """The measurement that makes "FastAPI is not authority" structural.
+def test_importing_the_api_package_loads_no_layer_that_acts() -> None:
+    """The measurement that makes "the API describes, it does not run" structural.
 
-    A fresh import of the API package must leave every other DynamisBench layer unloaded,
-    in transit as well as directly. A process that loaded the evidence or planning layer
-    merely to describe the application would carry those modules' cost, their module-level
-    work and their dependencies into a sidecar that exists to be thin (Architecture 8).
+    A fresh import of the API package must leave every layer that *decides* something
+    unloaded, in transit as well as directly. A process that loaded the evidence or planning
+    layer merely to describe the application would carry those modules' cost and their
+    module-level work into a sidecar that exists to be thin (Architecture 8).
     """
     loaded = _loaded_module_names()
-
-    assert not {
-        name for name in loaded if any(name.startswith(layer) for layer in FORBIDDEN_FIRST_PARTY)
-    }
+    acting = tuple(layer for layer in FORBIDDEN_FIRST_PARTY if layer not in READER_ALLOWED_ROOTS)
+    assert not {name for name in loaded if any(name.startswith(layer) for layer in acting)}
     assert {name for name in loaded if name.startswith("dynamisbench.api")}
 
 
@@ -359,53 +433,96 @@ def test_an_exported_read_model_is_not_a_scientific_domain_model() -> None:
 
 
 def test_the_module_set_is_the_whole_package() -> None:
-    """Named so that adding a ninth is a reviewed change rather than a silent one.
+    """Named so that adding a tenth is a reviewed change rather than a silent one.
 
-    Stated as two named groups because the modules are not equivalent: five describe the
-    application and are reachable from ``import dynamisbench.api``, and three belong to the
-    desktop session and are not.
+    Stated as three named groups because the modules are not equivalent: five describe the
+    application and are reachable from ``import dynamisbench.api``; three belong to the
+    desktop session and are reachable only by importing them; and two read the workspace and
+    are reachable only through ``create_app``. The groups are asserted disjoint, so a module
+    cannot migrate into one of them by being renamed.
     """
     assert API_MODULES == EXPECTED_MODULES
     assert set(BOUNDARY_MODULES) & set(SESSION_MODULES) == set()
+    assert set(BOUNDARY_MODULES) & set(READER_MODULES) == set()
+    assert set(SESSION_MODULES) & set(READER_MODULES) == set()
+    assert len(BOUNDARY_MODULES) + len(SESSION_MODULES) + len(READER_MODULES) == len(
+        EXPECTED_MODULES
+    )
 
 
 def _openapi() -> dict[str, Any]:
     return create_app().openapi()
 
 
-def test_the_openapi_document_publishes_exactly_the_two_versioned_routes() -> None:
+def test_the_openapi_document_publishes_exactly_the_versioned_routes() -> None:
+    """Five routes under one namespace, and no verb that publishes itself for free.
+
+    Stated as a closed set, so an unversioned route or a second namespace fails here instead
+    of quietly becoming a public interface. The workspace routes read; the one non-GET verb is
+    the root-selection operation and nothing else.
+    """
     paths = _openapi()["paths"]
+    assert sorted(paths) == [
+        f"{API_V1_PREFIX}/health",
+        f"{API_V1_PREFIX}/info",
+        f"{API_V1_PREFIX}/workspaces/open",
+        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/artifacts",
+        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/artifacts/{{artifact_id}}",
+    ]
+    for path, operations in paths.items():
+        expected = ["post"] if path.endswith("/open") else ["get"]
+        assert sorted(operations) == expected, f"{path} publishes {sorted(operations)}"
 
-    assert sorted(paths) == [f"{API_V1_PREFIX}/health", f"{API_V1_PREFIX}/info"]
-    for operations in paths.values():
-        assert sorted(operations) == ["get"], "no verb may be published without a reason to"
 
-
-def test_the_openapi_document_types_both_success_responses() -> None:
+def test_the_openapi_document_types_every_success_response() -> None:
     """A generated client is only as good as this, so the 200 of each route must name its
     own read model rather than an untyped object."""
     schemas = _openapi()["components"]["schemas"]
 
-    health = _openapi()["paths"][f"{API_V1_PREFIX}/health"]["get"]["responses"]["200"]
-    info = _openapi()["paths"][f"{API_V1_PREFIX}/info"]["get"]["responses"]["200"]
+    def response_of(path: str, verb: str) -> dict[str, Any]:
+        return _openapi()["paths"][path][verb]["responses"]["200"]
 
-    assert health["content"]["application/json"]["schema"]["$ref"].endswith("/HealthResponse")
-    assert info["content"]["application/json"]["schema"]["$ref"].endswith(
-        "/ApplicationInfoResponse"
-    )
-    assert {"HealthResponse", "ApplicationInfoResponse", "ErrorResponse"} <= set(schemas)
+    assert response_of(f"{API_V1_PREFIX}/health", "get")["content"]["application/json"]["schema"][
+        "$ref"
+    ].endswith("/HealthResponse")
+    assert response_of(f"{API_V1_PREFIX}/info", "get")["content"]["application/json"]["schema"][
+        "$ref"
+    ].endswith("/ApplicationInfoResponse")
+    assert response_of(f"{API_V1_PREFIX}/workspaces/open", "post")["content"]["application/json"][
+        "schema"
+    ]["$ref"].endswith("/OpenWorkspaceResponse")
+    assert response_of(f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/artifacts", "get")["content"][
+        "application/json"
+    ]["schema"]["$ref"].endswith("/WorkspaceDiscoveryResponse")
+    assert response_of(
+        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/artifacts/{{artifact_id}}", "get"
+    )["content"]["application/json"]["schema"]["$ref"].endswith("/ArtifactInspectionResponse")
+
+    assert {
+        "HealthResponse",
+        "ApplicationInfoResponse",
+        "OpenWorkspaceResponse",
+        "WorkspaceDiscoveryResponse",
+        "ArtifactInspectionResponse",
+        "ErrorResponse",
+    } <= set(schemas)
 
 
-def test_the_openapi_document_declares_the_failure_envelope_on_both_routes() -> None:
-    """A client has to learn the failure shape from the document, not from a wiki page."""
+def test_the_openapi_document_declares_the_failure_envelope_on_every_route() -> None:
+    """A client has to learn the failure shape from the document, not from a wiki page.
+
+    Read through the operation rather than the path, because the workspace routes publish a
+    ``post`` and the application routes a ``get``: iterating the document catches a route whose
+    documented failures were declared for the wrong verb.
+    """
     for path, operations in _openapi()["paths"].items():
-        responses = operations["get"]["responses"]
-
-        assert {"405", "500"} <= set(responses), path
-        for status in ("405", "500"):
-            assert responses[status]["content"]["application/json"]["schema"]["$ref"].endswith(
-                "/ErrorResponse"
-            ), f"{path} {status}"
+        for verb, operation in operations.items():
+            responses = operation["responses"]
+            assert {"405", "500"} <= set(responses), f"{path} {verb}"
+            for status in ("405", "500"):
+                assert responses[status]["content"]["application/json"]["schema"]["$ref"].endswith(
+                    "/ErrorResponse"
+                ), f"{path} {verb} {status}"
 
 
 def test_the_served_openapi_document_is_the_one_the_factory_produced() -> None:

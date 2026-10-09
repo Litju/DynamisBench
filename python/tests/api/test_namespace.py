@@ -193,7 +193,7 @@ def test_the_factory_serves_the_versioned_info_route_in_process() -> None:
     }
 
 
-def test_the_only_published_paths_are_the_two_versioned_routes() -> None:
+def test_the_published_paths_are_the_versioned_routes() -> None:
     """Every route the application answers lives under ``/api/v1``.
 
     Read from the OpenAPI document rather than from the internal route objects, because
@@ -205,7 +205,13 @@ def test_the_only_published_paths_are_the_two_versioned_routes() -> None:
     """
     paths = set(create_app().openapi()["paths"])
 
-    assert paths == {f"{API_V1_PREFIX}/health", f"{API_V1_PREFIX}/info"}, sorted(paths)
+    assert paths == {
+        f"{API_V1_PREFIX}/health",
+        f"{API_V1_PREFIX}/info",
+        f"{API_V1_PREFIX}/workspaces/open",
+        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/artifacts",
+        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/artifacts/{{artifact_id}}",
+    }, sorted(paths)
 
 
 @pytest.mark.parametrize("path", ("/health", "/info", "/api/health", "/api/v2/health"))
