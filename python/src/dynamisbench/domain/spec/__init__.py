@@ -61,6 +61,13 @@ from dynamisbench.domain.spec.identifiers import (
     VersionSpecifier,
     WorkspaceRelativePath,
 )
+from dynamisbench.domain.spec.kinds import (
+    AUTHORITY_KIND_NAMES,
+    AUTHORITY_KINDS,
+    AuthorityKind,
+    UnknownAuthorityKindError,
+    authority_kind,
+)
 from dynamisbench.domain.spec.metrics import (
     AggregationMethod,
     ComparisonOperator,
@@ -124,9 +131,12 @@ from dynamisbench.domain.spec.sut import (
 )
 
 __all__ = [
+    "AUTHORITY_KIND_NAMES",
+    "AUTHORITY_KINDS",
     "CREDIBILITY_LADDER",
     "AggregationMethod",
     "AssetReference",
+    "AuthorityKind",
     "AxisConvention",
     "BenchmarkId",
     "BenchmarkRef",
@@ -207,12 +217,14 @@ __all__ = [
     "UncertaintyFactorDefinition",
     "UncertaintyMetadata",
     "UniformRange",
+    "UnknownAuthorityKindError",
     "VerificationCategory",
     "Version",
     "VersionClause",
     "VersionedRef",
     "VersionSpecifier",
     "WorkspaceRelativePath",
+    "authority_kind",
     "keyed_by",
     "unique_items",
 ]
