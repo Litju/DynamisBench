@@ -47,7 +47,7 @@ from dynamisbench.api.models import (
 from dynamisbench.api.workspace_registry import WorkspaceRegistry
 from dynamisbench.workspace import SourceCategory
 from dynamisbench.workspace.authority import WorkspaceError
-from dynamisbench.workspace.discovery import SourceDiscovery, discover_sources
+from dynamisbench.workspace.discovery import DiscoveryIssue, SourceDiscovery, discover_sources
 from dynamisbench.workspace.source_authority import (
     SourceDiagnostic,
     SourceInspection,
@@ -221,7 +221,7 @@ def read_artifacts(
         artifacts=ArtifactSummaryList(
             artifacts=tuple(summaries), truncated=discovery.issues_truncated
         ),
-        issues=tuple(_diagnostic(issue.diagnostic) for issue in discovery.issues),
+        issues=tuple(_discovery_diagnostic(issue) for issue in discovery.issues),
     )
 
 
@@ -259,6 +259,23 @@ def read_artifact(
     return ArtifactInspectionResponse(
         **summary.model_dump(),
         content=inspection.content if inspection.valid else None,
+    )
+
+
+def _discovery_diagnostic(issue: DiscoveryIssue) -> ArtifactDiagnostic:
+    """One structural finding, with the portable reference it was found at.
+
+    The reference is the entry's portable logical name, or the declared name of the
+    directory or category it sits in. It is never an absolute path, and the target a
+    refused link pointed at is never reported at all — not in the reference, not in the
+    message, and not in a second field: there is nothing there for it to be.
+    """
+    return ArtifactDiagnostic(
+        code=str(issue.diagnostic.code),
+        message=str(issue.diagnostic.message),
+        reference=issue.reference,
+        location=issue.diagnostic.location,
+        category=issue.diagnostic.category,
     )
 
 

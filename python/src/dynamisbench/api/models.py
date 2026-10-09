@@ -121,6 +121,7 @@ class ArtifactDiagnostic(ApiModel):
 
     code: str
     message: str
+    reference: str | None = Field(default=None, max_length=256)
     location: str | None = Field(default=None, max_length=256)
     category: str | None = Field(default=None, max_length=64)
 

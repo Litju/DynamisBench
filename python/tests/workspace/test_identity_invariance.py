@@ -70,8 +70,8 @@ contract plus the strict authoring loader, and the read-only discovery walk. The
 domain's kind registry, the validated models, the identity pipeline, and PyYAML, so the
 location rules above do not apply to them. The rule that still does is the reason the two
 groups are named separately: the hash these modules take is over a validated model, never
-over a path. ``test_the_reader_never_puts_a_path_into_a_digest`` is the gate that makes
-that structural rather than aspirational.
+over a path. ``test_a_validated_model_hashes_the_same_wherever_its_workspace_is`` is the
+gate that makes that structural rather than aspirational.
 """
 
 WORKSPACE_MODULES = LOCATION_MODULES + READING_MODULES

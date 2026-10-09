@@ -45,8 +45,12 @@ from .factories import CREDENTIAL, session_configuration
 
 
 @pytest.fixture
-def workspace(tmp_path: Path):
-    """A workspace with every source category, so any kind of locator can be filed in it."""
+def workspace(tmp_path: Path) -> Workspace:
+    """A workspace with every source category, so any kind of locator can be filed in it.
+
+    Scoped to `tmp_path` rather than the process's working directory, because the whole
+    point of these fixtures is that a test's authority lives and dies with the test.
+    """
     return initialize_workspace(
         tmp_path / "source", tmp_path / "evidence", sources=tuple(SourceCategory)
     )
@@ -70,7 +74,7 @@ def _open(registry: WorkspaceRegistry, source: Path, evidence: Path) -> str:
 # Registration: explicit, idempotent, never creating
 # --------------------------------------------------------------------------- #
 def test_opening_a_workspace_registers_it_once(
-    registry: WorkspaceRegistry, workspace: Path
+    registry: WorkspaceRegistry, workspace: Workspace
 ) -> None:
     # `workspace` is the fixture's name for a Workspace; see the fixture above.
     first = registry.open(str(workspace.source_root), str(workspace.evidence_root))
@@ -101,7 +105,7 @@ def test_a_registration_is_keyed_on_normalised_roots(
 
 
 def test_registration_refuses_a_root_that_is_not_a_directory(
-    registry: WorkspaceRegistry, workspace: Path
+    registry: WorkspaceRegistry, workspace: Workspace
 ) -> None:
     """A missing root, and two roots that are the same directory, are both refusals."""
     missing = workspace.source_root.parent / "does-not-exist-anywhere"
