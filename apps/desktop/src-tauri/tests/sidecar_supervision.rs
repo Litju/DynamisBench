@@ -12,10 +12,12 @@
 //! every `Supervisor` is either shut down or was failed by the time its test ends.
 //!
 //! The interleavings here are *forced*, not waited for. The spawn seam in
-//! [`Supervisor::with_spawner`] hands the test a place to stop a start at an exact point —
-//! between admitting it and creating the child, and between creating the child and
-//! publishing its command channel — so the exit/start orderings are decided by barriers and
-//! channels rather than by how fast the operating system schedules threads.
+//! [`Supervisor::with_spawner`] hands the test a place to stop a start at the exact call the
+//! operating system would otherwise return from — so the exit/start orderings are decided by
+//! barriers and channels rather than by how fast the OS schedules threads. The
+//! [`OLD_RESERVATION_DEADLINE`] gates go one step further and hold that call past the deadline
+//! the reservation used to be given, because that is the whole claim under test: an expired
+//! wait is not a proof about a process.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -34,6 +36,21 @@ use dynamisbench_desktop_lib::sidecar::{
 
 const READY: &str = r#"{"kind":"dynamisbench.api.ready","protocol_version":1,"api_version":"v1","host":"127.0.0.1","port":45999}"#;
 const SHUTDOWN: &str = r#"{"kind":"dynamisbench.api.shutdown","protocol_version":1}"#;
+
+/// The bound a shutdown used to be given while a start reservation was unresolved: the startup
+/// timeout plus five seconds of outer grace. Sleeping past it is what makes the two
+/// containment gates below fail on the shape they replace — that shape answered `Forced` the
+/// moment this much time had elapsed, about a process it had never shown to exist.
+const OLD_RESERVATION_DEADLINE: Duration = Duration::from_millis(150 + 5_000);
+
+/// A deadline short enough that *either* of the two waits the supervisor used to bound — the
+/// reservation wait and the reply wait — is already expired by the time these gates look,
+/// whatever grace each of them added.
+const TINY_DEADLINE: Duration = Duration::from_millis(150);
+
+/// Slack past [`OLD_RESERVATION_DEADLINE`], so "the old bound elapsed" is not decided by a
+/// millisecond of scheduling.
+const PAST_THE_OLD_BOUND: Duration = Duration::from_millis(500);
 
 /// A child that verifies its environment, announces readiness, and exits 0 on the record.
 fn ready_then_shutdown_script() -> String {
@@ -706,6 +723,222 @@ fn a_repeated_exit_claim_is_still_idempotent_after_a_real_session() {
     assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::NotRunning);
     assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::NotRunning);
     assert_eq!(supervisor.snapshot().status, SessionStatus::Stopped);
+}
+
+// =====================================================================================
+// Containment, not the expiration of a wait.
+// =====================================================================================
+
+/// The defect these two gates exist for, forced exactly as the review described it.
+///
+/// An OS process creation is the one call on the supervision path another thread cannot bound.
+/// This holds it there — past the deadline the reservation used to be given — while the desktop
+/// claims its exit, and then asserts that after all that time:
+///
+/// * the shutdown has not returned, so the desktop has not been told anything;
+/// * there is no desktop-terminal proof to rest a final exit on, so `terminal_proof` is `None`;
+/// * the session is still admitted, so a child may still appear.
+///
+/// On the shape these replace, `request_shutdown` returned `Forced` at exactly this point and
+/// `lib.rs` exited on it, leaving a process creation that could still produce an unowned child.
+///
+/// Case A first: the held creation fails, so no child exists and the shutdown finishes only
+/// once that absence is a fact.
+#[test]
+fn an_exit_claimed_while_the_spawn_is_blocked_waits_and_then_proves_no_child_exists() {
+    let (spawn_entered_tx, spawn_entered_rx) = mpsc::channel::<()>();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let release = Mutex::new(release_rx);
+    let spawner: Arc<SpawnSidecar> = Arc::new(move |_spec, _credential| {
+        let _ = spawn_entered_tx.send(());
+        release
+            .lock()
+            .expect("the release lock is not poisoned")
+            .recv()
+            .expect("the test must release the creation");
+        Err(std::io::Error::other("the held creation produced no child"))
+    });
+    let (_, listener) = recorder();
+    let supervisor = Arc::new(Supervisor::with_spawner(
+        SupervisorConfig {
+            startup_timeout: TINY_DEADLINE,
+            shutdown_timeout: TINY_DEADLINE,
+        },
+        listener,
+        spawner,
+    ));
+
+    // The start is admitted and its owner is inside the process creation.
+    let starting = Arc::clone(&supervisor);
+    let start = thread::spawn(move || starting.start(python_spec(&ready_then_shutdown_script())));
+    spawn_entered_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the owner must reach its process creation");
+    assert_eq!(
+        supervisor.snapshot().status,
+        SessionStatus::Starting,
+        "the session is admitted, so a child may still be coming"
+    );
+
+    // The desktop claims its exit while that creation is still in flight.
+    assert!(supervisor.begin_exit());
+    let exiting = Arc::clone(&supervisor);
+    let (outcome_tx, outcome_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = outcome_tx.send(exiting.request_shutdown());
+    });
+    assert!(
+        outcome_rx.try_recv().is_err(),
+        "an exit arrives with the creation still in flight, so nothing can be answered yet"
+    );
+
+    thread::sleep(OLD_RESERVATION_DEADLINE + PAST_THE_OLD_BOUND);
+
+    let leaked = outcome_rx.try_recv();
+    assert!(
+        leaked.is_err(),
+        "the shutdown must still be waiting: the reservation deadline has long since elapsed, \
+         and an elapsed wait is evidence about a clock, not about a process. Got {leaked:?}"
+    );
+    assert_eq!(
+        supervisor.terminal_proof(),
+        None,
+        "and there is no desktop-terminal proof for a final exit to rest on"
+    );
+    assert_eq!(
+        supervisor.snapshot().status,
+        SessionStatus::Starting,
+        "the admitted start has not concluded"
+    );
+
+    release_tx
+        .send(())
+        .expect("the owner must be released to finish the creation");
+
+    // Case A: the creation fails, so no child exists and that is now proven.
+    let outcome = outcome_rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the shutdown resolves once the creation does");
+    assert_eq!(
+        outcome,
+        ShutdownOutcome::NotRunning,
+        "the operating system created no process, so there is provably nothing to stop"
+    );
+    assert_eq!(
+        supervisor.terminal_proof(),
+        Some(ShutdownOutcome::NotRunning),
+        "the proof is absence, recorded with the transition that established it"
+    );
+    // The desktop had already claimed its exit when the creation failed, so the session ends as
+    // stopped rather than failed: nothing was ever served, and there is no failure for the user
+    // to act on. `start` reports the same fact through its own resolution.
+    assert_eq!(
+        start.join().expect("the start thread must not panic"),
+        Err(StartError::Stopped)
+    );
+    let stopped = supervisor.snapshot();
+    assert_eq!(stopped.status, SessionStatus::Stopped);
+    assert_eq!(
+        stopped.failure, None,
+        "an exit claimed the session before it could ever serve"
+    );
+    assert!(supervisor.session_bootstrap().credential().is_none());
+}
+
+/// Case B: the same forced interleaving, except the held creation returns a real child — so
+/// `Forced` can only be earned by terminating and reaping it, and the live pid proves it.
+#[test]
+fn an_exit_claimed_while_the_spawn_is_blocked_contains_the_child_the_creation_returns() {
+    let (spawn_entered_tx, spawn_entered_rx) = mpsc::channel::<()>();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let release = Mutex::new(release_rx);
+    let created = Arc::new(Mutex::new(Vec::<u32>::new()));
+    let observed = Arc::clone(&created);
+    let spawner: Arc<SpawnSidecar> = Arc::new(move |spec, credential| {
+        let _ = spawn_entered_tx.send(());
+        release
+            .lock()
+            .expect("the release lock is not poisoned")
+            .recv()
+            .expect("the test must release the creation");
+        // A real child, created only after the desktop has already claimed its exit. It never
+        // speaks the protocol and never stops on its own, so if containment did not happen
+        // first this would linger and the startup deadline would report it.
+        let child = spawn_sidecar(spec, credential).expect("the fixture child must be created");
+        observed
+            .lock()
+            .expect("the created-pid lock is not poisoned")
+            .push(child.id());
+        Ok(child)
+    });
+    let (_, listener) = recorder();
+    let supervisor = Arc::new(Supervisor::with_spawner(
+        SupervisorConfig {
+            startup_timeout: TINY_DEADLINE,
+            shutdown_timeout: TINY_DEADLINE,
+        },
+        listener,
+        spawner,
+    ));
+
+    let starting = Arc::clone(&supervisor);
+    let start = thread::spawn(move || starting.start(python_spec("import time; time.sleep(60)")));
+    spawn_entered_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the owner must reach its process creation");
+    assert!(supervisor.begin_exit());
+
+    let exiting = Arc::clone(&supervisor);
+    let (outcome_tx, outcome_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = outcome_tx.send(exiting.request_shutdown());
+    });
+    assert!(outcome_rx.try_recv().is_err());
+
+    thread::sleep(OLD_RESERVATION_DEADLINE + PAST_THE_OLD_BOUND);
+
+    assert!(
+        outcome_rx.try_recv().is_err(),
+        "the shutdown must still be waiting, and no child exists yet for it to report on"
+    );
+    assert_eq!(supervisor.terminal_proof(), None);
+    assert!(
+        created.lock().unwrap().is_empty(),
+        "the creation is still in flight, so no process has been made yet"
+    );
+
+    release_tx
+        .send(())
+        .expect("the owner must be released to finish the creation");
+
+    // Case B: the creation returns a real child, so `Forced` is only earned by containing it.
+    let outcome = outcome_rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the shutdown resolves once the child has been contained");
+    assert_eq!(
+        outcome,
+        ShutdownOutcome::Forced,
+        "the child the creation returned was force-terminated and reaped"
+    );
+    assert_eq!(
+        start.join().expect("the start thread must not panic"),
+        Err(StartError::Stopped),
+        "the session was stopped, not failed: nobody was ever served"
+    );
+    assert_eq!(supervisor.terminal_proof(), Some(ShutdownOutcome::Forced));
+    assert_eq!(
+        supervisor.snapshot().status,
+        SessionStatus::Stopped,
+        "and it never became ready"
+    );
+    assert!(supervisor.session_bootstrap().credential().is_none());
+
+    let created = created
+        .lock()
+        .expect("the created-pid lock is not poisoned")
+        .clone();
+    assert_eq!(created.len(), 1, "the seam created exactly one child");
+    wait_until_dead(created[0], Duration::from_secs(10));
 }
 
 fn wait_for_pid_file(path: &Path, timeout: Duration) -> u32 {

@@ -15,9 +15,16 @@
 //!
 //! The exit claim and the start admission are the same decision, taken under one lock in the
 //! supervisor. So an exit either wins before any child exists — in which case the startup
-//! thread's `start` is refused and no process is created — or loses to a start that has
-//! already produced an addressable child, which the shutdown then reaches. There is no
-//! interleaving in which the desktop leaves believing there was nothing to stop.
+//! thread's `start` is refused and no process is created — or loses to a start whose owner has
+//! already been given an address, which the shutdown then reaches. There is no interleaving in
+//! which the desktop leaves believing there was nothing to stop.
+//!
+//! The exit itself waits for the supervisor rather than for a deadline. The process creation
+//! on the owner's path is the one call in this crate that another thread cannot bound, so a
+//! desktop that leaves while one is in flight could leave an addressable owner behind it; the
+//! shell therefore proceeds to `handle.exit(0)` only on a terminal proof — no child was
+//! created, the child exited gracefully, or the child was force-terminated and reaped — and
+//! never on a wait that merely expired.
 
 pub mod bridge;
 pub mod sidecar;
@@ -30,8 +37,8 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager, RunEvent};
 
 use crate::sidecar::{
-    current_launch_mode, launch_spec, SessionSnapshot, StartError, StateListener, Supervisor,
-    SupervisorConfig,
+    current_launch_mode, launch_spec, SessionSnapshot, ShutdownOutcome, StartError, StateListener,
+    Supervisor, SupervisorConfig,
 };
 
 /// Build and run the DynamisBench desktop shell.
@@ -79,8 +86,18 @@ pub fn run() {
                 }
                 let handle = app_handle.clone();
                 std::thread::spawn(move || {
-                    supervisor.request_shutdown();
-                    handle.exit(0);
+                    // Blocks until the supervisor holds one terminal proof about the child —
+                    // it does not ask the supervisor "have you finished yet", so a still
+                    // in-flight process creation keeps the desktop alive rather than being
+                    // declared contained.
+                    //
+                    // The match is exhaustive on purpose: a fourth outcome would have to be
+                    // classified here rather than falling through to an exit by default.
+                    match supervisor.request_shutdown() {
+                        ShutdownOutcome::Graceful
+                        | ShutdownOutcome::Forced
+                        | ShutdownOutcome::NotRunning => handle.exit(0),
+                    }
                 });
             }
         }
