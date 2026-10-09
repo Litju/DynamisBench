@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 
 import pytest
 
@@ -42,7 +42,7 @@ from dynamisbench.workspace import (
 )
 from dynamisbench.workspace.source_authority import SourceLocator, inspect_locator
 
-from .factories import CREDENTIAL, session_configuration
+from .factories import CREDENTIAL, session_configuration, windows_drive
 
 
 @pytest.fixture
@@ -166,8 +166,7 @@ def test_workspace_identifiers_carry_no_information(registry, workspace) -> None
     assert str(workspace.source_root) not in identifier
     assert str(workspace.evidence_root) not in identifier
     assert workspace.source_root.name not in identifier
-    drive = PureWindowsPath(workspace.source_root).drive
-    assert drive not in identifier
+    assert windows_drive(workspace.source_root) not in identifier
     assert ":" not in identifier
     assert "/" not in identifier
 

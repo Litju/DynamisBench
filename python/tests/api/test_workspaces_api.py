@@ -27,7 +27,7 @@ fails here rather than in someone else's clean-up rule.
 from __future__ import annotations
 
 import json
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -39,6 +39,7 @@ from dynamisbench.workspace import (
     initialize_workspace,
 )
 
+from .factories import windows_drive
 from .workspace_routes import HEADERS, OPEN, open_route, snapshot
 from .workspace_routes import client as build_client
 
@@ -85,7 +86,7 @@ def test_opening_a_workspace_returns_an_opaque_identifier_and_no_paths(
     assert str(evidence) not in published
     assert source.name not in published
     assert evidence.name not in published
-    assert PureWindowsPath(source).drive not in published
+    assert windows_drive(source) not in published
     assert body["evidence_inside_source"] is False
     assert [entry["category"] for entry in body["source_categories"]] == [
         category.value for category in SourceCategory
