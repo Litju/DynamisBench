@@ -1433,7 +1433,6 @@ mod tests {
             .recv_timeout(Duration::from_secs(10))
             .expect("the exit must resolve once the creation does");
 
-        assert_eq!(result, Err(StartError::Failed(FailureCode::SpawnFailed)));
         assert_eq!(
             outcome,
             ShutdownOutcome::NotRunning,
@@ -1443,6 +1442,22 @@ mod tests {
             supervisor.terminal_proof(),
             Some(ShutdownOutcome::NotRunning)
         );
+        // Which ending the session recorded is not this gate's subject, and it is genuinely
+        // order-dependent: the owner checks for a pending exit both before the credential and
+        // again after a failed creation, so a request that arrived in between is answered as a
+        // stopped session and one that arrived after it is answered as a spawn failure. Both
+        // say the same true thing — no child was ever created. The endings are pinned
+        // individually, with the ordering forced, in the two blocked-creation gates in
+        // `sidecar_supervision`.
+        assert!(
+            matches!(
+                result,
+                Err(StartError::Failed(FailureCode::SpawnFailed)) | Err(StartError::Stopped)
+            ),
+            "a creation that produced no child reports exactly one of the two honest endings, \
+             got {result:?}"
+        );
+        assert!(supervisor.session_bootstrap().credential().is_none());
     }
 
     /// The record owes a proof in exactly one situation, and this is it.
