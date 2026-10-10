@@ -218,10 +218,9 @@ def read_artifacts(
     return WorkspaceDiscoveryResponse(
         workspace_id=workspace_id,
         categories=_category_statuses(discovery),
-        artifacts=ArtifactSummaryList(
-            artifacts=tuple(summaries), truncated=discovery.issues_truncated
-        ),
+        artifacts=ArtifactSummaryList(artifacts=tuple(summaries)),
         issues=tuple(_discovery_diagnostic(issue) for issue in discovery.issues),
+        issues_truncated=discovery.issues_truncated,
     )
 
 

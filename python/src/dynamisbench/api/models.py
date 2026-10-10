@@ -154,15 +154,18 @@ class ArtifactSummary(ApiModel):
 
 
 class ArtifactSummaryList(ApiModel):
-    """A discovery response's list of artifacts, bounded and in the walk's own order.
+    """A discovery response's list of artifacts, in the walk's own order.
 
-    ``truncated`` exists because a discovery that silently returned the first N artifacts
-    would read as a complete list. The order is the documented one — the portable logical
-    reference — so two calls agree and a client can diff them.
+    Every artifact the walk found is in here, and the order is the documented one — the
+    portable logical reference — so two calls agree and a client can diff them. There is
+    no truncation to report and no field that claims one: discovery walks a repository,
+    and every document it finds is described. What *is* bounded is the list of
+    structural issues beside it, and that limit is reported by
+    :attr:`WorkspaceDiscoveryResponse.issues_truncated` rather than being pinned to this
+    one, which would report a truncation that had not happened.
     """
 
     artifacts: tuple[ArtifactSummary, ...]
-    truncated: bool
 
 
 class SourceCategoryStatus(ApiModel):
@@ -213,12 +216,19 @@ class WorkspaceDiscoveryResponse(ApiModel):
     findings — a directory that is not a declared kind, a link that would leave the root,
     a document whose suffix declares no authoring format. An issue names a portable
     reference and says which of the closed codes it hit, and never a path.
+
+    ``issues_truncated`` says whether the walk stopped collecting issues at
+    ``MAX_DISCOVERY_ISSUES``, which is the one bound discovery has. It sits beside the
+    list it describes, and nowhere else, so a client reads "these are all of them" only
+    when that is what happened. It is not a statement about ``artifacts``: every document
+    the walk found is described, always.
     """
 
     workspace_id: str
     categories: tuple[SourceCategoryStatus, ...] = ()
     artifacts: ArtifactSummaryList
     issues: tuple[ArtifactDiagnostic, ...] = ()
+    issues_truncated: bool = False
 
 
 class ArtifactInspectionResponse(ApiModel):

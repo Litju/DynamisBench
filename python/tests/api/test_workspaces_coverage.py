@@ -361,7 +361,38 @@ def test_an_empty_category_yields_no_artifacts_and_no_issues(
 
     assert found["artifacts"]["artifacts"] == []
     assert found["issues"] == []
+    assert found["issues_truncated"] is False
     assert {entry["exists"] for entry in found["categories"]} == {False, True}
+
+
+def test_the_issue_cap_is_reported_where_it_belongs_and_nowhere_else(
+    client: TestClient, workspace: Workspace
+) -> None:
+    """Truncation is a fact about the issue list, and it is reported as exactly that.
+
+    A workspace engineered to produce more structural findings than the walk collects
+    is still a successful request: the documents it found are all described, the issue
+    list stops at the cap, and the one field that says so is
+    ``WorkspaceDiscoveryResponse.issues_truncated``. It is *not* recorded on the
+    artifact list, because nothing was truncated there — a field claiming it would tell
+    a client that documents went missing when none did.
+    """
+    from dynamisbench.workspace.source_authority import MAX_DISCOVERY_ISSUES
+
+    kind = workspace.source_root / "benchmarks" / "scenario"
+    kind.mkdir(parents=True, exist_ok=True)
+    for index in range(MAX_DISCOVERY_ISSUES + 5):
+        (kind / f"noise-{index}.txt").write_text("not an authoring document", encoding="utf-8")
+
+    workspace_id = open_route(client, workspace.source_root, workspace.evidence_root)[
+        "workspace_id"
+    ]
+    found = discover(client, workspace_id)
+
+    assert len(found["issues"]) == MAX_DISCOVERY_ISSUES
+    assert found["issues_truncated"] is True
+    assert set(found["artifacts"]) == {"artifacts"}
+    assert found["artifacts"]["artifacts"] == []
 
 
 def test_discovery_order_is_the_documented_stable_order(
