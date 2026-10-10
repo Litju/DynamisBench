@@ -47,6 +47,9 @@ What is checked:
   disclosure.
 * **A correct OpenAPI document**, served over HTTP and equal to the in-process one, with
   the versioned routes it publishes and typed response models for all of them.
+* **A closed diagnostic vocabulary at the boundary.** The one field a client branches on
+  is published as the workspace layer's own enum, with exactly its values, so a new
+  internal code reaches HTTP only by being added to the vocabulary that owns it.
 """
 
 from __future__ import annotations
@@ -523,6 +526,29 @@ def test_the_openapi_document_declares_the_failure_envelope_on_every_route() -> 
                 assert responses[status]["content"]["application/json"]["schema"]["$ref"].endswith(
                     "/ErrorResponse"
                 ), f"{path} {verb} {status}"
+
+
+def test_the_diagnostic_code_is_a_closed_enum_in_the_generated_openapi() -> None:
+    """The closed vocabulary survives the boundary that publishes it.
+
+    A diagnostic's ``code`` is the one field a client branches on, and a field typed as
+    arbitrary text would tell a generated client that any string could arrive — which is
+    how a spelling nobody agreed to reaches a switch statement with no default. So the
+    document must expose the codes as an enum, and it must be *exactly* the workspace
+    layer's vocabulary: the gate compares against the imported enum rather than against a
+    literal, so adding a code there fails here until the HTTP boundary carries it too.
+
+    That also holds the shape: ``str`` would have produced a bare ``{"type": "string"}``
+    property with no ``$ref`` to resolve, which is the regression this is named for.
+    """
+    from dynamisbench.workspace.source_authority import DiagnosticCode
+
+    schemas = _openapi()["components"]["schemas"]
+    code = schemas["ArtifactDiagnostic"]["properties"]["code"]
+
+    assert "$ref" in code, f"the diagnostic code is not typed by an enum: {code}"
+    assert code["$ref"] == "#/components/schemas/DiagnosticCode"
+    assert schemas["DiagnosticCode"]["enum"] == [entry.value for entry in DiagnosticCode]
 
 
 def test_the_served_openapi_document_is_the_one_the_factory_produced() -> None:

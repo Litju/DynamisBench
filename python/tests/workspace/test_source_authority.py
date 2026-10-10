@@ -237,6 +237,30 @@ def test_a_duplicated_key_is_refused_in_both_formats_even_nested() -> None:
         assert _refuses(raw, authoring) == [DiagnosticCode.DUPLICATE_KEY]
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param(b"? [a, b]\n: 1\n", id="sequence_key"),
+        pytest.param(b"? {a: 1}\n: 2\n", id="mapping_key"),
+        pytest.param(b"? !!set {a, b}\n: 1\n", id="tagged_key"),
+        pytest.param(b"outer:\n  ? [a, b]\n  : 1\n", id="nested_sequence_key"),
+    ],
+)
+def test_a_key_that_cannot_be_a_key_is_a_bounded_refusal(raw: bytes) -> None:
+    """A YAML author may write a sequence or a mapping where a key belongs.
+
+    ``? [a, b]`` constructs a ``list`` and ``? {a: 1}`` constructs a ``dict``, and
+    neither can name a mapping entry. The refusal is the authoring fact — the bytes are
+    not one unambiguous mapping — rather than the interpreter's reaction to it: a raw
+    ``TypeError`` would escape the authoring contract and land in an HTTP handler that
+    only understands bounded diagnostics. The nested form is what proves the check sits
+    inside the loader's single mapping point rather than at the document root.
+    """
+    from dynamisbench.workspace.source_authority import AuthoringFormat
+
+    assert _refuses(raw, AuthoringFormat.YAML) == [DiagnosticCode.PARSE_ERROR]
+
+
 def test_a_yaml_alias_is_refused_rather_than_expanded() -> None:
     """An alias is the one YAML feature whose cost is not proportional to the text.
 

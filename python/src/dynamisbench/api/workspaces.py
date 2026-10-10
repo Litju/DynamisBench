@@ -28,12 +28,13 @@ a client probing for a filesystem layout is trying to learn.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from dynamisbench.api.errors import ErrorResponse, refusal_responses
 from dynamisbench.api.models import (
+    MAX_DIAGNOSTIC_REFERENCE_LENGTH,
     ArtifactDiagnostic,
     ArtifactInspectionResponse,
     ArtifactSummary,
@@ -218,10 +219,9 @@ def read_artifacts(
     return WorkspaceDiscoveryResponse(
         workspace_id=workspace_id,
         categories=_category_statuses(discovery),
-        artifacts=ArtifactSummaryList(
-            artifacts=tuple(summaries), truncated=discovery.issues_truncated
-        ),
+        artifacts=ArtifactSummaryList(artifacts=tuple(summaries)),
         issues=tuple(_discovery_diagnostic(issue) for issue in discovery.issues),
+        issues_truncated=discovery.issues_truncated,
     )
 
 
@@ -262,6 +262,35 @@ def read_artifact(
     )
 
 
+_REFERENCE_OVERFLOW_MARKER: Final = "\u2026"
+"""What a bounded reference ends with, so "this name was longer" is visible.
+
+A single character rather than an ellipsis of three: the prefix is what carries the
+portable location, and every character spent on the marker is one taken from it.
+"""
+
+
+def _bounded_reference(reference: str) -> str:
+    """``reference`` shortened to the ceiling a portable logical reference may reach.
+
+    Called on a discovery reference, which unlike a locator's is not guaranteed to be one
+    the reference language will express: an unsupported file sitting in a declared kind
+    directory is reported whatever it is called, and a filesystem will happily store a
+    name longer than any portable reference. Rounding it here — rather than letting the
+    read model refuse it — keeps the finding published and the request successful.
+
+    The result is the longest prefix of the name that fits, with the marker appended in
+    place of what was cut. It stays a prefix of the same relative name, so it cannot
+    become an absolute path, a drive, or a UNC or extended-length prefix, and nothing is
+    read from the filesystem to produce it.
+    """
+    if len(reference) <= MAX_DIAGNOSTIC_REFERENCE_LENGTH:
+        return reference
+    return reference[: MAX_DIAGNOSTIC_REFERENCE_LENGTH - len(_REFERENCE_OVERFLOW_MARKER)] + (
+        _REFERENCE_OVERFLOW_MARKER
+    )
+
+
 def _discovery_diagnostic(issue: DiscoveryIssue) -> ArtifactDiagnostic:
     """One structural finding, with the portable reference it was found at.
 
@@ -269,11 +298,19 @@ def _discovery_diagnostic(issue: DiscoveryIssue) -> ArtifactDiagnostic:
     directory or category it sits in. It is never an absolute path, and the target a
     refused link pointed at is never reported at all — not in the reference, not in the
     message, and not in a second field: there is nothing there for it to be.
+
+    ``reference`` is bounded to the workspace's own logical-reference ceiling before the
+    model is constructed rather than by the model's field. Discovery reports entries the
+    reference language never promised to express — an unsupported file name is not a
+    reference anything will resolve — so a name longer than that ceiling has to be
+    rounded deliberately, here, or it turns a successful discovery into a failed response.
+    The bound is a prefix plus a marker, so the published text stays the portable name it
+    came from and never becomes a filesystem path.
     """
     return ArtifactDiagnostic(
-        code=str(issue.diagnostic.code),
+        code=issue.diagnostic.code,
         message=str(issue.diagnostic.message),
-        reference=issue.reference,
+        reference=_bounded_reference(issue.reference),
         location=issue.diagnostic.location,
         category=issue.diagnostic.category,
     )
@@ -302,7 +339,7 @@ def _diagnostic(entry: SourceDiagnostic) -> ArtifactDiagnostic:
     applied once and can be read.
     """
     return ArtifactDiagnostic(
-        code=str(entry.code),
+        code=entry.code,
         message=str(entry.message),
         location=entry.location,
         category=entry.category,
