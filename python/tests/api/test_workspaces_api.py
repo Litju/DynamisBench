@@ -86,7 +86,8 @@ def test_opening_a_workspace_returns_an_opaque_identifier_and_no_paths(
     assert str(evidence) not in published
     assert source.name not in published
     assert evidence.name not in published
-    assert windows_drive(source) not in published
+    drive = windows_drive(source)
+    assert drive == "" or drive not in published
     assert body["evidence_inside_source"] is False
     assert [entry["category"] for entry in body["source_categories"]] == [
         category.value for category in SourceCategory

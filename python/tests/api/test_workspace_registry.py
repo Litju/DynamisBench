@@ -166,7 +166,8 @@ def test_workspace_identifiers_carry_no_information(registry, workspace) -> None
     assert str(workspace.source_root) not in identifier
     assert str(workspace.evidence_root) not in identifier
     assert workspace.source_root.name not in identifier
-    assert windows_drive(workspace.source_root) not in identifier
+    drive = windows_drive(workspace.source_root)
+    assert drive == "" or drive not in identifier
     assert ":" not in identifier
     assert "/" not in identifier
 
