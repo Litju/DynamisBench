@@ -260,6 +260,41 @@ def _study_document() -> dict:
     return json.loads(json.dumps(MODEL_FACTORIES["study"]().model_dump(mode="json")))
 
 
+def test_a_document_with_a_key_that_cannot_be_a_key_is_an_invalid_artifact(
+    client: TestClient, workspace: Workspace
+) -> None:
+    """The one refusal an author can write that a parser would answer with a raw error.
+
+    YAML lets a sequence or a mapping stand where a key belongs, and PyYAML builds one
+    without complaint. Leaving that to the interpreter turns an authoring document into
+    a ``TypeError`` the route never had a handler for — which is a 500 for something
+    that is only a fact about the file. The boundary is that the loader states the
+    authoring refusal, so this is 200, invalid, and ``parse_error``.
+    """
+    path = workspace.source_root / "benchmarks" / "scenario" / "unusable-key.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("? [a, b]\n: 1\n", encoding="utf-8")
+
+    workspace_id = open_route(client, workspace.source_root, workspace.evidence_root)[
+        "workspace_id"
+    ]
+    summary = ArtifactSummary.model_validate(
+        discover(client, workspace_id)["artifacts"]["artifacts"][0]
+    )
+
+    assert summary.validation_status.value == "invalid"
+    assert {entry.code for entry in summary.diagnostics} == {"parse_error"}
+
+    inspection = inspect_artifact(client, workspace_id, summary.artifact_id)
+    assert inspection["validation_status"] == "invalid"
+    assert [entry["code"] for entry in inspection["diagnostics"]] == ["parse_error"]
+    published = json.dumps(inspection)
+    assert "Traceback" not in published
+    assert "TypeError" not in published
+    assert "unhashable" not in published
+    assert "[a, b]" not in published
+
+
 def test_an_oversized_document_is_refused_without_being_read(
     client: TestClient, workspace: Workspace
 ) -> None:

@@ -20,11 +20,14 @@ construction, which is what makes a relocated workspace produce identical digest
 **Authoring syntax is not meaning, so the loader fails closed on ambiguity.** A
 scientific document with two keys of the same name has two readings, and which one a
 parser keeps is an accident of implementation rather than a decision anybody made. So
-duplicate keys are refused in JSON and in YAML alike, multi-document YAML is refused,
-custom or unsafe tags are refused, a non-object root is refused, and nothing is
-normalised to make it parse. Eight mebibytes is the ceiling on one document: large
-enough for any of these definitions written by hand, small enough that a workspace
-cannot make the reader allocate without bound.
+duplicate keys are refused in JSON and in YAML alike, a key that cannot be a key at all
+is refused, multi-document YAML is refused, custom or unsafe tags are refused, a
+non-object root is refused, and nothing is normalised to make it parse. Every one of
+those is a bounded diagnostic chosen from the closed vocabulary below: a document that
+cannot be read is a fact about the document, and a ``TypeError`` from the interpreter is
+a fact about this parser that no caller should have to handle. Eight mebibytes is the
+ceiling on one document: large enough for any of these definitions written by hand,
+small enough that a workspace cannot make the reader allocate without bound.
 
 **Diagnostics are a closed vocabulary.** Every refusal names one of nine codes and
 carries a fixed message, a bounded field location, and — for a schema failure — the
@@ -290,8 +293,22 @@ class _DuplicateKeyError(ValueError):
     """Internal marker for a repeated mapping key, carrying nothing from the document."""
 
 
+class _InvalidKeyError(ValueError):
+    """Internal marker for a mapping key that cannot name an entry at all.
+
+    A YAML author can write a sequence or a mapping where a key belongs, and the
+    constructor happily builds one: ``? [a, b]`` is a ``list`` and ``? {a: 1}`` is a
+    ``dict``. Neither can be a key, so the document cannot be one mapping. Left to the
+    language, the attempt surfaces as a ``TypeError`` from the interpreter — an escape
+    from the authoring contract, because a caller that only understands bounded
+    diagnostics would receive a raw exception naming Python types instead. This marker
+    lets the loader state the authoring fact and lets the parser publish the one bounded
+    code that describes it.
+    """
+
+
 class _StrictSafeLoader(yaml.SafeLoader):
-    """A safe YAML loader that refuses a repeated mapping key.
+    """A safe YAML loader that refuses a repeated key and an unusable one.
 
     ``SafeLoader`` already refuses arbitrary Python object construction and custom
     tags, which is what keeps authoring from being code execution. The one thing it
@@ -302,12 +319,22 @@ class _StrictSafeLoader(yaml.SafeLoader):
     ``construct_mapping`` is the single point every mapping passes through, including
     those nested inside sequences, so overriding it here covers the whole document
     rather than only its root.
+
+    Order of operations for one entry: construct the key, establish that it can be a
+    key at all, test it for duplication, and only then construct the value. Testing
+    hashability *before* the duplicate test is what keeps ``? [a, b]`` from reaching a
+    membership test on a ``list`` — which is where an author-controlled document would
+    otherwise turn into a raw ``TypeError``.
     """
 
     def construct_mapping(self, node: yaml.Node, deep: bool = False) -> dict[Any, Any]:
         mapping: dict[Any, Any] = {}
         for key_node, value_node in node.value:
             key = self.construct_object(key_node, deep=deep)
+            try:
+                hash(key)
+            except TypeError as error:
+                raise _InvalidKeyError from error
             if key in mapping:
                 raise _DuplicateKeyError
             mapping[key] = self.construct_object(value_node, deep=deep)
@@ -388,6 +415,8 @@ def _parse_yaml(text: str) -> Any:
         return loader.get_single_data()
     except _DuplicateKeyError as error:
         raise SourceAuthorityError([diagnostic(DiagnosticCode.DUPLICATE_KEY)]) from error
+    except _InvalidKeyError as error:
+        raise SourceAuthorityError([diagnostic(DiagnosticCode.PARSE_ERROR)]) from error
     except yaml.YAMLError as error:
         raise SourceAuthorityError([diagnostic(DiagnosticCode.PARSE_ERROR)]) from error
     finally:
