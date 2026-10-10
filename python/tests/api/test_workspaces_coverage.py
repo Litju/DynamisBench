@@ -418,3 +418,115 @@ def test_discovery_order_is_the_documented_stable_order(
         entry["logical_reference"] for entry in first
     )
     assert len(first) == 6
+
+
+def test_a_long_portable_issue_reference_is_bounded_rather_than_a_failed_request(
+    client: TestClient, workspace: Workspace
+) -> None:
+    """A portable reference the 256-character cap could not hold is still a 200.
+
+    The field bound used to sit below what a legitimate portable reference can reach. A
+    deep structure under a declared kind directory is ordinary repository layout and
+    produces a reference longer than that, so discovery found the entry and the *response*
+    then failed to build — turning a bounded structural finding into a server error for
+    a workspace that was fine.
+
+    The fixture is nested segments rather than one long file name, and on Windows it is
+    addressed through the extended-length prefix rather than by stretching a single
+    component to the filesystem's limit. What is being measured is this boundary's
+    handling of a long portable name, not the host's ability to store one; a fixture
+    that needed a 255-character directory entry would be testing the wrong layer, and
+    would not be a fixture a real repository could hold.
+    """
+    from dynamisbench.api.models import MAX_DIAGNOSTIC_REFERENCE_LENGTH
+
+    source_root = _long_path(workspace.source_root)
+    kind = source_root / "benchmarks" / "scenario"
+    kind.mkdir(exist_ok=True)
+    deepest = _nested(kind, depth=28)
+    (deepest / "tmp").mkdir()
+    (deepest / "tmp" / "note.txt").write_text("scratch", encoding="utf-8")
+
+    workspace_id = open_route(client, source_root, workspace.evidence_root)["workspace_id"]
+    found = discover(client, workspace_id)
+
+    assert found["issues_truncated"] is False
+    assert len(found["issues"]) == 1
+    reference = found["issues"][0]["reference"]
+    assert len(reference) > 256, "the fixture must exceed the old field cap"
+    assert len(reference) <= MAX_DIAGNOSTIC_REFERENCE_LENGTH
+    assert not reference.endswith("\u2026")
+    published = json.dumps(found)
+    assert str(workspace.source_root) not in published
+    assert str(workspace.evidence_root) not in published
+    assert "Traceback" not in published
+    assert not reference.startswith(("\\", "/"))
+    assert ":" not in reference
+
+
+def test_a_reference_longer_than_the_portability_ceiling_is_still_bounded(
+    client: TestClient, workspace: Workspace
+) -> None:
+    """The ceiling is the workspace's own, and it holds even past it.
+
+    A portable reference is portable because it is one the reference language expresses,
+    which caps it at ``MAX_LOGICAL_REFERENCE_LENGTH``. A discovery-only name is not
+    promised that — an unsupported file is reported whatever it is called — so a name
+    past the ceiling is rounded on the way out rather than being either published over
+    long or refused.
+
+    The rounding is the failure this guards: without it the read model refuses the value
+    and a structural finding becomes a server error. What is published is a prefix, so it
+    is still a portable name; what is cut is gone rather than replaced by something the
+    filesystem would say, and nothing of the absolute path reaches it.
+    """
+    from dynamisbench.api.models import MAX_DIAGNOSTIC_REFERENCE_LENGTH
+
+    source_root = _long_path(workspace.source_root)
+    kind = source_root / "benchmarks" / "scenario"
+    kind.mkdir(exist_ok=True)
+    deepest = _nested(kind, depth=100)
+    (deepest / "tmp").mkdir()
+    (deepest / "tmp" / "note.txt").write_text("scratch", encoding="utf-8")
+
+    workspace_id = open_route(client, source_root, workspace.evidence_root)["workspace_id"]
+    found = discover(client, workspace_id)
+
+    reference = found["issues"][0]["reference"]
+    assert len(reference) == MAX_DIAGNOSTIC_REFERENCE_LENGTH
+    assert reference.endswith("\u2026")
+    assert reference.startswith("benchmarks/scenario/segment-0000")
+    published = json.dumps(found)
+    assert str(workspace.source_root) not in published
+    assert str(workspace.evidence_root) not in published
+    assert "Traceback" not in published
+
+
+def _long_path(root: Path) -> Path:
+    """``root`` spelled so a host can address paths longer than its usual limit.
+
+    On Windows, a path beyond ``MAX_PATH`` is reached through the ``\\\\?\\`` prefix and
+    no other way. It is a spelling of the *same directory*, which is why the workspace
+    opens against it and the walk continues past the limit: nothing about what is
+    created is extended-length, only how this fixture reaches it. Everywhere else the
+    prefix is not wanted, so the root is already itself.
+    """
+    import os
+
+    return Path(f"\\\\?\\{root}") if os.name == "nt" else root
+
+
+def _nested(parent: Path, depth: int) -> Path:
+    """A directory ``depth`` levels below ``parent``, made of short ordinary names.
+
+    Short names on purpose: the depth is what makes the portable reference long, and a
+    segment stretched to fill a component limit would say something about the filesystem
+    rather than about this boundary. The depth is chosen to exceed the workspace's own
+    logical-reference ceiling — the namespace a portable reference is allowed to live in
+    — rather than merely the 256-character field cap the defect was about.
+    """
+    current = parent
+    for index in range(depth):
+        current = current / f"segment-{index:04d}"
+        current.mkdir()
+    return current

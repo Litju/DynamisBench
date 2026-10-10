@@ -24,12 +24,28 @@ than decoding it.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from dynamisbench.workspace.authority import SourceCategory
-from dynamisbench.workspace.source_authority import AuthoringFormat, ValidationStatus
+from dynamisbench.workspace import MAX_LOGICAL_REFERENCE_LENGTH, SourceCategory
+from dynamisbench.workspace.source_authority import (
+    AuthoringFormat,
+    DiagnosticCode,
+    ValidationStatus,
+)
+
+MAX_DIAGNOSTIC_REFERENCE_LENGTH: Final = MAX_LOGICAL_REFERENCE_LENGTH
+"""The ceiling on a published portable logical reference.
+
+Not a number chosen here. A logical reference the workspace will resolve from is already
+bounded to :data:`MAX_LOGICAL_REFERENCE_LENGTH`, and a reference is portable precisely
+because it is one of those, so the same constant governs both. A discovery-only name that
+exceeds it is bounded *before* the model is constructed, in
+:mod:`dynamisbench.api.workspaces`, rather than refused here: a long entry is a fact
+about the workspace, and an entry whose name the portability contract cannot express is
+reported as that fact rather than as a failed response.
+"""
 
 
 class ApiModel(BaseModel):
@@ -117,11 +133,18 @@ class ArtifactDiagnostic(ApiModel):
     validation category refused it. There is no field for the rejected value, the rejected
     text, or an absolute path — the record is structurally incapable of carrying one, which
     is what lets it be served to a browser (ADR-022).
+
+    ``code`` is typed by the workspace layer's own :class:`DiagnosticCode` rather than as
+    free text. The vocabulary is closed in exactly one place — the reader that produces it
+    — and typing the field with that enum is what makes the generated OpenAPI document
+    carry the values instead of telling a client that any string might arrive. A client
+    branches on these, and an untyped field would let a new diagnostic reach it as a
+    spelling nobody had agreed to.
     """
 
-    code: str
+    code: DiagnosticCode
     message: str
-    reference: str | None = Field(default=None, max_length=256)
+    reference: str | None = Field(default=None, max_length=MAX_DIAGNOSTIC_REFERENCE_LENGTH)
     location: str | None = Field(default=None, max_length=256)
     category: str | None = Field(default=None, max_length=64)
 
