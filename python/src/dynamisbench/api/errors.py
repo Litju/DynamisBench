@@ -24,6 +24,7 @@ API is genuinely entitled to explain.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
 from typing import Any
 
@@ -97,8 +98,26 @@ ROUTE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 """Declared on every route, so a generated client learns the envelope shape from OpenAPI.
 
 Only the two failures a client can provoke or observe on an existing route. A 404 belongs
-to the path that did not match, not to the routes that were.
+to the path that did not match, not to the routes that were. A route with a failure of its
+own — the workspace routes' ``404`` for an unknown identifier, ``400`` for a root that will
+not open — declares it *in addition* to these, through :data:`ROUTE_REFUSAL_RESPONSES`: it is
+a spread, not a replacement, and a route that shadowed these would publish a document whose
+typings disagree about how the application answers a wrong verb.
 """
+
+
+def refusal_responses(
+    declarations: Mapping[int | str, dict[str, Any]],
+) -> dict[int | str, dict[str, Any]]:
+    """The shared envelope declarations plus a route's own failures, as one mapping.
+
+    A mapping rather than keyword arguments, because a refusal's status is an integer and
+    ``404=...`` is not a valid keyword — and rather than a replacement, because every failure
+    a route documents is typed as :class:`ErrorResponse`: a client cannot be expected to learn
+    a second body shape from a prose description. Merging rather than dict-literal allows the
+    ``**responses`` spread a route would otherwise hand-write.
+    """
+    return {**ROUTE_ERROR_RESPONSES, **dict(declarations)}
 
 
 def envelope(code: ErrorCode, message: str, status_code: int) -> JSONResponse:
@@ -172,4 +191,5 @@ __all__ = [
     "envelope",
     "error_envelope",
     "install_error_contract",
+    "refusal_responses",
 ]

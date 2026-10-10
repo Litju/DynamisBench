@@ -1,11 +1,16 @@
 """JSON-only loader for the ``dbench`` inspection and compilation primitives.
 
-The registry below is the complete set of spec kinds the command line knows how to
-load. It is explicit by design: a kind names one existing validated Pydantic model
-and never an import path, so the CLI can never be steered into importing an
-arbitrary class, a registry service, or a simulator binding. JSON is the only
-authoring surface here; YAML and workspace discovery are M2 work and stay out of
-this module.
+The set of kinds this module can load is the domain's, not this module's: it reads
+:data:`dynamisbench.domain.spec.AUTHORITY_KINDS`, which names one existing validated
+Pydantic model per kind and never an import path. That direction matters. The kind
+vocabulary is scientific — what kinds of definition exist is a domain fact — so the
+command line consumes it rather than owning it, and the workspace source reader and
+the application API read the same table instead of each keeping their own.
+
+Nothing here imports the domain at module scope in a way ``dbench --version`` pays
+for: ``cli.py`` imports this module only after argument parsing has decided a
+command that needs it. JSON remains the only authoring surface *here*; YAML and
+workspace discovery are the workspace source layer's business.
 
 Every failure a caller can trigger — malformed JSON, a non-object document, a
 validation error, an unknown kind — is reported as a bounded :class:`CliInputError`,
@@ -15,24 +20,12 @@ never as a traceback.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
 
-from dynamisbench.domain.spec import (
-    BenchmarkRelease,
-    EnvironmentDefinition,
-    MetricDefinition,
-    QuantityDefinition,
-    RealizationDefinition,
-    ReferenceDefinition,
-    ScenarioDefinition,
-    StudyDefinition,
-    SUTDefinition,
-    UncertaintyFactorDefinition,
-)
+from dynamisbench.domain.spec import AUTHORITY_KINDS, AuthorityKind
 from dynamisbench.domain.spec.base import DomainModel
 
 __all__ = [
@@ -50,29 +43,21 @@ class CliInputError(Exception):
     """A user-facing failure: bounded message, nonzero exit, no traceback."""
 
 
-@dataclass(frozen=True)
-class SpecKind:
-    """One kind's validation surface: its model and where its nominal identity lives."""
+type SpecKind = AuthorityKind
+"""One kind's validation surface: its model and where its nominal identity lives.
 
-    name: str
-    model: type[DomainModel]
-    identifier_field: str
-    version_field: str | None
+An alias rather than a second class. The command line used to define this
+structurally identical record itself, which meant the workspace source reader and
+the application API would each have needed to import ``cli_support`` to learn which
+model a kind validates to. There is one record now, owned by the domain.
+"""
 
+SPEC_KINDS = AUTHORITY_KINDS
+"""The domain's kind vocabulary, read-only.
 
-SPEC_KINDS: dict[str, SpecKind] = {
-    "benchmark": SpecKind("benchmark", BenchmarkRelease, "benchmark_id", "version"),
-    "realization": SpecKind("realization", RealizationDefinition, "realization_id", "version"),
-    "scenario": SpecKind("scenario", ScenarioDefinition, "scenario_id", "version"),
-    "quantity": SpecKind("quantity", QuantityDefinition, "quantity_id", "version"),
-    "metric": SpecKind("metric", MetricDefinition, "metric_id", "version"),
-    "reference": SpecKind("reference", ReferenceDefinition, "reference_id", "version"),
-    "sut": SpecKind("sut", SUTDefinition, "sut_id", "version"),
-    "environment": SpecKind("environment", EnvironmentDefinition, "environment_id", "version"),
-    "study": SpecKind("study", StudyDefinition, "study_id", "version"),
-    "factor": SpecKind("factor", UncertaintyFactorDefinition, "factor_id", None),
-}
-"""The explicit kind registry. ``factor`` has no version field by design."""
+Re-exported under its previous name because it is the command line's kind table and
+has always been named that; it is the domain's table, not a copy of it.
+"""
 
 
 def _bounded_errors(exc: ValidationError, *, limit: int = 3) -> str:
@@ -114,11 +99,18 @@ def load_json_model[ModelT: DomainModel](model: type[ModelT], path: Path) -> Mod
 
 
 def load_spec(kind: str, path: Path) -> DomainModel:
-    """Parse one JSON file and validate it as the named kind."""
-    spec = SPEC_KINDS.get(kind)
-    if spec is None:
-        supported = ", ".join(sorted(SPEC_KINDS))
-        raise CliInputError(f"unknown kind {kind!r}; supported kinds: {supported}")
+    """Parse one JSON file and validate it as the named kind.
+
+    The domain's registry refuses the name, and the refusal is translated here into
+    the command line's own bounded error so that a wrong ``--kind`` is reported the
+    way every other wrong argument is: one line on stderr, nonzero exit, no
+    traceback.
+    """
+    try:
+        spec = AUTHORITY_KINDS[kind]
+    except KeyError:
+        supported = ", ".join(sorted(AUTHORITY_KINDS))
+        raise CliInputError(f"unknown kind {kind!r}; supported kinds: {supported}") from None
     return load_json_model(spec.model, path)
 
 
