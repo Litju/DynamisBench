@@ -521,9 +521,9 @@ def _nested(parent: Path, depth: int) -> Path:
 
     Short names on purpose: the depth is what makes the portable reference long, and a
     segment stretched to fill a component limit would say something about the filesystem
-    rather than about this boundary. The depth is chosen to exceed the workspace's own
-    logical-reference ceiling — the namespace a portable reference is allowed to live in
-    — rather than merely the 256-character field cap the defect was about.
+    rather than about this boundary. One caller passes a depth past the reference
+    ceiling and one a depth merely past the old field cap, so both bounds are proved
+    rather than one being inferred from the other.
     """
     current = parent
     for index in range(depth):
