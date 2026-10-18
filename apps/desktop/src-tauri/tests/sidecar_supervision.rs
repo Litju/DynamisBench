@@ -18,6 +18,18 @@
 //! [`OLD_RESERVATION_DEADLINE`] gates go one step further and hold that call past the deadline
 //! the reservation used to be given, because that is the whole claim under test: an expired
 //! wait is not a proof about a process.
+//!
+//! One ordering is deliberately not claimed here, because it cannot be forced from this side
+//! of the boundary: `Starting` means a start has been admitted and its owner is addressable —
+//! it does not mean a child exists. The owner checks for a pending shutdown before it performs
+//! the process creation, and a shutdown caller cannot observe its own command until the owner
+//! has consumed it, so a startup-time shutdown has two honest endings whose order only the
+//! scheduler decides: absence (`NotRunning`, the creation was never reached) and containment
+//! (`Forced`, a child existed and was terminated and reaped). The public gate below asserts the
+//! contract that holds for both; the absence ordering is forced exactly, with no schedule in
+//! the picture, in `sidecar::supervisor`'s
+//! `a_shutdown_already_waiting_when_the_owner_begins_proves_absence_without_a_spawn`, and the
+//! containment ordering is forced here with a real pid.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -349,23 +361,182 @@ time.sleep(60)
     let _ = std::fs::remove_file(&pid_file);
 }
 
-#[test]
-fn a_shutdown_requested_while_starting_contains_the_child_and_stops_the_session() {
-    let (supervisor, _) = supervisor(SupervisorConfig {
-        startup_timeout: Duration::from_secs(30),
-        shutdown_timeout: Duration::from_secs(2),
-    });
-    let starting = Arc::clone(&supervisor);
+// =====================================================================================
+// A shutdown while a start is in flight: two honest orderings, and the contract that
+// holds for both.
+// =====================================================================================
 
-    let handle = thread::spawn(move || starting.start(python_spec("import time; time.sleep(60)")));
+/// A child that never speaks the protocol and never stops on its own: for a startup-time
+/// shutdown it leaves the ordering — and therefore which terminal proof the session earns —
+/// to the scheduler, which is exactly what the gates in this section are about.
+fn silent_child_spec() -> LaunchSpec {
+    python_spec("import time; time.sleep(60)")
+}
+
+/// A supervisor whose children are real and whose created pids are recorded, so "no child
+/// survives" can be checked whichever ordering a startup-time shutdown took.
+fn supervisor_with_recorded_children() -> (Arc<Supervisor>, Arc<Mutex<Vec<u32>>>) {
+    let pids = Arc::new(Mutex::new(Vec::<u32>::new()));
+    let recorded = Arc::clone(&pids);
+    let (_, listener) = recorder();
+    let supervisor = Arc::new(Supervisor::with_spawner(
+        SupervisorConfig {
+            startup_timeout: Duration::from_secs(30),
+            shutdown_timeout: Duration::from_secs(2),
+        },
+        listener,
+        Arc::new(move |spec, credential| {
+            let child = spawn_sidecar(spec, credential)?;
+            recorded
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(child.id());
+            Ok(child)
+        }),
+    ));
+    (supervisor, pids)
+}
+
+/// What a client can actually know, and the only claim that follows from it.
+///
+/// `SessionStatus::Starting` is published once a start has been admitted and its owner is
+/// addressable; it is not a claim that a child exists. The owner checks for a pending
+/// shutdown before it performs the process creation, so by the time this gate's request is
+/// answered the session either never reached the creation (`NotRunning`: absence is the
+/// proof) or the creation produced a real child that was force-terminated and reaped
+/// (`Forced`: containment is the proof). Which one happened is the scheduler's choice and
+/// this gate does not pretend to know it; it asserts the contract that holds either way:
+///
+/// * the answer is a terminal proof, and it is the proof the record concluded with;
+/// * `start` resolves as stopped, because the session never served;
+/// * the session ends stopped, with no credential and no failure;
+/// * every pid the seam created is gone.
+///
+/// The orderings themselves are pinned where they can be forced: absence in
+/// `sidecar::supervisor`'s
+/// `a_shutdown_already_waiting_when_the_owner_begins_proves_absence_without_a_spawn`, and
+/// containment of a real child in
+/// `a_shutdown_after_the_child_exists_reaps_the_pid_before_the_proof_is_returned` below.
+#[test]
+fn a_shutdown_while_starting_is_a_terminal_proof_and_leaves_no_child_behind() {
+    let (supervisor, pids) = supervisor_with_recorded_children();
+
+    let starting = Arc::clone(&supervisor);
+    let handle = thread::spawn(move || starting.start(silent_child_spec()));
 
     wait_for_starting(&supervisor, Duration::from_secs(10));
-    assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::Forced);
+    let outcome = supervisor.request_shutdown();
 
-    let result = handle.join().expect("the start thread must not panic");
-    assert_eq!(result, Err(StartError::Stopped));
-    assert_eq!(supervisor.snapshot().status, SessionStatus::Stopped);
+    assert!(
+        matches!(
+            outcome,
+            ShutdownOutcome::NotRunning | ShutdownOutcome::Forced
+        ),
+        "a shutdown while a session is starting is a terminal proof — absence before the \
+         creation, or containment of the child it produced — and nothing else. Got {outcome:?}"
+    );
+    assert_eq!(
+        supervisor.terminal_proof(),
+        Some(outcome),
+        "the answer a caller is given is the proof the record concluded with"
+    );
+    assert_eq!(
+        handle.join().expect("the start thread must not panic"),
+        Err(StartError::Stopped),
+        "the session was stopped before it could ever serve"
+    );
+    let stopped = supervisor.snapshot();
+    assert_eq!(stopped.status, SessionStatus::Stopped);
+    assert_eq!(stopped.failure, None);
     assert!(supervisor.session_bootstrap().credential().is_none());
+
+    let pids = pids
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    for pid in pids {
+        wait_until_dead(pid, Duration::from_secs(10));
+    }
+}
+
+/// The forced ordering where a real child exists before the shutdown arrives.
+///
+/// The seam records the pid the moment the creation produces the child and hands it to this
+/// gate before the owner can reach any further check; the shutdown is issued only after that
+/// signal, so "a real child existed" is a fact of program order rather than of scheduling.
+/// The answer can then only be `Forced`: the owner meets the request at its post-creation
+/// check or in the startup watch, and both paths terminate and reap before anything is
+/// reported — so the pid is gone by the time the proof is returned, and the session never
+/// reached ready.
+#[test]
+fn a_shutdown_after_the_child_exists_reaps_the_pid_before_the_proof_is_returned() {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&attempts);
+    let (created_tx, created_rx) = mpsc::channel::<u32>();
+    let (snapshots, listener) = recorder();
+    let spawner: Arc<SpawnSidecar> = Arc::new(move |spec, credential| {
+        observed.fetch_add(1, Ordering::SeqCst);
+        let child = spawn_sidecar(spec, credential)?;
+        let _ = created_tx.send(child.id());
+        Ok(child)
+    });
+    let supervisor = Arc::new(Supervisor::with_spawner(
+        SupervisorConfig {
+            startup_timeout: Duration::from_secs(30),
+            shutdown_timeout: Duration::from_secs(2),
+        },
+        listener,
+        spawner,
+    ));
+
+    let starting = Arc::clone(&supervisor);
+    let handle = thread::spawn(move || starting.start(silent_child_spec()));
+    let pid = created_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the creation must produce the fixture child");
+    assert!(
+        process_is_alive(pid),
+        "the pid must name a real running child before the shutdown is issued"
+    );
+
+    let outcome = supervisor.request_shutdown();
+
+    assert_eq!(
+        outcome,
+        ShutdownOutcome::Forced,
+        "a child existed, so absence cannot be the answer: containment is the only proof"
+    );
+    assert!(
+        !process_is_alive(pid),
+        "the child must already be terminated and reaped when the proof is returned"
+    );
+    assert_eq!(
+        attempts.load(Ordering::SeqCst),
+        1,
+        "the seam created exactly one child"
+    );
+    assert_eq!(
+        handle.join().expect("the start thread must not panic"),
+        Err(StartError::Stopped),
+        "the session was stopped, not failed: it never served"
+    );
+    let stopped = supervisor.snapshot();
+    assert_eq!(stopped.status, SessionStatus::Stopped);
+    assert_eq!(stopped.failure, None);
+    assert!(supervisor.session_bootstrap().credential().is_none());
+    assert_eq!(supervisor.terminal_proof(), Some(ShutdownOutcome::Forced));
+    let statuses: Vec<SessionStatus> = snapshots
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|snapshot| snapshot.status)
+        .collect();
+    assert_eq!(
+        statuses,
+        vec![SessionStatus::Starting, SessionStatus::Stopped],
+        "the session never reached ready"
+    );
+    wait_until_dead(pid, Duration::from_secs(10));
 }
 
 fn supervisor_spec_for_second_attempt() -> LaunchSpec {
@@ -558,27 +729,48 @@ sys.exit(0)
 }
 
 #[test]
-fn a_shutdown_after_a_shutdown_requested_while_starting_finds_no_monitor_to_wait_for() {
-    let (supervisor, _) = supervisor(SupervisorConfig {
-        startup_timeout: Duration::from_secs(30),
-        shutdown_timeout: Duration::from_secs(2),
-    });
-    let starting = Arc::clone(&supervisor);
-    let handle = thread::spawn(move || starting.start(python_spec("import time; time.sleep(60)")));
+fn a_second_shutdown_after_a_startup_shutdown_finds_nothing_left_to_address() {
+    let (supervisor, pids) = supervisor_with_recorded_children();
 
+    let starting = Arc::clone(&supervisor);
+    let handle = thread::spawn(move || starting.start(silent_child_spec()));
     wait_for_starting(&supervisor, Duration::from_secs(10));
-    assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::Forced);
+
+    // The first request performs the one shutdown of this session. Which terminal proof it
+    // earns is the scheduler's choice — absence or containment — and both are honest; the
+    // ordered gates in the startup section pin each of them individually.
+    let first = supervisor.request_shutdown();
+    assert!(
+        matches!(first, ShutdownOutcome::NotRunning | ShutdownOutcome::Forced),
+        "the first answer is absence or containment, never anything else. Got {first:?}"
+    );
+    assert_eq!(supervisor.terminal_proof(), Some(first));
     assert_eq!(
         handle.join().expect("the start thread must not panic"),
         Err(StartError::Stopped)
     );
 
+    // The session is concluded: no owner is addressable and no child remains, so the second
+    // request must be told exactly that — at once, not after another grace period.
     let started = Instant::now();
-    assert_eq!(supervisor.request_shutdown(), ShutdownOutcome::NotRunning);
+    assert_eq!(
+        supervisor.request_shutdown(),
+        ShutdownOutcome::NotRunning,
+        "a resolved startup shutdown leaves nothing addressable, so a second request is told \
+         there is nothing left to stop"
+    );
     assert!(
         started.elapsed() < Duration::from_secs(2),
-        "a resolved startup shutdown must not leave an addressable monitor behind"
+        "the answer must be immediate: a concluded session must not leave a monitor behind"
     );
+
+    let pids = pids
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    for pid in pids {
+        wait_until_dead(pid, Duration::from_secs(10));
+    }
 }
 
 // =====================================================================================
@@ -976,7 +1168,15 @@ fn process_is_alive(pid: u32) -> bool {
             .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
             .output();
         match output {
-            Ok(output) => String::from_utf8_lossy(&output.stdout).contains(&pid.to_string()),
+            Ok(output) => String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+                // `"image","pid",...` — the pid field is compared exactly rather than as a
+                // substring, so a neighbouring pid that merely contains these digits is not
+                // mistaken for this one.
+                line.split("\",\"")
+                    .nth(1)
+                    .map(|field| field.trim_matches('"') == pid.to_string())
+                    .unwrap_or(false)
+            }),
             Err(_) => false,
         }
     }

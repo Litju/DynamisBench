@@ -31,7 +31,13 @@ use crate::sidecar::credential::SessionCredential;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
-    /// A child has been requested or spawned; readiness has not been resolved.
+    /// A start has been admitted and the session's owner is addressable; readiness has not
+    /// been resolved.
+    ///
+    /// This is not a claim that a child process exists. The owner is addressable before the
+    /// process creation — it checks for a pending shutdown first — so a shutdown requested
+    /// while a session is starting has two honest endings: absence (`nothing was created`) or
+    /// containment (a child was created and was terminated and reaped).
     Starting,
     /// A valid readiness record was received; the child is listening.
     Ready,
