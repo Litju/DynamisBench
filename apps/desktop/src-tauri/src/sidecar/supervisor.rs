@@ -1187,8 +1187,9 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        conclude, lock, Gate, Phase, SessionEnd, ShutdownOutcome, StartError, StateListener,
-        Supervisor, SupervisorConfig, ALLOWED_ORIGINS_VARIABLE, SESSION_TOKEN_VARIABLE,
+        conclude, lock, own, publish, Gate, Phase, SessionEnd, ShutdownOutcome, StartError,
+        StartupResolution, StateListener, Supervisor, SupervisorCommand, SupervisorConfig,
+        ALLOWED_ORIGINS_VARIABLE, SESSION_TOKEN_VARIABLE,
     };
     use crate::sidecar::credential::SessionCredential;
     use crate::sidecar::launch::LaunchSpec;
@@ -1458,6 +1459,119 @@ mod tests {
              got {result:?}"
         );
         assert!(supervisor.session_bootstrap().credential().is_none());
+    }
+
+    /// The flake ordering, forced where it can be forced: the shutdown is already in the
+    /// owner's channel when the owner begins.
+    ///
+    /// This is what Linux scheduling exposed as a "failure" of RES-376's qualification: the
+    /// desktop asked an admitted session to stop before the owner thread had consumed its
+    /// first instruction. Nothing was wrong — the owner checks for a pending shutdown before
+    /// the credential, before the spawn, and therefore *before* any child can exist — but the
+    /// qualification had asserted that the other ordering (a real child, contained) was the
+    /// only one.
+    ///
+    /// The public boundary cannot force this ordering, and that is a fact about the API
+    /// rather than a gap in the seam: `request_shutdown` answers only through the owner's
+    /// conclusion, so a caller cannot observe its own command until the owner has consumed it;
+    /// and `start` creates the owner thread after `established` has published the channel, so
+    /// a start held anywhere and then released races that first check rather than forcing it.
+    /// What *can* be forced — and is — is the owner's own semantics, with no schedule in the
+    /// picture at all: the session is admitted, its channel published, and its `Starting`
+    /// snapshot published exactly as `start` leaves them before the owner thread exists; the
+    /// shutdown command a `request_shutdown` sends is in that channel; and only then does the
+    /// owner begin. Its first act is the check, so the process creation is provably never
+    /// reached: the seam that wraps it counts zero attempts and no pid exists.
+    #[test]
+    fn a_shutdown_already_waiting_when_the_owner_begins_proves_absence_without_a_spawn() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&attempts);
+        let published = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&published);
+        let listener: Arc<StateListener> = Arc::new(move |snapshot| {
+            recorded
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(snapshot.clone());
+        });
+        let supervisor = Supervisor::with_spawner(
+            SupervisorConfig {
+                startup_timeout: Duration::from_millis(250),
+                shutdown_timeout: Duration::from_millis(250),
+            },
+            Arc::clone(&listener),
+            Arc::new(move |_spec, _credential| {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Err(io::Error::other(
+                    "the shutdown was waiting, so the creation is never reached",
+                ))
+            }),
+        );
+
+        // Admission, exactly as `start` performs it before creating the owner thread: the
+        // session begins and the owner's command channel is published in one critical
+        // section, and the `Starting` snapshot is published before the owner exists.
+        let (commands, command_rx) = mpsc::channel();
+        let enqueue = commands.clone();
+        {
+            let mut control = lock(&supervisor.gate.control);
+            control.admit_start().expect("the first start is admitted");
+            control.established(commands);
+        }
+        supervisor.gate.announce();
+        publish(&supervisor.gate, &supervisor.listener);
+
+        // The desktop sees `Starting` and asks the session to stop; the command is in the
+        // owner's channel before the owner has begun.
+        let (reply_tx, reply_rx) = mpsc::channel();
+        enqueue
+            .send(SupervisorCommand::Shutdown { reply: reply_tx })
+            .expect("the owner channel must be addressable");
+
+        // The owner begins. Its first act is the pending-shutdown check.
+        let (startup_tx, startup_rx) = mpsc::channel();
+        own(
+            unreachable_spec(),
+            Arc::clone(&supervisor.spawn_sidecar),
+            supervisor.config,
+            Arc::clone(&supervisor.gate),
+            Arc::clone(&supervisor.listener),
+            command_rx,
+            startup_tx,
+        );
+
+        assert_eq!(
+            attempts.load(Ordering::SeqCst),
+            0,
+            "the owner's first act is the pending-shutdown check, so the process creation is \
+             never reached"
+        );
+        assert!(
+            matches!(startup_rx.try_recv(), Ok(StartupResolution::Stopped)),
+            "the session is stopped before it could ever serve"
+        );
+        assert_eq!(reply_rx.try_recv(), Ok(ShutdownOutcome::NotRunning));
+        assert_eq!(
+            supervisor.terminal_proof(),
+            Some(ShutdownOutcome::NotRunning),
+            "absence is the terminal proof: the creation was never attempted"
+        );
+        let stopped = supervisor.snapshot();
+        assert_eq!(stopped.status, SessionStatus::Stopped);
+        assert_eq!(stopped.failure, None);
+        assert!(supervisor.session_bootstrap().credential().is_none());
+        let statuses: Vec<SessionStatus> = published
+            .lock()
+            .expect("the publication lock is not poisoned")
+            .iter()
+            .map(|snapshot| snapshot.status)
+            .collect();
+        assert_eq!(
+            statuses,
+            vec![SessionStatus::Starting, SessionStatus::Stopped],
+            "the flake's whole observable sequence: `Starting` while the owner is addressable, \
+             then `Stopped` once absence is proven — and never `Ready`"
+        );
     }
 
     /// The record owes a proof in exactly one situation, and this is it.
