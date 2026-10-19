@@ -26,7 +26,7 @@ export function snapshot(overrides: Partial<DesktopSessionSnapshot> = {}): Deskt
   };
 }
 
-export function readySnapshot(): DesktopSessionSnapshot {
+function readySnapshot(): DesktopSessionSnapshot {
   return snapshot({
     status: "ready",
     origin: FIXTURE_ORIGIN,

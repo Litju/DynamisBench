@@ -55,7 +55,6 @@ function NavigationRail() {
     >
       <Button
         type="button"
-        variant="ghost"
         size="icon"
         onClick={toggleSidebar}
         aria-expanded={!collapsed}
@@ -69,13 +68,7 @@ function NavigationRail() {
         )}
       </Button>
 
-      <RailItem
-        to="/"
-        icon={House}
-        label="Overview"
-        collapsed={collapsed}
-        className="text-slate-600"
-      />
+      <RailItem to="/" icon={House} label="Overview" collapsed={collapsed} />
 
       {/* Not a route yet, and not a dead link either: the workspace explorer is the next
           milestone's surface, and a disabled entry states that rather than pretending. */}
@@ -95,34 +88,36 @@ function NavigationRail() {
   );
 }
 
+/**
+ * One rail entry: a real link, styled by the button primitive, carrying its own icon.
+ *
+ * The active state travels as a data attribute rather than as a second class list, so the
+ * link never competes with the button's own sizing and one `data-[active=true]:` utility
+ * decides the highlight.
+ */
 function RailItem({
   to,
   icon: Icon,
   label,
   collapsed,
-  className,
 }: {
   to: string;
   icon: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
   label: string;
   collapsed: boolean;
-  className?: string;
 }) {
-  const base = cn(
-    "flex h-9 items-center gap-2 rounded-md px-2 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900",
-    collapsed && "justify-center px-0",
-  );
-
   return (
     <Button
       asChild
-      variant="ghost"
-      className={cn("p-0 hover:bg-transparent", className)}
+      size="nav"
+      className={cn(
+        "data-[active=true]:bg-slate-100 data-[active=true]:text-slate-900",
+        collapsed && "justify-center px-0",
+      )}
     >
       <Link
         to={to}
-        className={base}
-        activeProps={{ className: cn(base, "bg-slate-100 text-slate-900") }}
+        activeProps={{ "data-active": "true" }}
         aria-label={collapsed ? label : undefined}
       >
         <Icon aria-hidden className="h-4 w-4 shrink-0" />

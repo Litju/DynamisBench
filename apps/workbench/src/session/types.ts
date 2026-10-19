@@ -124,9 +124,6 @@ export type WorkbenchSession =
     }
   | { readonly phase: "stopped" };
 
-/** The phase name, for callers that only branch on the state itself. */
-export type SessionPhase = WorkbenchSession["phase"];
-
 /**
  * A desktop failure this shell can report without a code from the shell's vocabulary.
  *
@@ -139,7 +136,6 @@ const UNCLASSIFIED_FAILURE: WorkbenchSession = {
   failure: null,
   restartRequired: false,
 };
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return null;

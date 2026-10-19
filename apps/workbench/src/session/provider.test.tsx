@@ -23,13 +23,14 @@ function withSession(source: SessionSource, children: React.ReactNode) {
 }
 
 function CurrentSession() {
-  const { session, ready, client, source } = useSession();
+  const { session, client } = useSession();
 
   return (
     <div>
       <span data-testid="phase">{session.phase}</span>
-      <span data-testid="source">{source}</span>
-      <span data-testid="credential">{ready === null ? "none" : ready.credential}</span>
+      <span data-testid="credential">
+        {session.phase === "ready" ? session.api.credential : "none"}
+      </span>
       <span data-testid="client">{client === null ? "none" : "api-client"}</span>
     </div>
   );
@@ -42,7 +43,6 @@ describe("SessionProvider", () => {
     render(withSession(browserSessionSource(), <CurrentSession />));
 
     expect(screen.getByTestId("phase")).toHaveTextContent("unavailable");
-    expect(screen.getByTestId("source")).toHaveTextContent("browser");
     expect(screen.getByTestId("credential")).toHaveTextContent("none");
     expect(screen.getByTestId("client")).toHaveTextContent("none");
   });

@@ -3,11 +3,9 @@
  *
  * The client reads exactly three things from a response — `ok`, `status` and `json()` — so a
  * stub is exactly that surface. Using a real `Response` would test the environment's
- * implementation of a class the client does not depend on, and would make the error paths
- * (a body that is not JSON at all) harder to state than the paths that work.
+ * implementation of a class the client does not depend on, and would make the error paths (a
+ * body that is not JSON at all) harder to state than the paths that work.
  */
-
-import type { ApiClientErrorFacts } from "../api/errors";
 
 /** A response the client can read, with a JSON body. */
 export function jsonResponse(body: unknown, status = 200): Response {
@@ -25,17 +23,6 @@ export function unreadableResponse(status = 200): Response {
     status,
     json: async () => {
       throw new SyntaxError("Unexpected token < in JSON at position 0");
-    },
-  } as unknown as Response;
-}
-
-/** A response that resolves to no body at all. */
-export function emptyResponse(status: number): Response {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => {
-      throw new SyntaxError("Unexpected end of JSON input");
     },
   } as unknown as Response;
 }
@@ -65,9 +52,3 @@ export function recordingFetch(
     },
   };
 }
-
-/** The facts an error should have, written the way the tests read them. */
-export const errorFacts = {
-  code: null,
-  apiMessage: null,
-} satisfies ApiClientErrorFacts;

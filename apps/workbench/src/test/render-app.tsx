@@ -33,7 +33,7 @@ export function renderApplication(
 }
 
 /** The provider stack every rendering of the application shares. */
-export function Application({
+function Application({
   queryClient,
   source,
   children,

@@ -72,4 +72,16 @@ describe("the navigation rail", () => {
 
     expect(link).toHaveAttribute("href", "/");
   });
+
+  it("marks the location it is showing", async () => {
+    const atOverview = renderApplication("/");
+    expect(await screen.findByRole("link", { name: "Overview" })).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    atOverview.unmount();
+
+    renderApplication("/workspace/w-1");
+    expect(await screen.findByRole("link", { name: "Overview" })).not.toHaveAttribute("data-active");
+  });
 });

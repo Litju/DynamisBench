@@ -38,20 +38,19 @@ import {
 import { createApiClient, type ApiClient } from "../api/client";
 import { discardServerState } from "../api/queries";
 import { defaultSessionSource, type SessionSource } from "./source";
-import { sessionsMatch, type ReadyApiSession, type WorkbenchSession } from "./types";
+import { sessionsMatch, type WorkbenchSession } from "./types";
 
 /**
  * What components can read about the session.
  *
- * `ready` and `session` say the same thing two ways on purpose: most components branch on
- * "is there an API to call", and the ones that render the lifecycle need the state that has
- * no API behind it.
+ * Two fields, because they are the two questions a component asks: what state is the session
+ * in, and is there a client to call. Nothing else is published — a component that needs
+ * something more specific derives it from the state, so the session surface cannot grow into
+ * a second, parallel description of the API.
  */
 export type SessionContextValue = {
   readonly session: WorkbenchSession;
-  readonly ready: ReadyApiSession | null;
   readonly client: ApiClient | null;
-  readonly source: SessionSource["kind"];
 };
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -102,11 +101,9 @@ export function SessionProvider({
   const value = useMemo<SessionContextValue>(
     () => ({
       session,
-      ready: session.phase === "ready" ? session.api : null,
       client: session.phase === "ready" ? createApiClient(session.api) : null,
-      source: resolvedSource.kind,
     }),
-    [session, resolvedSource.kind],
+    [session],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
