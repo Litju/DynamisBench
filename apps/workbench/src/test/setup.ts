@@ -9,3 +9,11 @@ import { afterEach } from "vitest";
 afterEach(() => {
   cleanup();
 });
+
+// jsdom implements no layout, so the router's scroll-on-navigation has nowhere to go and
+// reports "Not implemented" for every test that renders a route. The shell has no opinion
+// about scrolling, so the missing implementation is stated here instead of being logged.
+Object.defineProperty(window, "scrollTo", {
+  value: () => {},
+  writable: true,
+});
