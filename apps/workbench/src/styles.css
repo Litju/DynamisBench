@@ -1,0 +1,8 @@
+/*
+ * The one global stylesheet.
+ *
+ * Tailwind v4 is configured by its source, not by a config file: this import is the whole
+ * build, and `@tailwindcss/vite` scans the workbench source for the utility classes the
+ * shell actually uses. There is no v3 `tailwind.config.js` and no PostCSS pipeline.
+ */
+@import "tailwindcss";
