@@ -8,6 +8,15 @@
 
 import { describe, expect, it } from "vitest";
 
+import {
+  APPLICATION_INFO,
+  DIAGNOSTIC,
+  DISCOVERY,
+  HEALTH,
+  INSPECTION,
+  OPEN_WORKSPACE,
+  SEMANTIC_DIGEST,
+} from "../test/api-fixtures";
 import { FIXTURE_CREDENTIAL, FIXTURE_ORIGIN, readyApiSession } from "../test/session-fixtures";
 import {
   jsonResponse,
@@ -17,15 +26,10 @@ import {
 } from "../test/http-fixtures";
 import { ApiClientError } from "./errors";
 import { createApiClient, type ApiClientConnection } from "./client";
-import type { ApplicationInfoResponse, WorkspaceDiscoveryResponse } from "./types";
 
 const CONNECTION: ApiClientConnection = readyApiSession();
 
-const INFO: ApplicationInfoResponse = {
-  application: "DynamisBench",
-  version: "0.0.0",
-  api_version: "v1",
-};
+const INFO = APPLICATION_INFO;
 
 /** A client wired to a recording fetch that answers with `body`. */
 function clientAnswering(body: unknown, status = 200) {
@@ -63,19 +67,9 @@ describe("createApiClient", () => {
 
 describe("the five accepted endpoints", () => {
   it("builds GET /api/v1/health", async () => {
-    const { client, calls } = clientAnswering({
-      status: "ok",
-      application: "DynamisBench",
-      version: "0.0.0",
-      api_version: "v1",
-    });
+    const { client, calls } = clientAnswering(HEALTH);
 
-    await expect(client.health()).resolves.toEqual({
-      status: "ok",
-      application: "DynamisBench",
-      version: "0.0.0",
-      api_version: "v1",
-    });
+    await expect(client.health()).resolves.toEqual(HEALTH);
     expect(calls[0]?.url).toBe(`${FIXTURE_ORIGIN}/api/v1/health`);
     expect(calls[0]?.init.method).toBe("GET");
   });
@@ -89,16 +83,11 @@ describe("the five accepted endpoints", () => {
   });
 
   it("builds POST /api/v1/workspaces/open with a JSON body", async () => {
-    const opened = {
-      workspace_id: "w-1",
-      evidence_inside_source: false,
-      source_categories: [],
-    };
-    const { client, calls } = clientAnswering(opened);
+    const { client, calls } = clientAnswering(OPEN_WORKSPACE);
 
     await expect(
       client.openWorkspace({ sourceRoot: "C:/repo", evidenceRoot: "C:/evidence" }),
-    ).resolves.toEqual(opened);
+    ).resolves.toEqual(OPEN_WORKSPACE);
 
     const call = calls[0];
     expect(call?.url).toBe(`${FIXTURE_ORIGIN}/api/v1/workspaces/open`);
@@ -111,31 +100,26 @@ describe("the five accepted endpoints", () => {
   });
 
   it("builds GET /api/v1/workspaces/{workspaceId}/artifacts", async () => {
-    const discovery: WorkspaceDiscoveryResponse = {
-      workspace_id: "w-1",
-      categories: [],
-      artifacts: { artifacts: [] },
-      issues: [],
-      issues_truncated: false,
-    };
-    const { client, calls } = clientAnswering(discovery);
+    const { client, calls } = clientAnswering(DISCOVERY);
 
-    await expect(client.listArtifacts("w-1")).resolves.toEqual(discovery);
-    expect(calls[0]?.url).toBe(`${FIXTURE_ORIGIN}/api/v1/workspaces/w-1/artifacts`);
+    await expect(client.listArtifacts("workspace-1")).resolves.toEqual(DISCOVERY);
+    expect(calls[0]?.url).toBe(`${FIXTURE_ORIGIN}/api/v1/workspaces/workspace-1/artifacts`);
     expect(calls[0]?.init.method).toBe("GET");
   });
 
   it("builds GET /api/v1/workspaces/{workspaceId}/artifacts/{artifactId}", async () => {
-    const { client, calls } = clientAnswering({});
+    const { client, calls } = clientAnswering(INSPECTION);
 
-    await client.getArtifact("w-1", "a-1");
+    await expect(client.getArtifact("workspace-1", "artifact-1")).resolves.toEqual(INSPECTION);
 
-    expect(calls[0]?.url).toBe(`${FIXTURE_ORIGIN}/api/v1/workspaces/w-1/artifacts/a-1`);
+    expect(calls[0]?.url).toBe(
+      `${FIXTURE_ORIGIN}/api/v1/workspaces/workspace-1/artifacts/artifact-1`,
+    );
     expect(calls[0]?.init.method).toBe("GET");
   });
 
   it("URL-encodes opaque identifiers instead of trusting their spelling", async () => {
-    const { client, calls } = clientAnswering({});
+    const { client, calls } = clientAnswering(INSPECTION);
 
     await client.getArtifact("w/1 x", "a?b#c");
 
@@ -167,7 +151,11 @@ describe("what every request carries", () => {
   });
 
   it("omits credentials and bypasses every cache", async () => {
-    const { client, calls } = clientAnswering(INFO);
+    const recorder = recordingFetch((call) =>
+      jsonResponse(call.url.endsWith("/info") ? INFO : OPEN_WORKSPACE),
+    );
+    const client = createApiClient(CONNECTION, { fetch: recorder.fetch });
+    const calls = recorder.calls;
 
     await client.info();
     await client.openWorkspace({ sourceRoot: "C:/repo", evidenceRoot: "C:/evidence" });
@@ -249,6 +237,84 @@ describe("refusals", () => {
     const { client } = clientAnswering(["not", "a", "read model"]);
 
     await expect(client.info()).rejects.toMatchObject({ kind: "invalid_response" });
+  });
+});
+
+describe("malformed read models", () => {
+  /**
+   * The five regressions acceptance named: each is a syntactically valid 200 whose body is
+   * not the read model its route publishes. The client must report `invalid_response` and
+   * must not retain the rejected body.
+   */
+  const cases: Array<[string, () => Record<string, unknown>, (client: ReturnType<typeof createApiClient>) => Promise<unknown>]> = [
+    ["info with no fields", () => ({}), (client) => client.info()],
+    [
+      "health with an unknown status",
+      () => ({ ...HEALTH, status: "degraded" }),
+      (client) => client.health(),
+    ],
+    [
+      "an opened workspace with no identifier",
+      () => {
+        const { workspace_id: _omitted, ...rest } = OPEN_WORKSPACE;
+        return rest;
+      },
+      (client) => client.openWorkspace({ sourceRoot: "C:/repo", evidenceRoot: "C:/evidence" }),
+    ],
+    [
+      "discovery with an unknown diagnostic code",
+      () => ({
+        ...DISCOVERY,
+        issues: [{ ...DIAGNOSTIC, code: "invented_code" }],
+      }),
+      (client) => client.listArtifacts("workspace-1"),
+    ],
+    [
+      "inspection with a malformed nested digest",
+      () => ({
+        ...INSPECTION,
+        semantic_digest: { algorithm: "sha256", hex: "not-a-digest" },
+      }),
+      (client) => client.getArtifact("workspace-1", "artifact-1"),
+    ],
+  ];
+
+  it.each(cases)("reports %s as an unreadable response", async (_label, body, call) => {
+    const { client } = clientAnswering(body());
+
+    await expect(call(client)).rejects.toMatchObject({
+      kind: "invalid_response",
+      status: 200,
+      code: null,
+      apiMessage: null,
+    });
+  });
+
+  it("does not retain the rejected body anywhere on the error", async () => {
+    const rejected = { ...APPLICATION_INFO, private_detail: "must not be retained" };
+    const { client } = clientAnswering({ ...rejected, application: 7 });
+
+    try {
+      await client.info();
+      expect.unreachable("a malformed read model must be refused");
+    } catch (error) {
+      const parsed = error as ApiClientError;
+
+      expect(parsed).toBeInstanceOf(ApiClientError);
+      expect(JSON.stringify(parsed)).not.toContain("must not be retained");
+      expect(Object.keys(parsed)).not.toContain("body");
+      expect((parsed as unknown as { body?: unknown }).body).toBeUndefined();
+    }
+  });
+
+  it("keeps accepting a digest with the announced algorithm and lowercase hex", async () => {
+    const digest = {
+      ...INSPECTION,
+      semantic_digest: { ...SEMANTIC_DIGEST, hex: "f".repeat(64) },
+    };
+    const { client } = clientAnswering(digest);
+
+    await expect(client.getArtifact("workspace-1", "artifact-1")).resolves.toEqual(digest);
   });
 });
 

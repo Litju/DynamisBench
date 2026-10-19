@@ -26,6 +26,13 @@
  */
 
 import { EXPECTED_API_VERSION, EXPECTED_PROTOCOL_VERSION } from "../session/types";
+import {
+  decodeApplicationInfoResponse,
+  decodeArtifactInspectionResponse,
+  decodeHealthResponse,
+  decodeOpenWorkspaceResponse,
+  decodeWorkspaceDiscoveryResponse,
+} from "./decode";
 import { ApiClientError, isApiErrorCode } from "./errors";
 import type {
   ApiErrorCode,
@@ -107,8 +114,19 @@ export function createApiClient(
     return `${origin}${API_PATH_PREFIX}${path}`;
   }
 
-  /** One request, and the three failures it can end in that are not a typed response. */
-  async function send(path: string, init: { method: string; headers?: Headers; body?: string }): Promise<unknown> {
+  /**
+   * One request, its refusal, and the runtime decoding of the read model it answered with.
+   *
+   * The decoder is supplied by the method because only the method knows which contract the
+   * body is supposed to satisfy. A body that parses as JSON but is not that model is
+   * `invalid_response`: the raw value is never attached to the failure, so a malformed
+   * server answer cannot be retained through the error it produces.
+   */
+  async function send<T>(
+    path: string,
+    init: { method: string; headers?: Headers; body?: string },
+    decode: (body: unknown) => T | null,
+  ): Promise<T> {
     let response: Response;
     try {
       response = await fetchImpl(url(path), {
@@ -137,47 +155,56 @@ export function createApiClient(
       });
     }
 
-    return await readObject(response);
+    const body = await readJson(response);
+    const decoded = decode(body);
+
+    if (decoded === null) {
+      throw new ApiClientError("invalid_response", { status: response.status });
+    }
+
+    return decoded;
   }
 
   return {
     async health(): Promise<HealthResponse> {
-      const body = await send("/health", { method: "GET" });
-      return body as HealthResponse;
+      return await send("/health", { method: "GET" }, decodeHealthResponse);
     },
 
     async info(): Promise<ApplicationInfoResponse> {
-      const body = await send("/info", { method: "GET" });
-      return body as ApplicationInfoResponse;
+      return await send("/info", { method: "GET" }, decodeApplicationInfoResponse);
     },
 
     async openWorkspace(request: OpenWorkspaceRequest): Promise<OpenWorkspaceResponse> {
       // The one place the shell's names for the two roots meet the API's: everything after
       // this request identifies a workspace by the identifier the response returned.
-      const body = await send("/workspaces/open", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source_root: request.sourceRoot,
-          evidence_root: request.evidenceRoot,
-        }),
-      });
-      return body as OpenWorkspaceResponse;
+      return await send(
+        "/workspaces/open",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source_root: request.sourceRoot,
+            evidence_root: request.evidenceRoot,
+          }),
+        },
+        decodeOpenWorkspaceResponse,
+      );
     },
 
     async listArtifacts(workspaceId: string): Promise<WorkspaceDiscoveryResponse> {
-      const body = await send(`/workspaces/${encodeURIComponent(workspaceId)}/artifacts`, {
-        method: "GET",
-      });
-      return body as WorkspaceDiscoveryResponse;
+      return await send(
+        `/workspaces/${encodeURIComponent(workspaceId)}/artifacts`,
+        { method: "GET" },
+        decodeWorkspaceDiscoveryResponse,
+      );
     },
 
     async getArtifact(workspaceId: string, artifactId: string): Promise<ArtifactInspectionResponse> {
-      const body = await send(
+      return await send(
         `/workspaces/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}`,
         { method: "GET" },
+        decodeArtifactInspectionResponse,
       );
-      return body as ArtifactInspectionResponse;
     },
   };
 }
@@ -197,17 +224,6 @@ function asObject(body: unknown): Record<string, unknown> | null {
     return null;
   }
   return body as Record<string, unknown>;
-}
-
-/** A read model: a JSON object, or a response this client cannot use. */
-async function readObject(response: Response): Promise<Record<string, unknown>> {
-  const body = asObject(await readJson(response));
-
-  if (body === null) {
-    throw new ApiClientError("invalid_response", { status: response.status });
-  }
-
-  return body;
 }
 
 /**
