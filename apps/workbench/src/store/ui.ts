@@ -18,13 +18,9 @@ export type UiStore = {
 
   /** Invert the rail's collapsed state. */
   toggleSidebar(): void;
-
-  /** Set the rail's collapsed state explicitly. */
-  setSidebarCollapsed(collapsed: boolean): void;
 };
 
 export const useUiStore = create<UiStore>((set) => ({
   sidebarCollapsed: false,
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
-  setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
 }));

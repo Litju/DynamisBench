@@ -180,20 +180,32 @@ export function createApiClient(
   };
 }
 
-/** A read model: a JSON object, or a response this client cannot use. */
-async function readObject(response: Response): Promise<Record<string, unknown>> {
-  let body: unknown;
+/** A JSON body, if the bytes were one; `null` otherwise. */
+async function readJson(response: Response): Promise<unknown> {
   try {
-    body = await response.json();
+    return await response.json();
   } catch {
     throw new ApiClientError("invalid_response", { status: response.status });
   }
+}
 
+/** Whether a parsed body is a JSON object rather than an array, a scalar or nothing. */
+function asObject(body: unknown): Record<string, unknown> | null {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return null;
+  }
+  return body as Record<string, unknown>;
+}
+
+/** A read model: a JSON object, or a response this client cannot use. */
+async function readObject(response: Response): Promise<Record<string, unknown>> {
+  const body = asObject(await readJson(response));
+
+  if (body === null) {
     throw new ApiClientError("invalid_response", { status: response.status });
   }
 
-  return body as Record<string, unknown>;
+  return body;
 }
 
 /**
@@ -213,19 +225,15 @@ async function readEnvelope(
     return null;
   }
 
-  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+  const envelope = asObject(body);
+  if (envelope === null) {
     return null;
   }
 
-  const error = (body as Record<string, unknown>).error;
-  if (typeof error !== "object" || error === null || Array.isArray(error)) {
+  const error = asObject(envelope.error);
+  if (error === null || !isApiErrorCode(error.code)) {
     return null;
   }
 
-  const { code, message } = error as Record<string, unknown>;
-  if (!isApiErrorCode(code)) {
-    return null;
-  }
-
-  return { code, message: typeof message === "string" ? message : null };
+  return { code: error.code, message: typeof error.message === "string" ? error.message : null };
 }

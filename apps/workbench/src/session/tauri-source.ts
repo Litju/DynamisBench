@@ -40,7 +40,12 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import type { SessionListener, SessionSource } from "./source";
-import { refineDesktopSession, refineDesktopSnapshot, type WorkbenchSession } from "./types";
+import {
+  refineDesktopSession,
+  refineDesktopSnapshot,
+  unclassifiedFailure,
+  type WorkbenchSession,
+} from "./types";
 
 /** The one lifecycle event the desktop shell emits. */
 export const API_STATUS_EVENT = "dynamisbench-api-status";
@@ -49,13 +54,6 @@ export const API_STATUS_EVENT = "dynamisbench-api-status";
 export const API_SESSION_COMMAND = "get_api_session";
 
 export { isTauri };
-
-/** A desktop failure this adapter reports when the bridge itself answered nothing. */
-const BRIDGE_FAILURE: WorkbenchSession = {
-  phase: "failed",
-  failure: null,
-  restartRequired: false,
-};
 
 /**
  * The Tauri-backed source.
@@ -111,7 +109,7 @@ export function tauriSessionSource(): SessionSource {
             } catch {
               // The bridge answered nothing. There is no session to report, and no
               // credential can be inferred, so the failure is reported as one.
-              publish(BRIDGE_FAILURE);
+              publish(unclassifiedFailure());
               return;
             }
 
@@ -152,7 +150,7 @@ export function tauriSessionSource(): SessionSource {
             onLifecycleEvent(event.payload);
           });
         } catch {
-          publish(BRIDGE_FAILURE);
+          publish(unclassifiedFailure());
           return;
         }
 

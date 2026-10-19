@@ -13,14 +13,9 @@ describe("the UI store", () => {
   it("holds exactly one interface concern", () => {
     const state = useUiStore.getState();
 
-    expect(Object.keys(state).sort()).toEqual([
-      "setSidebarCollapsed",
-      "sidebarCollapsed",
-      "toggleSidebar",
-    ]);
+    expect(Object.keys(state).sort()).toEqual(["sidebarCollapsed", "toggleSidebar"]);
     expect(typeof state.sidebarCollapsed).toBe("boolean");
     expect(typeof state.toggleSidebar).toBe("function");
-    expect(typeof state.setSidebarCollapsed).toBe("function");
   });
 
   it("collapses and expands the navigation rail", () => {
@@ -29,7 +24,7 @@ describe("the UI store", () => {
     useUiStore.getState().toggleSidebar();
     expect(useUiStore.getState().sidebarCollapsed).toBe(!initial);
 
-    useUiStore.getState().setSidebarCollapsed(initial);
+    useUiStore.getState().toggleSidebar();
     expect(useUiStore.getState().sidebarCollapsed).toBe(initial);
   });
 

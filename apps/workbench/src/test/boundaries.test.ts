@@ -330,6 +330,110 @@ describe("the desktop shell's capability grant is unchanged", () => {
   });
 });
 
+describe("the frontend restates the servers' vocabularies, exactly", () => {
+  /**
+   * The closure of a set of values this frontend keeps its own copy of, checked against the
+   * source of truth rather than against a second copy of itself.
+   *
+   * A restated vocabulary is a contract, and a contract that drifts silently is worse than
+   * no contract at all: a diagnostic code added to the reader, or a third lifecycle state,
+   * would reach this tree as a value the frontend's types claim cannot happen. These gates
+   * read the Python and Rust sources that own each vocabulary and compare the *sets* — order
+   * is not part of the contract, membership is.
+   */
+  const SERVER_SOURCES = import.meta.glob(
+    [
+      // The Python distribution and the Rust shell are both above the frontend's own root:
+      // `apps/workbench/src/test` reaches `apps/` in three steps and the repository in four.
+      "../../../../python/src/dynamisbench/workspace/authority.py",
+      "../../../../python/src/dynamisbench/workspace/source_authority.py",
+      "../../../../python/src/dynamisbench/api/errors.py",
+      "../../../desktop/src-tauri/src/sidecar/state.rs",
+    ],
+    { query: "?raw", import: "default", eager: true },
+  ) as Record<string, string>;
+
+  function serverSource(name: string): string {
+    const found = Object.entries(SERVER_SOURCES).find(([key]) => key.endsWith(name));
+
+    if (found === undefined) {
+      throw new Error(`${name} must be readable: the vocabulary it owns is restated here`);
+    }
+    return found[1];
+  }
+
+  /** The string values of one Python `StrEnum`, in the order the source declares them. */
+  function pythonEnumValues(source: string, className: string): string[] {
+    const declaration = `class ${className}(`;
+    const start = source.indexOf(declaration);
+    if (start === -1) {
+      throw new Error(`${className} must be declared`);
+    }
+
+    const body = source.slice(start);
+    const end = body.slice(1).search(/\n[^\s]/);
+    const block = end === -1 ? body : body.slice(0, end + 1);
+
+    return [...block.matchAll(/^\s{4}[A-Z][A-Z0-9_]* = "([a-z0-9_]+)"/gm)]
+      .map((match) => match[1] ?? "")
+      .sort();
+  }
+
+  /** The snake_case names of one Rust unit enum's variants. */
+  function rustEnumVariants(source: string, enumName: string): string[] {
+    const declaration = `pub enum ${enumName} {`;
+    const start = source.indexOf(declaration);
+    if (start === -1) {
+      throw new Error(`${enumName} must be declared`);
+    }
+
+    const block = source.slice(start).split("}")[0] ?? "";
+
+    return [...block.matchAll(/^\s{4}([A-Z][A-Za-z0-9]*),$/gm)]
+      .map((match) => (match[1] ?? "").replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase())
+      .sort();
+  }
+
+  it("matches the desktop shell's lifecycle and failure vocabulary", async () => {
+    const { DESKTOP_FAILURE_CODES, DESKTOP_STATUSES } = await import("../session/types");
+    const state = serverSource("sidecar/state.rs");
+
+    expect([...DESKTOP_STATUSES].sort()).toEqual(rustEnumVariants(state, "SessionStatus"));
+    expect([...DESKTOP_FAILURE_CODES].sort()).toEqual(rustEnumVariants(state, "FailureCode"));
+  });
+
+  it("matches the application's source categories and authoring vocabularies", async () => {
+    const { AUTHORING_FORMATS, DIAGNOSTIC_CODES, SOURCE_CATEGORIES, VALIDATION_STATUSES } =
+      await import("../api/types");
+
+    expect([...SOURCE_CATEGORIES].sort()).toEqual(
+      pythonEnumValues(serverSource("workspace/authority.py"), "SourceCategory"),
+    );
+    const sourceAuthority = serverSource("workspace/source_authority.py");
+    expect([...AUTHORING_FORMATS].sort()).toEqual(
+      pythonEnumValues(sourceAuthority, "AuthoringFormat"),
+    );
+    expect([...VALIDATION_STATUSES].sort()).toEqual(
+      pythonEnumValues(sourceAuthority, "ValidationStatus"),
+    );
+    expect([...DIAGNOSTIC_CODES].sort()).toEqual(
+      pythonEnumValues(sourceAuthority, "DiagnosticCode"),
+    );
+  });
+
+  it("matches the application's error vocabulary", async () => {
+    const { API_ERROR_CODES } = await import("../api/types");
+
+    expect([...API_ERROR_CODES].sort()).toEqual(
+      pythonEnumValues(serverSource("api/errors.py"), "ErrorCode"),
+    );
+  });
+
+  it("reads every server file it is about", () => {
+    expect(Object.keys(SERVER_SOURCES)).toHaveLength(4);
+  });
+});
+
 describe("the scan itself", () => {
   it("finds the files it claims to be about", () => {
     // A glob that silently matched nothing would make every gate above pass for the wrong

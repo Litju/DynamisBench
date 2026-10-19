@@ -136,6 +136,12 @@ const UNCLASSIFIED_FAILURE: WorkbenchSession = {
   failure: null,
   restartRequired: false,
 };
+
+/** The one unclassified desktop failure, reported by everything that cannot claim a code. */
+export function unclassifiedFailure(): WorkbenchSession {
+  return { ...UNCLASSIFIED_FAILURE };
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return null;
@@ -160,6 +166,31 @@ function nonNegativeInteger(value: unknown): number | null {
 }
 
 /**
+ * The state a readable non-ready record announces, or `null` when it announces readiness.
+ *
+ * One walk of the lifecycle, shared by the two refinements below, because a status handled
+ * in one of them and forgotten in the other is exactly how a state stops being reported.
+ */
+function announcedState(
+  record: Record<string, unknown> & { status: DesktopSessionStatus },
+): WorkbenchSession | null {
+  switch (record.status) {
+    case "starting":
+      return { phase: "starting" };
+    case "stopped":
+      return { phase: "stopped" };
+    case "failed":
+      return {
+        phase: "failed",
+        failure: failureCodeOf(record.failure),
+        restartRequired: record.restart_required === true,
+      };
+    case "ready":
+      return null;
+  }
+}
+
+/**
  * Refine a full `get_api_session` response into a session the workbench can act on.
  *
  * Total: any input produces a state. Everything that is not a readable `ready` record
@@ -170,30 +201,19 @@ function nonNegativeInteger(value: unknown): number | null {
 export function refineDesktopSession(value: unknown): WorkbenchSession {
   const record = asRecord(value);
   if (record === null || !isStatus(record.status)) {
-    return UNCLASSIFIED_FAILURE;
+    return unclassifiedFailure();
   }
 
-  if (record.status === "starting") {
-    return { phase: "starting" };
-  }
-
-  if (record.status === "stopped") {
-    return { phase: "stopped" };
-  }
-
-  if (record.status === "failed") {
-    return {
-      phase: "failed",
-      failure: failureCodeOf(record.failure),
-      restartRequired: record.restart_required === true,
-    };
+  const announced = announcedState({ ...record, status: record.status });
+  if (announced !== null) {
+    return announced;
   }
 
   const apiVersion = nonEmpty(record.api_version);
   const protocolVersion = nonNegativeInteger(record.protocol_version);
 
   if (apiVersion === null || protocolVersion === null) {
-    return UNCLASSIFIED_FAILURE;
+    return unclassifiedFailure();
   }
 
   if (apiVersion !== EXPECTED_API_VERSION || protocolVersion !== EXPECTED_PROTOCOL_VERSION) {
@@ -204,7 +224,7 @@ export function refineDesktopSession(value: unknown): WorkbenchSession {
   const credential = nonEmpty(record.credential);
 
   if (origin === null || credential === null) {
-    return UNCLASSIFIED_FAILURE;
+    return unclassifiedFailure();
   }
 
   return {
@@ -233,23 +253,7 @@ export function refineDesktopSnapshot(value: unknown): WorkbenchSession | null {
     return null;
   }
 
-  if (record.status === "starting") {
-    return { phase: "starting" };
-  }
-
-  if (record.status === "stopped") {
-    return { phase: "stopped" };
-  }
-
-  if (record.status === "failed") {
-    return {
-      phase: "failed",
-      failure: failureCodeOf(record.failure),
-      restartRequired: record.restart_required === true,
-    };
-  }
-
-  return null;
+  return announcedState({ ...record, status: record.status });
 }
 
 /**

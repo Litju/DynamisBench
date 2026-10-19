@@ -44,7 +44,7 @@ python/          Python distribution `dynamisbench`, CLI `dbench`, quality confi
     domain/spec  planning  execution  adapters
     normalization  evaluation  evidence  query  api
   tests/
-apps/workbench/  React 19 + TypeScript + Vite 8 workbench placeholder
+apps/workbench/  React 19 + TypeScript + Vite 8 workbench shell (session, typed /api/v1 client, routing)
 apps/desktop/    Tauri 2 thin desktop shell (Rust)
 .github/         CI quality gates on Windows and Linux
 ```
@@ -108,5 +108,8 @@ says so in its own issue; an unavailable one blocks only that claim.
 The scientific core — canonical identity, validated domain specs, deterministic
 `StudyPlan`/`RunSpec` compilation, workspace, and sealed evidence — and the local
 application boundary (`/api/v1` plus the session-secured loopback sidecar) exist and
-are qualified. Explicitly not present yet: simulator libraries, numerical simulation,
-execution environments, database or control-plane services, product UI, and packaging.
+are qualified, as does the workbench foundation that consumes them (volatile desktop
+session boundary, typed `/api/v1` client, TanStack Query server state, code-based
+routes). Explicitly not present yet: simulator libraries, numerical simulation,
+execution environments, database or control-plane services, the scientific workbench
+surfaces (explorer, artifact inspector, charts, 3D playback), and packaging.
