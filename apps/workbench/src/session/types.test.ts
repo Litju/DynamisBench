@@ -10,8 +10,8 @@ import { describe, expect, it } from "vitest";
 
 import { FIXTURE_CREDENTIAL, FIXTURE_ORIGIN, readySessionWire, snapshot } from "../test/session-fixtures";
 import {
+  announceSnapshot,
   refineDesktopSession,
-  refineDesktopSnapshot,
   sessionsMatch,
   type WorkbenchSession,
 } from "./types";
@@ -86,15 +86,24 @@ describe("refineDesktopSession", () => {
   });
 });
 
-describe("refineDesktopSnapshot", () => {
+describe("announceSnapshot", () => {
   it("announces the non-ready states an event can carry", () => {
-    expect(refineDesktopSnapshot(snapshot({ status: "starting" }))).toEqual({ phase: "starting" });
-    expect(refineDesktopSnapshot(snapshot({ status: "stopped" }))).toEqual({ phase: "stopped" });
+    expect(announceSnapshot(snapshot({ status: "starting" }))).toEqual({
+      kind: "session",
+      session: { phase: "starting" },
+    });
+    expect(announceSnapshot(snapshot({ status: "stopped" }))).toEqual({
+      kind: "session",
+      session: { phase: "stopped" },
+    });
     expect(
-      refineDesktopSnapshot(
+      announceSnapshot(
         snapshot({ status: "failed", failure: "startup_timeout", restart_required: false }),
       ),
-    ).toEqual({ phase: "failed", failure: "startup_timeout", restartRequired: false });
+    ).toEqual({
+      kind: "session",
+      session: { phase: "failed", failure: "startup_timeout", restartRequired: false },
+    });
   });
 
   it("refuses to promote a ready event into a session", () => {
@@ -105,12 +114,15 @@ describe("refineDesktopSnapshot", () => {
       protocol_version: 1,
     });
 
-    expect(refineDesktopSnapshot(ready)).toBeNull();
+    expect(announceSnapshot(ready)).toEqual({ kind: "ready" });
   });
 
-  it("returns nothing for a payload it cannot read", () => {
-    expect(refineDesktopSnapshot(undefined)).toBeNull();
-    expect(refineDesktopSnapshot({})).toBeNull();
+  it("reports a payload it cannot read as unreadable rather than as nothing", () => {
+    // The distinction is load-bearing: a ready event says "reconcile", while an unreadable
+    // event says "this workbench must not keep holding a credential".
+    for (const value of [undefined, null, {}, { status: "ready!" }, "starting"]) {
+      expect(announceSnapshot(value)).toEqual({ kind: "unreadable" });
+    }
   });
 });
 

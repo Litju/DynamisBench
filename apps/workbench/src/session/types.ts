@@ -239,21 +239,36 @@ export function refineDesktopSession(value: unknown): WorkbenchSession {
 }
 
 /**
- * Refine a lifecycle event payload into the state it announces, or `null` when the event
- * cannot announce one.
+ * What a lifecycle event announces.
  *
- * A lifecycle event carries no credential, so this function never returns a ready session:
- * a `ready` event is a statement that a bootstrap read should follow, not a session in
- * itself. Anything unreadable returns `null` so the caller reconciles through the bridge
- * rather than publishing a guess.
+ * Three cases rather than "a session or nothing", because they call for three different
+ * reactions: a `ready` event is a statement that a read should follow (it carries no
+ * credential), a readable non-ready event is published at once, and an event this workbench
+ * cannot read is a change it must not keep a credential through. Folding the last case into
+ * "nothing to announce" would leave a dead session's credential in memory until a round trip
+ * completed — the exact delay the immediate drop exists to remove.
  */
-export function refineDesktopSnapshot(value: unknown): WorkbenchSession | null {
+export type SessionAnnouncement =
+  | { readonly kind: "ready" }
+  | { readonly kind: "session"; readonly session: WorkbenchSession }
+  | { readonly kind: "unreadable" };
+
+/**
+ * Read a lifecycle event payload.
+ *
+ * A lifecycle event carries no credential, so this never yields a ready session: a `ready`
+ * event says a bootstrap read should follow. Anything unreadable yields `unreadable` rather
+ * than a guess, so the caller reconciles through the bridge and holds nothing in the
+ * meantime.
+ */
+export function announceSnapshot(value: unknown): SessionAnnouncement {
   const record = asRecord(value);
   if (record === null || !isStatus(record.status)) {
-    return null;
+    return { kind: "unreadable" };
   }
 
-  return announcedState({ ...record, status: record.status });
+  const announced = announcedState({ ...record, status: record.status });
+  return announced === null ? { kind: "ready" } : { kind: "session", session: announced };
 }
 
 /**

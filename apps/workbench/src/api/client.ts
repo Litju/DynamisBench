@@ -152,12 +152,14 @@ export function createApiClient(
     },
 
     async openWorkspace(request: OpenWorkspaceRequest): Promise<OpenWorkspaceResponse> {
+      // The one place the shell's names for the two roots meet the API's: everything after
+      // this request identifies a workspace by the identifier the response returned.
       const body = await send("/workspaces/open", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          source_root: request.source_root,
-          evidence_root: request.evidence_root,
+          source_root: request.sourceRoot,
+          evidence_root: request.evidenceRoot,
         }),
       });
       return body as OpenWorkspaceResponse;

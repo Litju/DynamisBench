@@ -41,8 +41,8 @@ import { listen } from "@tauri-apps/api/event";
 
 import type { SessionListener, SessionSource } from "./source";
 import {
+  announceSnapshot,
   refineDesktopSession,
-  refineDesktopSnapshot,
   unclassifiedFailure,
   type WorkbenchSession,
 } from "./types";
@@ -131,13 +131,25 @@ export function tauriSessionSource(): SessionSource {
       const onLifecycleEvent = (payload: unknown) => {
         eventGeneration += 1;
 
-        // A non-ready transition is published from the event itself, before the bridge is
-        // asked anything: whatever credential the previous session held is dropped here, at
-        // this instant, rather than after a round trip. A ready event publishes nothing —
-        // it carries no credential — and reconciliation is the read below.
-        const announced = refineDesktopSnapshot(payload);
-        if (announced !== null) {
-          publish(announced);
+        const announcement = announceSnapshot(payload);
+        switch (announcement.kind) {
+          case "session":
+            // A non-ready transition is published from the event itself, before the bridge is
+            // asked anything: whatever credential the previous session held is dropped here,
+            // at this instant, rather than after a round trip.
+            publish(announcement.session);
+            break;
+
+          case "unreadable":
+            // The shell announced a change this workbench cannot read. Whether it ended the
+            // session is unknowable, so the credential goes now and the read below decides
+            // what is true — never the other way round.
+            publish(unclassifiedFailure());
+            break;
+
+          case "ready":
+            // A ready event carries no credential: reconciliation is the read below.
+            break;
         }
 
         void refresh();

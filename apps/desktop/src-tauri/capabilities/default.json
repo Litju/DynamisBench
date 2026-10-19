@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "DB-1.1 bootstrap: the desktop shell requests no Tauri permissions. Permissions are granted by the issue that introduces the sidecar or filesystem access.",
+  "description": "DB-1.1 bootstrap requested no Tauri permission, because the WebView asked Tauri for nothing. RES-378 adds the one IPC call the workbench cannot make through a custom command: a lifecycle event listener. In Tauri v2 a listener is implemented as the core event plugin's `plugin:event|listen` / `plugin:event|unlisten` commands, and the ACL refuses any `plugin:` invoke without a grant (tauri 2.12.1, src/webview/mod.rs), so exactly those two permissions are granted and nothing else. `core:event:allow-emit` is deliberately absent: the WebView listens to the shell, it does not emit, and an emit grant would let the page forge lifecycle events for itself. No filesystem, shell, process or dialog capability is requested.",
   "windows": ["main"],
-  "permissions": []
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
 }

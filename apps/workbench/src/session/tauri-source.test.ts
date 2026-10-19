@@ -173,6 +173,29 @@ describe("tauriSessionSource", () => {
     });
   });
 
+  it("drops the previous credential when a lifecycle event cannot be read", async () => {
+    bridge.invoke.mockResolvedValueOnce(readySessionWire());
+
+    const { published } = await startSource();
+    await settle();
+    expect(published.at(-1)?.phase).toBe("ready");
+
+    const held = deferred<unknown>();
+    bridge.invoke.mockReturnValueOnce(held.promise);
+
+    handlers[0]?.({ payload: { status: "something-this-frontend-does-not-know" } as never });
+
+    // Unreadable is not the same as "nothing happened": whether the session ended is
+    // unknowable, so the credential goes immediately.
+    expect(published.at(-1)).toEqual({ phase: "failed", failure: null, restartRequired: false });
+
+    held.resolve(readySessionWire());
+    await settle();
+
+    // The reconcile read restores the session it can prove is current.
+    expect(published.at(-1)?.phase).toBe("ready");
+  });
+
   it("discards a bootstrap answer that a later event invalidated", async () => {
     const first = deferred<unknown>();
     bridge.invoke.mockReturnValueOnce(first.promise);

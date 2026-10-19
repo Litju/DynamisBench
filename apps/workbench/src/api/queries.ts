@@ -19,6 +19,7 @@ import type { ApiClient } from "./client";
 import type {
   ApplicationInfoResponse,
   ArtifactInspectionResponse,
+  OpenWorkspaceRequest,
   OpenWorkspaceResponse,
   WorkspaceDiscoveryResponse,
 } from "./types";
@@ -44,10 +45,21 @@ export const apiMutationKeys = {
 } as const;
 
 /** The build identity of the running application. */
-export function apiInfoOptions(client: ApiClient) {
+export function apiInfoOptions(client: ApiClient | null) {
   return queryOptions<ApplicationInfoResponse>({
     queryKey: apiQueryKeys.info(),
-    queryFn: () => client.info(),
+    queryFn: () => {
+      if (client === null) {
+        // Disabled below, so this is reachable only if a caller enables a query it has no
+        // client for — a programming error rather than a state any surface renders.
+        throw new Error("the session provides no API client");
+      }
+      return client.info();
+    },
+    // The landing surface renders in every session state, so the factory carries the
+    // enablement rather than making each caller remember to. No client means no request, and
+    // the state the user sees is the session's own.
+    enabled: client !== null,
   });
 }
 
@@ -80,13 +92,9 @@ export function artifactInspectionOptions(
  * the keys above.
  */
 export function openWorkspaceOptions(client: ApiClient) {
-  return mutationOptions<OpenWorkspaceResponse, Error, { sourceRoot: string; evidenceRoot: string }>({
+  return mutationOptions<OpenWorkspaceResponse, Error, OpenWorkspaceRequest>({
     mutationKey: apiMutationKeys.openWorkspace(),
-    mutationFn: (request) =>
-      client.openWorkspace({
-        source_root: request.sourceRoot,
-        evidence_root: request.evidenceRoot,
-      }),
+    mutationFn: (request) => client.openWorkspace(request),
   });
 }
 

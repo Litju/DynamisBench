@@ -107,7 +107,7 @@ describe("query factories", () => {
 });
 
 describe("opening a workspace", () => {
-  it("is a mutation that sends the API's own request vocabulary", async () => {
+  it("is a mutation that hands the request to the typed client unchanged", async () => {
     const client = stubClient();
     const options = openWorkspaceOptions(client);
 
@@ -121,8 +121,22 @@ describe("opening a workspace", () => {
     await mutationFn({ sourceRoot: "C:/repo", evidenceRoot: "C:/evidence" });
 
     expect(client.openWorkspace).toHaveBeenCalledWith({
-      source_root: "C:/repo",
-      evidence_root: "C:/evidence",
+      sourceRoot: "C:/repo",
+      evidenceRoot: "C:/evidence",
     });
+  });
+});
+
+describe("the info factory", () => {
+  it("is disabled without a client, and enabled with one", () => {
+    expect(apiInfoOptions(null).enabled).toBe(false);
+    expect(apiInfoOptions(stubClient()).enabled).toBe(true);
+  });
+
+  it("refuses to run without a client rather than inventing one", () => {
+    const options = apiInfoOptions(null);
+    const queryFn = options.queryFn as (context: unknown) => Promise<unknown>;
+
+    expect(() => queryFn({})).toThrow(/no API client/);
   });
 });

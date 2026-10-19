@@ -306,15 +306,32 @@ describe("the browser depends on nothing scientific", () => {
   });
 });
 
-describe("the desktop shell's capability grant is unchanged", () => {
-  it("grants no Tauri permission at all", () => {
+describe("the desktop shell's capability grant is exactly the listener's", () => {
+  /**
+   * The two permissions a WebView needs to hear the sidecar's lifecycle, and the reason they
+   * are not an empty list: in Tauri v2 a listener is the core event plugin's
+   * `plugin:event|listen` command, and the ACL refuses plugin invokes without a grant
+   * (tauri 2.12.1, `src/webview/mod.rs`). With no grant the workbench could never learn that
+   * its API session became ready — a failure no browser-mode test can observe.
+   */
+  const GRANTED = ["core:event:allow-listen", "core:event:allow-unlisten"];
+
+  it("grants the two core-event permissions, and nothing else", () => {
     const contents = Object.values(CAPABILITIES);
     expect(contents).toHaveLength(1);
 
     const parsed = JSON.parse(contents[0] ?? "{}") as { permissions?: unknown };
-    expect(parsed.permissions).toEqual([]);
-    for (const banned of ["shell", "fs", "process", "dialog"]) {
-      expect(contents[0]).not.toContain(`"${banned}`);
+    expect(parsed.permissions).toEqual(GRANTED);
+  });
+
+  it("grants no filesystem, shell, process, dialog or emit permission", () => {
+    const parsed = JSON.parse(Object.values(CAPABILITIES)[0] ?? "{}") as {
+      permissions?: unknown;
+    };
+    const serialized = JSON.stringify(parsed.permissions ?? []);
+
+    for (const banned of ["shell", "fs", "process", "spawn", "execute", "dialog", "emit"]) {
+      expect(serialized).not.toContain(banned);
     }
   });
 

@@ -97,7 +97,7 @@ describe("the five accepted endpoints", () => {
     const { client, calls } = clientAnswering(opened);
 
     await expect(
-      client.openWorkspace({ source_root: "C:/repo", evidence_root: "C:/evidence" }),
+      client.openWorkspace({ sourceRoot: "C:/repo", evidenceRoot: "C:/evidence" }),
     ).resolves.toEqual(opened);
 
     const call = calls[0];
@@ -170,7 +170,7 @@ describe("what every request carries", () => {
     const { client, calls } = clientAnswering(INFO);
 
     await client.info();
-    await client.openWorkspace({ source_root: "C:/repo", evidence_root: "C:/evidence" });
+    await client.openWorkspace({ sourceRoot: "C:/repo", evidenceRoot: "C:/evidence" });
 
     expect(calls).toHaveLength(2);
     for (const call of calls) {

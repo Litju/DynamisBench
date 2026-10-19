@@ -70,21 +70,46 @@ fn module_source(relative: &str) -> String {
         .join("\n")
 }
 
+/// The grant is exactly what the WebView needs to hear the sidecar's lifecycle, and nothing
+/// else.
+///
+/// RES-376 could assert emptiness, because the WebView asked Tauri for nothing. RES-378 adds
+/// the one IPC call that is not a command — a lifecycle event listener — and in Tauri v2 a
+/// listener *is* a command: `@tauri-apps/api`'s `listen` invokes `plugin:event|listen`, and
+/// the ACL refuses any `plugin:` invoke whose resolved access is `None` (tauri 2.12.1,
+/// `src/webview/mod.rs`). An empty grant therefore does not mean "the shell is silent", it
+/// means the workbench can never learn that its API session became ready.
+///
+/// So the grant is two permissions, both named here so that a third is a reviewed change, and
+/// `core:event:allow-emit` is deliberately absent: the WebView listens to the shell, it does
+/// not emit, and an emit grant would let the page forge lifecycle events for itself.
 #[test]
-fn the_capability_file_grants_no_permission_at_all() {
+fn the_capability_file_grants_only_the_two_event_permissions() {
     let capabilities = read("capabilities/default.json");
     let parsed: serde_json::Value =
         serde_json::from_str(&capabilities).expect("the capability file must be valid JSON");
     let permissions = parsed["permissions"]
         .as_array()
         .expect("the capability file must carry a permissions array");
+    let granted: Vec<&str> = permissions
+        .iter()
+        .map(|permission| {
+            permission
+                .as_str()
+                .expect("a permission must be named by its identifier")
+        })
+        .collect();
 
-    assert!(
-        permissions.is_empty(),
-        "the desktop shell requests no permission; got {permissions:?}"
+    assert_eq!(
+        granted,
+        ["core:event:allow-listen", "core:event:allow-unlisten"],
+        "the WebView may listen to and stop listening to events, and do nothing else"
     );
+
     let serialized = serde_json::to_string(permissions).unwrap();
-    for banned in ["shell", "process", "spawn", "execute"] {
+    for banned in [
+        "shell", "fs", "process", "spawn", "execute", "dialog", "emit",
+    ] {
         assert!(
             !serialized.contains(banned),
             "the capability grant mentions {banned}: {serialized}"

@@ -2,8 +2,9 @@
  * The runtime status surface: the shell's answer to "is there an API, and is it usable?".
  *
  * It is the one place the frontend asks the application anything on its own, and it asks
- * exactly one question — `GET /api/v1/info` — through the session's typed client. Every
- * other surface in this milestone is chrome.
+ * exactly one question — `GET /api/v1/info` — through the session's typed client, using the
+ * same query factory a route loader would: the surface that reads this state and whatever
+ * later invalidates it address one key.
  *
  * The read and the session are deliberately separate inputs to [`runtimeState`]: a session
  * that is ready and an API that is being read are two different facts, and the states that
@@ -12,7 +13,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { apiQueryKeys } from "../api/queries";
+import { apiInfoOptions } from "../api/queries";
 import { useSession } from "../session/provider";
 import { Badge } from "../ui/badge";
 import { cn } from "../ui/cn";
@@ -20,18 +21,7 @@ import { runtimeState, type InfoState } from "./runtime-state";
 
 export function RuntimeStatus({ className }: { className?: string }) {
   const { session, client } = useSession();
-
-  const query = useQuery({
-    queryKey: apiQueryKeys.info(),
-    queryFn: () => {
-      if (client === null) {
-        throw new Error("the session provides no API client");
-      }
-      return client.info();
-    },
-    enabled: client !== null,
-  });
-
+  const query = useQuery(apiInfoOptions(client));
   const state = runtimeState(session, infoStateOf(query.status, query.data, query.error));
 
   return (

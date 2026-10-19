@@ -124,15 +124,21 @@ export interface SourceCategoryStatus {
 }
 
 /**
- * The two declared roots of an existing workspace.
+ * The two declared roots of an existing workspace, as the workbench names them.
  *
  * The only request that carries absolute operational paths, because it *is* the workspace
- * selection operation. Everything after identifies the workspace by the opaque identifier
- * the response returned.
+ * selection operation: a person running the workbench says which repository and which
+ * evidence directory to use. Everything after identifies the workspace by the opaque
+ * identifier the response returned.
+ *
+ * These two fields are the one place the frontend's own vocabulary differs from the wire's:
+ * the shell says `sourceRoot`/`evidenceRoot` and the API says `source_root`/`evidence_root`,
+ * and the client maps between them at the single request builder rather than making every
+ * caller remember which side spells it which way.
  */
 export interface OpenWorkspaceRequest {
-  source_root: string;
-  evidence_root: string;
+  sourceRoot: string;
+  evidenceRoot: string;
 }
 
 /** The opaque identifier to use, plus a read-only description of the opened workspace. */
