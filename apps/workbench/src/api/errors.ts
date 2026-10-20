@@ -11,16 +11,26 @@
  * ```
  *
  * **What an error may carry.** The status, the application's own closed error code when the
- * envelope named one, and the application's own bounded message when the envelope carried
- * one. Nothing else. The rejected value, the raw body, the response headers, the request
- * URL's query, and the credential are not fields here and are not composed into the
- * message — and the underlying failure is deliberately not attached as a `cause`, because an
- * exception's text is exactly where a request URL or a platform detail reappears. A client
- * that needs to explain a refusal has the four bounded facts and the code that produced it;
- * the operator's copy of a failure is the server log.
+ * envelope named one, and the application's own message when the envelope carried one *and*
+ * it fits the reviewed bound below. Nothing else. The rejected value, the raw body, the
+ * response headers, the request URL's query, and the credential are not fields here and are
+ * not composed into the message — and the underlying failure is deliberately not attached as
+ * a `cause`, because an exception's text is exactly where a request URL or a platform detail
+ * reappears. A client that needs to explain a refusal has the four bounded facts and the code
+ * that produced it; the operator's copy of a failure is the server log.
  */
 
 import { API_ERROR_CODES, type ApiErrorCode } from "./types";
+
+/**
+ * The reviewed ceiling on an application message the client will retain.
+ *
+ * Every message the server's fixed error vocabulary publishes is far shorter than this; the
+ * bound exists so that a compromised or future server cannot turn `apiMessage` into an
+ * unbounded copy of response text. It is enforced here as well as at the client boundary, so
+ * the field's invariant does not depend on every construction site remembering it.
+ */
+export const MAX_API_MESSAGE_LENGTH = 256;
 
 export type ApiClientErrorKind =
   | "network"
@@ -54,7 +64,10 @@ export class ApiClientError extends Error {
   /** The bounded application error code, or `null` when the envelope named none. */
   readonly code: ApiErrorCode | null;
 
-  /** The bounded application message, or `null` when the envelope carried none. */
+  /**
+   * The bounded application message, or `null` when the envelope carried none or carried
+   * one this client will not retain (oversized, malformed, or credential-bearing).
+   */
   readonly apiMessage: string | null;
 
   constructor(kind: ApiClientErrorKind, facts: ApiClientErrorFacts = {}) {
@@ -63,8 +76,13 @@ export class ApiClientError extends Error {
     this.kind = kind;
     this.status = facts.status ?? null;
     this.code = facts.code ?? null;
-    this.apiMessage = facts.apiMessage ?? null;
+    this.apiMessage = bounded(facts.apiMessage);
   }
+}
+
+/** The message if it is a string within the reviewed bound, and nothing otherwise. */
+function bounded(message: string | null | undefined): string | null {
+  return typeof message === "string" && message.length <= MAX_API_MESSAGE_LENGTH ? message : null;
 }
 
 /**

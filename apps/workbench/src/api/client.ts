@@ -33,7 +33,7 @@ import {
   decodeOpenWorkspaceResponse,
   decodeWorkspaceDiscoveryResponse,
 } from "./decode";
-import { ApiClientError, isApiErrorCode } from "./errors";
+import { ApiClientError, MAX_API_MESSAGE_LENGTH, isApiErrorCode } from "./errors";
 import type {
   ApiErrorCode,
   ApplicationInfoResponse,
@@ -147,7 +147,7 @@ export function createApiClient(
     }
 
     if (!response.ok) {
-      const failure = await readEnvelope(response);
+      const failure = await readEnvelope(response, connection.credential);
       throw new ApiClientError("http", {
         status: response.status,
         code: failure?.code ?? null,
@@ -232,9 +232,16 @@ function asObject(body: unknown): Record<string, unknown> | null {
  * Returns `null` rather than failing: a refusal that arrived with an unreadable body is still
  * a refusal, and the status is the part of it that is always true. A code the frontend's
  * closed vocabulary does not contain is not adopted into it.
+ *
+ * A message is adopted only when it is a string within the reviewed bound and does not
+ * contain the credential this request carried. A server that echoes the bearer token in its
+ * own prose is not repaired, redacted or quoted: the whole message is discarded, and the
+ * bounded status and code remain. That is the difference between holding a safe field and
+ * holding a sanitised copy of an unsafe one.
  */
 async function readEnvelope(
   response: Response,
+  credential: string,
 ): Promise<{ code: ApiErrorCode | null; message: string | null } | null> {
   let body: unknown;
   try {
@@ -253,5 +260,22 @@ async function readEnvelope(
     return null;
   }
 
-  return { code: error.code, message: typeof error.message === "string" ? error.message : null };
+  return {
+    code: error.code,
+    message: adoptableMessage(error.message, credential) ? error.message : null,
+  };
+}
+
+/** Whether a server-authored message may be held at all. */
+function adoptableMessage(
+  message: unknown,
+  credential: string,
+): message is string {
+  if (typeof message !== "string" || message.length > MAX_API_MESSAGE_LENGTH) {
+    return false;
+  }
+
+  // An empty credential is not a string that every message contains. A real ready session
+  // never supplies one, but the type does not prevent a direct construction.
+  return credential.length === 0 || !message.includes(credential);
 }

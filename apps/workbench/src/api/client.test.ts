@@ -339,14 +339,65 @@ describe("what an error may carry", () => {
       expect(parsed.kind).toBe("http");
       expect(parsed.status).toBe(500);
       expect(parsed.code).toBe("internal_error");
-      // The message is composed from the status and the code. The envelope's own message is
-      // preserved as a bounded field, and never spliced into the text this client throws.
+      // The message is composed from the status and the code, and the envelope's own message
+      // carried the credential, so it is not retained in any field at all.
       expect(parsed.message).toBe(
         "The DynamisBench application API refused the request (500 internal_error).",
       );
+      expect(parsed.apiMessage).toBeNull();
       expect(parsed.message).not.toContain(FIXTURE_CREDENTIAL);
-      expect(`${parsed.name} ${parsed.stack ?? ""}`).not.toContain(FIXTURE_CREDENTIAL);
+      expect(parsed.stack ?? "").not.toContain(FIXTURE_CREDENTIAL);
+      expect(JSON.stringify(parsed)).not.toContain(FIXTURE_CREDENTIAL);
+      expect(publicSurface(parsed)).not.toContain(FIXTURE_CREDENTIAL);
     }
+  });
+
+  it("does not adopt an oversized message but keeps the status and code", async () => {
+    const { client } = clientAnswering(
+      { error: { code: "not_found", message: "m".repeat(257) } },
+      404,
+    );
+
+    try {
+      await client.getArtifact("workspace-1", "artifact-1");
+      expect.unreachable("a 404 must be refused");
+    } catch (error) {
+      const parsed = error as ApiClientError;
+
+      expect(parsed.kind).toBe("http");
+      expect(parsed.status).toBe(404);
+      expect(parsed.code).toBe("not_found");
+      expect(parsed.apiMessage).toBeNull();
+    }
+  });
+
+  it("adopts a message at the reviewed 256-character bound", async () => {
+    const message = "m".repeat(256);
+    const { client } = clientAnswering(
+      { error: { code: "invalid_request", message } },
+      400,
+    );
+
+    await expect(client.info()).rejects.toMatchObject({
+      kind: "http",
+      status: 400,
+      code: "invalid_request",
+      apiMessage: message,
+    });
+  });
+
+  it("does not adopt a message that is not a string", async () => {
+    const { client } = clientAnswering(
+      { error: { code: "http_error", message: { detail: "no" } } },
+      400,
+    );
+
+    await expect(client.info()).rejects.toMatchObject({
+      kind: "http",
+      status: 400,
+      code: "http_error",
+      apiMessage: null,
+    });
   });
 
   it("does not attach the underlying failure as a cause", async () => {
@@ -388,4 +439,37 @@ describe("what an error may carry", () => {
 function headersOf(call: RecordedCall | undefined): Record<string, string> {
   const headers = (call?.init.headers ?? {}) as Record<string, string>;
   return Object.fromEntries(Object.entries(headers).map(([name, value]) => [name, value]));
+}
+
+/**
+ * Every publicly reachable field of an error, including inherited and non-enumerable ones.
+ *
+ * `JSON.stringify` sees own enumerable properties only, so it would miss `message` and
+ * `stack`. This walk reads the instance and its prototypes, skips methods, and renders each
+ * value — which is what makes "the credential is absent from every field" a statement about
+ * the whole object rather than about the six fields the test remembered to name.
+ */
+function publicSurface(value: unknown): string {
+  const rendered: string[] = [];
+  const seen = new Set<string>();
+  let current: object | null = typeof value === "object" && value !== null ? value : null;
+
+  while (current !== null && current !== Object.prototype) {
+    for (const name of Object.getOwnPropertyNames(current)) {
+      if (seen.has(name)) {
+        continue;
+      }
+      seen.add(name);
+
+      const field = (current as Record<string, unknown>)[name];
+      if (typeof field === "function") {
+        continue;
+      }
+
+      rendered.push(`${name}: ${typeof field === "string" ? field : JSON.stringify(field)}`);
+    }
+    current = Object.getPrototypeOf(current) as object | null;
+  }
+
+  return rendered.join("\n");
 }
