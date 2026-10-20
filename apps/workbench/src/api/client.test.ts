@@ -10,12 +10,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   APPLICATION_INFO,
+  ARTIFACT,
   DIAGNOSTIC,
   DISCOVERY,
   HEALTH,
   INSPECTION,
   OPEN_WORKSPACE,
   SEMANTIC_DIGEST,
+  VERSIONLESS_FACTOR,
 } from "../test/api-fixtures";
 import { FIXTURE_CREDENTIAL, FIXTURE_ORIGIN, readyApiSession } from "../test/session-fixtures";
 import {
@@ -277,6 +279,90 @@ describe("malformed read models", () => {
       }),
       (client) => client.getArtifact("workspace-1", "artifact-1"),
     ],
+    [
+      "a valid artifact without an identifier",
+      () => ({
+        ...DISCOVERY,
+        artifacts: { artifacts: [{ ...ARTIFACT, identifier: null }] },
+      }),
+      (client) => client.listArtifacts("workspace-1"),
+    ],
+    [
+      "a valid artifact without a semantic digest",
+      () => ({
+        ...DISCOVERY,
+        artifacts: { artifacts: [{ ...ARTIFACT, semantic_digest: null }] },
+      }),
+      (client) => client.listArtifacts("workspace-1"),
+    ],
+    [
+      "an invalid artifact retaining an identifier",
+      () => ({
+        ...DISCOVERY,
+        artifacts: {
+          artifacts: [
+            {
+              ...ARTIFACT,
+              validation_status: "invalid",
+              version: null,
+              semantic_digest: null,
+            },
+          ],
+        },
+      }),
+      (client) => client.listArtifacts("workspace-1"),
+    ],
+    [
+      "an invalid artifact retaining a version",
+      () => ({
+        ...DISCOVERY,
+        artifacts: {
+          artifacts: [
+            {
+              ...ARTIFACT,
+              validation_status: "invalid",
+              identifier: null,
+              semantic_digest: null,
+            },
+          ],
+        },
+      }),
+      (client) => client.listArtifacts("workspace-1"),
+    ],
+    [
+      "an invalid artifact retaining a semantic digest",
+      () => ({
+        ...DISCOVERY,
+        artifacts: {
+          artifacts: [
+            {
+              ...ARTIFACT,
+              validation_status: "invalid",
+              identifier: null,
+              version: null,
+            },
+          ],
+        },
+      }),
+      (client) => client.listArtifacts("workspace-1"),
+    ],
+    [
+      "a valid inspection whose content is null",
+      () => ({ ...INSPECTION, content: null }),
+      (client) => client.getArtifact("workspace-1", "artifact-1"),
+    ],
+    [
+      "an invalid inspection whose content is an object",
+      () => ({
+        ...INSPECTION,
+        validation_status: "invalid",
+        identifier: null,
+        version: null,
+        semantic_digest: null,
+        content: { schema_version: "1" },
+      }),
+      (client) => client.getArtifact("workspace-1", "artifact-1"),
+    ],
   ];
 
   it.each(cases)("reports %s as an unreadable response", async (_label, body, call) => {
@@ -307,6 +393,25 @@ describe("malformed read models", () => {
     }
   });
 
+  it("does not retain a rejected authority-inconsistent inspection body", async () => {
+    const rejected = { ...INSPECTION, content: null, private_detail: "must not be retained" };
+    const { client } = clientAnswering(rejected);
+
+    try {
+      await client.getArtifact("workspace-1", "artifact-1");
+      expect.unreachable("a valid inspection with null content must be refused");
+    } catch (error) {
+      const parsed = error as ApiClientError;
+
+      expect(parsed).toBeInstanceOf(ApiClientError);
+      expect(parsed.kind).toBe("invalid_response");
+      expect(JSON.stringify(parsed)).not.toContain("must not be retained");
+      expect(publicSurface(parsed)).not.toContain("must not be retained");
+      expect(Object.keys(parsed)).not.toContain("body");
+      expect((parsed as unknown as { body?: unknown }).body).toBeUndefined();
+    }
+  });
+
   it("keeps accepting a digest with the announced algorithm and lowercase hex", async () => {
     const digest = {
       ...INSPECTION,
@@ -315,6 +420,34 @@ describe("malformed read models", () => {
     const { client } = clientAnswering(digest);
 
     await expect(client.getArtifact("workspace-1", "artifact-1")).resolves.toEqual(digest);
+  });
+
+  it("keeps accepting a valid versionless factor with an identifier and digest", async () => {
+    const body = { ...DISCOVERY, artifacts: { artifacts: [VERSIONLESS_FACTOR] } };
+    const { client } = clientAnswering(body);
+
+    await expect(client.listArtifacts("workspace-1")).resolves.toEqual(body);
+  });
+
+  it("keeps accepting a valid inspection whose content is an object", async () => {
+    const { client } = clientAnswering(INSPECTION);
+
+    await expect(client.getArtifact("workspace-1", "artifact-1")).resolves.toEqual(INSPECTION);
+  });
+
+  it("keeps accepting an invalid inspection whose content is null", async () => {
+    const invalid = {
+      ...INSPECTION,
+      validation_status: "invalid",
+      identifier: null,
+      version: null,
+      semantic_digest: null,
+      diagnostics: [DIAGNOSTIC],
+      content: null,
+    };
+    const { client } = clientAnswering(invalid);
+
+    await expect(client.getArtifact("workspace-1", "artifact-1")).resolves.toEqual(invalid);
   });
 });
 

@@ -66,6 +66,26 @@ export const ARTIFACT: ArtifactSummary = {
   diagnostics: [],
 };
 
+/**
+ * A valid artifact of the one kind that has no version.
+ *
+ * `factor` definitions are identified by `factor_id` alone (ADR-002's one versionless
+ * kind), so this is the positive control for a valid summary whose `version` is `null`
+ * while its identifier and digest are present.
+ */
+export const VERSIONLESS_FACTOR: ArtifactSummary = {
+  artifact_id: "artifact-2",
+  category: "studies",
+  kind: "factor",
+  logical_reference: "studies/factor/load.json",
+  authoring_format: "json",
+  validation_status: "valid",
+  identifier: "load",
+  version: null,
+  semantic_digest: SEMANTIC_DIGEST,
+  diagnostics: [],
+};
+
 export const OPEN_WORKSPACE: OpenWorkspaceResponse = {
   workspace_id: "workspace-1",
   evidence_inside_source: false,

@@ -10,10 +10,12 @@
  * **What is checked.** Required fields and their scalar types, arrays and their elements,
  * nullable fields (present, and either `null` or their declared type), nested objects, the
  * closed vocabularies restated in `types.ts`, the semantic digest's algorithm and its
- * 64-character lowercase hex, and the one API version this client speaks. Nothing else:
+ * 64-character lowercase hex, the relationship between validation status, identity and
+ * inspection content, and the one API version this client speaks. Nothing else:
  * `ArtifactInspectionResponse.content` is the validated domain model in JSON mode, and
  * re-implementing the scientific model's validation in TypeScript would be a second,
- * inevitably drifting authority. It is required to be a JSON object or `null`.
+ * inevitably drifting authority. It is required to be a JSON object exactly when the
+ * artifact is valid, and `null` exactly when it is invalid.
  *
  * **What is not retained.** A decoder never returns the input object, an unknown field, or
  * a rejected value. The decoded value is assembled from validated fields alone, so an
@@ -226,8 +228,15 @@ function decodeArtifactDiagnostic(value: unknown): ArtifactDiagnostic | null {
  * One artifact's portable summary.
  *
  * Takes an already-established object so inspection can validate the surrounding read model
- * and reuse this walk rather than restating it beside itself. Identity, version and digest
- * are nullable as a group the server chooses; each one is checked for itself.
+ * and reuse this walk rather than restating it beside itself.
+ *
+ * Identity and validity are one statement, not independent fields: the authority produces a
+ * valid artifact with an identifier and a well-formed digest, and an invalid artifact with
+ * no identifier, version or digest at all. `version` is the one nullable member of a valid
+ * artifact, because a `factor` definition genuinely has no version. Each field is type-checked
+ * for itself, then admitted or refused as that relationship, because a body that pairs
+ * `valid` with no digest (or `invalid` with a digest) describes a state the server cannot
+ * publish.
  */
 function decodeArtifactSummary(record: JsonObject): ArtifactSummary | null {
   const artifactId = requiredString(record, "artifact_id");
@@ -274,6 +283,14 @@ function decodeArtifactSummary(record: JsonObject): ArtifactSummary | null {
       return null;
     }
     semanticDigest = decoded;
+  }
+
+  if (validationStatus === "valid") {
+    if (identifier === null || semanticDigest === null) {
+      return null;
+    }
+  } else if (identifier !== null || version !== null || semanticDigest !== null) {
+    return null;
   }
 
   return {
@@ -355,9 +372,10 @@ export function decodeWorkspaceDiscoveryResponse(
 /**
  * `GET /api/v1/workspaces/{workspaceId}/artifacts/{artifactId}` — one fresh inspection.
  *
- * `content` is the validated scientific model serialised in JSON mode: the client checks
- * that the surrounding read model is one it knows and that `content` is an object or
- * `null`, and deliberately does not validate the model's own fields.
+ * `content` is the validated scientific model serialised in JSON mode and exists exactly
+ * when the artifact is valid. The client checks that relationship and that `content` is an
+ * object for a valid artifact or `null` for an invalid one; it deliberately does not
+ * validate the model's own fields.
  */
 export function decodeArtifactInspectionResponse(
   value: unknown,
@@ -372,14 +390,10 @@ export function decodeArtifactInspectionResponse(
     return null;
   }
 
-  if (record.content === null) {
-    return { ...summary, content: null };
+  if (summary.validation_status === "valid") {
+    const content = asObject(record.content);
+    return content === null ? null : { ...summary, content };
   }
 
-  const content = asObject(record.content);
-  if (content === null) {
-    return null;
-  }
-
-  return { ...summary, content };
+  return record.content === null ? { ...summary, content: null } : null;
 }
