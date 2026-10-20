@@ -26,7 +26,14 @@
  */
 
 import { EXPECTED_API_VERSION, EXPECTED_PROTOCOL_VERSION } from "../session/types";
-import { ApiClientError, isApiErrorCode } from "./errors";
+import {
+  decodeApplicationInfoResponse,
+  decodeArtifactInspectionResponse,
+  decodeHealthResponse,
+  decodeOpenWorkspaceResponse,
+  decodeWorkspaceDiscoveryResponse,
+} from "./decode";
+import { ApiClientError, MAX_API_MESSAGE_LENGTH, isApiErrorCode } from "./errors";
 import type {
   ApiErrorCode,
   ApplicationInfoResponse,
@@ -107,8 +114,19 @@ export function createApiClient(
     return `${origin}${API_PATH_PREFIX}${path}`;
   }
 
-  /** One request, and the three failures it can end in that are not a typed response. */
-  async function send(path: string, init: { method: string; headers?: Headers; body?: string }): Promise<unknown> {
+  /**
+   * One request, its refusal, and the runtime decoding of the read model it answered with.
+   *
+   * The decoder is supplied by the method because only the method knows which contract the
+   * body is supposed to satisfy. A body that parses as JSON but is not that model is
+   * `invalid_response`: the raw value is never attached to the failure, so a malformed
+   * server answer cannot be retained through the error it produces.
+   */
+  async function send<T>(
+    path: string,
+    init: { method: string; headers?: Headers; body?: string },
+    decode: (body: unknown) => T | null,
+  ): Promise<T> {
     let response: Response;
     try {
       response = await fetchImpl(url(path), {
@@ -129,7 +147,7 @@ export function createApiClient(
     }
 
     if (!response.ok) {
-      const failure = await readEnvelope(response);
+      const failure = await readEnvelope(response, connection.credential);
       throw new ApiClientError("http", {
         status: response.status,
         code: failure?.code ?? null,
@@ -137,47 +155,56 @@ export function createApiClient(
       });
     }
 
-    return await readObject(response);
+    const body = await readJson(response);
+    const decoded = decode(body);
+
+    if (decoded === null) {
+      throw new ApiClientError("invalid_response", { status: response.status });
+    }
+
+    return decoded;
   }
 
   return {
     async health(): Promise<HealthResponse> {
-      const body = await send("/health", { method: "GET" });
-      return body as HealthResponse;
+      return await send("/health", { method: "GET" }, decodeHealthResponse);
     },
 
     async info(): Promise<ApplicationInfoResponse> {
-      const body = await send("/info", { method: "GET" });
-      return body as ApplicationInfoResponse;
+      return await send("/info", { method: "GET" }, decodeApplicationInfoResponse);
     },
 
     async openWorkspace(request: OpenWorkspaceRequest): Promise<OpenWorkspaceResponse> {
       // The one place the shell's names for the two roots meet the API's: everything after
       // this request identifies a workspace by the identifier the response returned.
-      const body = await send("/workspaces/open", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source_root: request.sourceRoot,
-          evidence_root: request.evidenceRoot,
-        }),
-      });
-      return body as OpenWorkspaceResponse;
+      return await send(
+        "/workspaces/open",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source_root: request.sourceRoot,
+            evidence_root: request.evidenceRoot,
+          }),
+        },
+        decodeOpenWorkspaceResponse,
+      );
     },
 
     async listArtifacts(workspaceId: string): Promise<WorkspaceDiscoveryResponse> {
-      const body = await send(`/workspaces/${encodeURIComponent(workspaceId)}/artifacts`, {
-        method: "GET",
-      });
-      return body as WorkspaceDiscoveryResponse;
+      return await send(
+        `/workspaces/${encodeURIComponent(workspaceId)}/artifacts`,
+        { method: "GET" },
+        decodeWorkspaceDiscoveryResponse,
+      );
     },
 
     async getArtifact(workspaceId: string, artifactId: string): Promise<ArtifactInspectionResponse> {
-      const body = await send(
+      return await send(
         `/workspaces/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}`,
         { method: "GET" },
+        decodeArtifactInspectionResponse,
       );
-      return body as ArtifactInspectionResponse;
     },
   };
 }
@@ -199,26 +226,22 @@ function asObject(body: unknown): Record<string, unknown> | null {
   return body as Record<string, unknown>;
 }
 
-/** A read model: a JSON object, or a response this client cannot use. */
-async function readObject(response: Response): Promise<Record<string, unknown>> {
-  const body = asObject(await readJson(response));
-
-  if (body === null) {
-    throw new ApiClientError("invalid_response", { status: response.status });
-  }
-
-  return body;
-}
-
 /**
  * The application's error envelope, if this response carried one.
  *
  * Returns `null` rather than failing: a refusal that arrived with an unreadable body is still
  * a refusal, and the status is the part of it that is always true. A code the frontend's
  * closed vocabulary does not contain is not adopted into it.
+ *
+ * A message is adopted only when it is a string within the reviewed bound and does not
+ * contain the credential this request carried. A server that echoes the bearer token in its
+ * own prose is not repaired, redacted or quoted: the whole message is discarded, and the
+ * bounded status and code remain. That is the difference between holding a safe field and
+ * holding a sanitised copy of an unsafe one.
  */
 async function readEnvelope(
   response: Response,
+  credential: string,
 ): Promise<{ code: ApiErrorCode | null; message: string | null } | null> {
   let body: unknown;
   try {
@@ -237,5 +260,22 @@ async function readEnvelope(
     return null;
   }
 
-  return { code: error.code, message: typeof error.message === "string" ? error.message : null };
+  return {
+    code: error.code,
+    message: adoptableMessage(error.message, credential) ? error.message : null,
+  };
+}
+
+/** Whether a server-authored message may be held at all. */
+function adoptableMessage(
+  message: unknown,
+  credential: string,
+): message is string {
+  if (typeof message !== "string" || message.length > MAX_API_MESSAGE_LENGTH) {
+    return false;
+  }
+
+  // An empty credential is not a string that every message contains. A real ready session
+  // never supplies one, but the type does not prevent a direct construction.
+  return credential.length === 0 || !message.includes(credential);
 }

@@ -27,10 +27,13 @@
  * 3. **A bootstrap read whose answer was invalidated by a later event is never published.**
  *    Reads are serialized (one invoke in flight, later requests coalesced into one re-read)
  *    and every read records the event generation it began at; if the generation moved before
- *    the answer arrived, the answer describes a state the workbench already knows is
+ *    the attempt completed, the attempt describes a state the workbench already knows is
  *    superseded, so it is discarded and the read is repeated. Without that check, the answer
  *    to an in-flight read could land after a newer non-ready event and republish a session
- *    that had already ended — a stale credential, presented as current.
+ *    that had already ended — a stale credential, presented as current. A *rejection* is an
+ *    answer too, and gets the same treatment: a bridge failure that was already superseded
+ *    must not overwrite a newer lifecycle state with an obsolete unclassified failure, and
+ *    must not abandon the reconciliation read that event requested.
  *
  * Cleanup is one function: it detaches the listener (or hands the still-registering listener
  * to a continuation that will detach it), and stops any later publication.
@@ -107,8 +110,18 @@ export function tauriSessionSource(): SessionSource {
             try {
               response = await invoke(API_SESSION_COMMAND);
             } catch {
-              // The bridge answered nothing. There is no session to report, and no
-              // credential can be inferred, so the failure is reported as one.
+              if (generation !== eventGeneration || rereadRequested) {
+                // A lifecycle event arrived while this read was in flight, so this rejection
+                // describes an attempt the workbench already knows has moved on. Publishing
+                // it as an unclassified failure would overwrite the newer state — and
+                // returning would abandon the reconciliation read that event requested.
+                rereadRequested = true;
+                continue;
+              }
+
+              // The bridge answered nothing, and this attempt still belongs to the current
+              // generation. There is no session to report, and no credential can be
+              // inferred, so the failure is reported as one.
               publish(unclassifiedFailure());
               return;
             }

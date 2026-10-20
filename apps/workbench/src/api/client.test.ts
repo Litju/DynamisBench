@@ -8,6 +8,15 @@
 
 import { describe, expect, it } from "vitest";
 
+import {
+  APPLICATION_INFO,
+  DIAGNOSTIC,
+  DISCOVERY,
+  HEALTH,
+  INSPECTION,
+  OPEN_WORKSPACE,
+  SEMANTIC_DIGEST,
+} from "../test/api-fixtures";
 import { FIXTURE_CREDENTIAL, FIXTURE_ORIGIN, readyApiSession } from "../test/session-fixtures";
 import {
   jsonResponse,
@@ -17,15 +26,10 @@ import {
 } from "../test/http-fixtures";
 import { ApiClientError } from "./errors";
 import { createApiClient, type ApiClientConnection } from "./client";
-import type { ApplicationInfoResponse, WorkspaceDiscoveryResponse } from "./types";
 
 const CONNECTION: ApiClientConnection = readyApiSession();
 
-const INFO: ApplicationInfoResponse = {
-  application: "DynamisBench",
-  version: "0.0.0",
-  api_version: "v1",
-};
+const INFO = APPLICATION_INFO;
 
 /** A client wired to a recording fetch that answers with `body`. */
 function clientAnswering(body: unknown, status = 200) {
@@ -63,19 +67,9 @@ describe("createApiClient", () => {
 
 describe("the five accepted endpoints", () => {
   it("builds GET /api/v1/health", async () => {
-    const { client, calls } = clientAnswering({
-      status: "ok",
-      application: "DynamisBench",
-      version: "0.0.0",
-      api_version: "v1",
-    });
+    const { client, calls } = clientAnswering(HEALTH);
 
-    await expect(client.health()).resolves.toEqual({
-      status: "ok",
-      application: "DynamisBench",
-      version: "0.0.0",
-      api_version: "v1",
-    });
+    await expect(client.health()).resolves.toEqual(HEALTH);
     expect(calls[0]?.url).toBe(`${FIXTURE_ORIGIN}/api/v1/health`);
     expect(calls[0]?.init.method).toBe("GET");
   });
@@ -89,16 +83,11 @@ describe("the five accepted endpoints", () => {
   });
 
   it("builds POST /api/v1/workspaces/open with a JSON body", async () => {
-    const opened = {
-      workspace_id: "w-1",
-      evidence_inside_source: false,
-      source_categories: [],
-    };
-    const { client, calls } = clientAnswering(opened);
+    const { client, calls } = clientAnswering(OPEN_WORKSPACE);
 
     await expect(
       client.openWorkspace({ sourceRoot: "C:/repo", evidenceRoot: "C:/evidence" }),
-    ).resolves.toEqual(opened);
+    ).resolves.toEqual(OPEN_WORKSPACE);
 
     const call = calls[0];
     expect(call?.url).toBe(`${FIXTURE_ORIGIN}/api/v1/workspaces/open`);
@@ -111,31 +100,26 @@ describe("the five accepted endpoints", () => {
   });
 
   it("builds GET /api/v1/workspaces/{workspaceId}/artifacts", async () => {
-    const discovery: WorkspaceDiscoveryResponse = {
-      workspace_id: "w-1",
-      categories: [],
-      artifacts: { artifacts: [] },
-      issues: [],
-      issues_truncated: false,
-    };
-    const { client, calls } = clientAnswering(discovery);
+    const { client, calls } = clientAnswering(DISCOVERY);
 
-    await expect(client.listArtifacts("w-1")).resolves.toEqual(discovery);
-    expect(calls[0]?.url).toBe(`${FIXTURE_ORIGIN}/api/v1/workspaces/w-1/artifacts`);
+    await expect(client.listArtifacts("workspace-1")).resolves.toEqual(DISCOVERY);
+    expect(calls[0]?.url).toBe(`${FIXTURE_ORIGIN}/api/v1/workspaces/workspace-1/artifacts`);
     expect(calls[0]?.init.method).toBe("GET");
   });
 
   it("builds GET /api/v1/workspaces/{workspaceId}/artifacts/{artifactId}", async () => {
-    const { client, calls } = clientAnswering({});
+    const { client, calls } = clientAnswering(INSPECTION);
 
-    await client.getArtifact("w-1", "a-1");
+    await expect(client.getArtifact("workspace-1", "artifact-1")).resolves.toEqual(INSPECTION);
 
-    expect(calls[0]?.url).toBe(`${FIXTURE_ORIGIN}/api/v1/workspaces/w-1/artifacts/a-1`);
+    expect(calls[0]?.url).toBe(
+      `${FIXTURE_ORIGIN}/api/v1/workspaces/workspace-1/artifacts/artifact-1`,
+    );
     expect(calls[0]?.init.method).toBe("GET");
   });
 
   it("URL-encodes opaque identifiers instead of trusting their spelling", async () => {
-    const { client, calls } = clientAnswering({});
+    const { client, calls } = clientAnswering(INSPECTION);
 
     await client.getArtifact("w/1 x", "a?b#c");
 
@@ -167,7 +151,11 @@ describe("what every request carries", () => {
   });
 
   it("omits credentials and bypasses every cache", async () => {
-    const { client, calls } = clientAnswering(INFO);
+    const recorder = recordingFetch((call) =>
+      jsonResponse(call.url.endsWith("/info") ? INFO : OPEN_WORKSPACE),
+    );
+    const client = createApiClient(CONNECTION, { fetch: recorder.fetch });
+    const calls = recorder.calls;
 
     await client.info();
     await client.openWorkspace({ sourceRoot: "C:/repo", evidenceRoot: "C:/evidence" });
@@ -252,6 +240,84 @@ describe("refusals", () => {
   });
 });
 
+describe("malformed read models", () => {
+  /**
+   * The five regressions acceptance named: each is a syntactically valid 200 whose body is
+   * not the read model its route publishes. The client must report `invalid_response` and
+   * must not retain the rejected body.
+   */
+  const cases: Array<[string, () => Record<string, unknown>, (client: ReturnType<typeof createApiClient>) => Promise<unknown>]> = [
+    ["info with no fields", () => ({}), (client) => client.info()],
+    [
+      "health with an unknown status",
+      () => ({ ...HEALTH, status: "degraded" }),
+      (client) => client.health(),
+    ],
+    [
+      "an opened workspace with no identifier",
+      () => {
+        const { workspace_id: _omitted, ...rest } = OPEN_WORKSPACE;
+        return rest;
+      },
+      (client) => client.openWorkspace({ sourceRoot: "C:/repo", evidenceRoot: "C:/evidence" }),
+    ],
+    [
+      "discovery with an unknown diagnostic code",
+      () => ({
+        ...DISCOVERY,
+        issues: [{ ...DIAGNOSTIC, code: "invented_code" }],
+      }),
+      (client) => client.listArtifacts("workspace-1"),
+    ],
+    [
+      "inspection with a malformed nested digest",
+      () => ({
+        ...INSPECTION,
+        semantic_digest: { algorithm: "sha256", hex: "not-a-digest" },
+      }),
+      (client) => client.getArtifact("workspace-1", "artifact-1"),
+    ],
+  ];
+
+  it.each(cases)("reports %s as an unreadable response", async (_label, body, call) => {
+    const { client } = clientAnswering(body());
+
+    await expect(call(client)).rejects.toMatchObject({
+      kind: "invalid_response",
+      status: 200,
+      code: null,
+      apiMessage: null,
+    });
+  });
+
+  it("does not retain the rejected body anywhere on the error", async () => {
+    const rejected = { ...APPLICATION_INFO, private_detail: "must not be retained" };
+    const { client } = clientAnswering({ ...rejected, application: 7 });
+
+    try {
+      await client.info();
+      expect.unreachable("a malformed read model must be refused");
+    } catch (error) {
+      const parsed = error as ApiClientError;
+
+      expect(parsed).toBeInstanceOf(ApiClientError);
+      expect(JSON.stringify(parsed)).not.toContain("must not be retained");
+      expect(Object.keys(parsed)).not.toContain("body");
+      expect((parsed as unknown as { body?: unknown }).body).toBeUndefined();
+    }
+  });
+
+  it("keeps accepting a digest with the announced algorithm and lowercase hex", async () => {
+    const digest = {
+      ...INSPECTION,
+      semantic_digest: { ...SEMANTIC_DIGEST, hex: "f".repeat(64) },
+    };
+    const { client } = clientAnswering(digest);
+
+    await expect(client.getArtifact("workspace-1", "artifact-1")).resolves.toEqual(digest);
+  });
+});
+
 describe("what an error may carry", () => {
   /** A refusal whose own message quotes the credential, as a compromised server might. */
   const hostile = {
@@ -273,14 +339,65 @@ describe("what an error may carry", () => {
       expect(parsed.kind).toBe("http");
       expect(parsed.status).toBe(500);
       expect(parsed.code).toBe("internal_error");
-      // The message is composed from the status and the code. The envelope's own message is
-      // preserved as a bounded field, and never spliced into the text this client throws.
+      // The message is composed from the status and the code, and the envelope's own message
+      // carried the credential, so it is not retained in any field at all.
       expect(parsed.message).toBe(
         "The DynamisBench application API refused the request (500 internal_error).",
       );
+      expect(parsed.apiMessage).toBeNull();
       expect(parsed.message).not.toContain(FIXTURE_CREDENTIAL);
-      expect(`${parsed.name} ${parsed.stack ?? ""}`).not.toContain(FIXTURE_CREDENTIAL);
+      expect(parsed.stack ?? "").not.toContain(FIXTURE_CREDENTIAL);
+      expect(JSON.stringify(parsed)).not.toContain(FIXTURE_CREDENTIAL);
+      expect(publicSurface(parsed)).not.toContain(FIXTURE_CREDENTIAL);
     }
+  });
+
+  it("does not adopt an oversized message but keeps the status and code", async () => {
+    const { client } = clientAnswering(
+      { error: { code: "not_found", message: "m".repeat(257) } },
+      404,
+    );
+
+    try {
+      await client.getArtifact("workspace-1", "artifact-1");
+      expect.unreachable("a 404 must be refused");
+    } catch (error) {
+      const parsed = error as ApiClientError;
+
+      expect(parsed.kind).toBe("http");
+      expect(parsed.status).toBe(404);
+      expect(parsed.code).toBe("not_found");
+      expect(parsed.apiMessage).toBeNull();
+    }
+  });
+
+  it("adopts a message at the reviewed 256-character bound", async () => {
+    const message = "m".repeat(256);
+    const { client } = clientAnswering(
+      { error: { code: "invalid_request", message } },
+      400,
+    );
+
+    await expect(client.info()).rejects.toMatchObject({
+      kind: "http",
+      status: 400,
+      code: "invalid_request",
+      apiMessage: message,
+    });
+  });
+
+  it("does not adopt a message that is not a string", async () => {
+    const { client } = clientAnswering(
+      { error: { code: "http_error", message: { detail: "no" } } },
+      400,
+    );
+
+    await expect(client.info()).rejects.toMatchObject({
+      kind: "http",
+      status: 400,
+      code: "http_error",
+      apiMessage: null,
+    });
   });
 
   it("does not attach the underlying failure as a cause", async () => {
@@ -322,4 +439,37 @@ describe("what an error may carry", () => {
 function headersOf(call: RecordedCall | undefined): Record<string, string> {
   const headers = (call?.init.headers ?? {}) as Record<string, string>;
   return Object.fromEntries(Object.entries(headers).map(([name, value]) => [name, value]));
+}
+
+/**
+ * Every publicly reachable field of an error, including inherited and non-enumerable ones.
+ *
+ * `JSON.stringify` sees own enumerable properties only, so it would miss `message` and
+ * `stack`. This walk reads the instance and its prototypes, skips methods, and renders each
+ * value — which is what makes "the credential is absent from every field" a statement about
+ * the whole object rather than about the six fields the test remembered to name.
+ */
+function publicSurface(value: unknown): string {
+  const rendered: string[] = [];
+  const seen = new Set<string>();
+  let current: object | null = typeof value === "object" && value !== null ? value : null;
+
+  while (current !== null && current !== Object.prototype) {
+    for (const name of Object.getOwnPropertyNames(current)) {
+      if (seen.has(name)) {
+        continue;
+      }
+      seen.add(name);
+
+      const field = (current as Record<string, unknown>)[name];
+      if (typeof field === "function") {
+        continue;
+      }
+
+      rendered.push(`${name}: ${typeof field === "string" ? field : JSON.stringify(field)}`);
+    }
+    current = Object.getPrototypeOf(current) as object | null;
+  }
+
+  return rendered.join("\n");
 }

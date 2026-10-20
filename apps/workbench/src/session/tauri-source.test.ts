@@ -40,12 +40,18 @@ async function settle(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+} {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((innerResolve) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
     resolve = innerResolve;
+    reject = innerReject;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 beforeEach(() => {
@@ -218,6 +224,44 @@ describe("tauriSessionSource", () => {
     expect(published.map((session) => session.phase)).toEqual(["failed", "stopped"]);
     expect(JSON.stringify(published)).not.toContain("fixture-credential-not-a-secret");
   });
+
+  it("discards a bootstrap rejection that a later event invalidated, then reconciles", async () => {
+    // Bootstrap N is held open, so the test decides exactly when it completes.
+    const first = deferred<unknown>();
+    bridge.invoke.mockReturnValueOnce(first.promise);
+
+    const { published } = await startSource();
+    await settle();
+    expect(published).toEqual([]);
+
+    // A newer non-ready lifecycle event is published immediately and requests a reread.
+    handlers[0]?.({
+      payload: snapshot({ status: "failed", failure: "unexpected_exit", restart_required: true }),
+    });
+    expect(published.at(-1)).toEqual({
+      phase: "failed",
+      failure: "unexpected_exit",
+      restartRequired: true,
+    });
+
+    // Bootstrap N+1 is configured with the state that is current after the event.
+    bridge.invoke.mockResolvedValueOnce(snapshot({ status: "stopped" }));
+
+    // Bootstrap N now rejects. It began before the event, so its rejection is stale: it must
+    // neither publish an unclassified failure nor abandon the requested reread.
+    first.reject(new Error("the bridge is gone"));
+    await settle();
+
+    expect(bridge.invoke).toHaveBeenCalledTimes(2);
+    expect(published.map((session) => session.phase)).toEqual(["failed", "stopped"]);
+    expect(published).not.toContainEqual({
+      phase: "failed",
+      failure: null,
+      restartRequired: false,
+    });
+    expect(published.at(-1)).toEqual({ phase: "stopped" });
+  });
+
   it("reconciles overlapping lifecycle events into one settled read", async () => {
     bridge.invoke.mockResolvedValueOnce(readySessionWire());
     const { published } = await startSource();
