@@ -9,6 +9,10 @@
  * handler that forgot its model, `"sha1"` is a digest implementation that changed, and an
  * unknown diagnostic code is a vocabulary that grew without this client.
  *
+ * The artifact gates additionally pair `validation_status` with identity, version, digest
+ * and inspection content, because those are one authority statement rather than independent
+ * fields: a valid artifact has identity and content, and an invalid artifact has neither.
+ *
  * A decoder returns `null` rather than describing what was wrong, because the rejection is
  * reported as one bounded `invalid_response` and the rejected body is not retained.
  */
@@ -24,6 +28,7 @@ import {
   INSPECTION,
   OPEN_WORKSPACE,
   SEMANTIC_DIGEST,
+  VERSIONLESS_FACTOR,
 } from "../test/api-fixtures";
 import {
   decodeApplicationInfoResponse,
@@ -143,6 +148,42 @@ describe("decodeWorkspaceDiscoveryResponse", () => {
       }),
     ],
     [
+      "a valid artifact without an identifier",
+      withField(DISCOVERY, "artifacts", {
+        artifacts: [withField(ARTIFACT, "identifier", null)],
+      }),
+    ],
+    [
+      "a valid artifact without a semantic digest",
+      withField(DISCOVERY, "artifacts", {
+        artifacts: [withField(ARTIFACT, "semantic_digest", null)],
+      }),
+    ],
+    [
+      "an invalid artifact retaining an identifier",
+      withField(DISCOVERY, "artifacts", {
+        artifacts: [
+          { ...ARTIFACT, validation_status: "invalid", version: null, semantic_digest: null },
+        ],
+      }),
+    ],
+    [
+      "an invalid artifact retaining a version",
+      withField(DISCOVERY, "artifacts", {
+        artifacts: [
+          { ...ARTIFACT, validation_status: "invalid", identifier: null, semantic_digest: null },
+        ],
+      }),
+    ],
+    [
+      "an invalid artifact retaining a semantic digest",
+      withField(DISCOVERY, "artifacts", {
+        artifacts: [
+          { ...ARTIFACT, validation_status: "invalid", identifier: null, version: null },
+        ],
+      }),
+    ],
+    [
       "an artifact with a non-string identifier",
       withField(DISCOVERY, "artifacts", {
         artifacts: [withField(ARTIFACT, "identifier", 1)],
@@ -230,6 +271,12 @@ describe("decodeWorkspaceDiscoveryResponse", () => {
     expect(decodeWorkspaceDiscoveryResponse(value)).toBeNull();
   });
 
+  it("accepts a valid versionless factor with an identifier and digest", () => {
+    const discovery = withField(DISCOVERY, "artifacts", { artifacts: [VERSIONLESS_FACTOR] });
+
+    expect(decodeWorkspaceDiscoveryResponse(discovery)).toEqual(discovery);
+  });
+
   it("accepts an invalid artifact with null identity, version and digest", () => {
     const invalid = {
       ...ARTIFACT,
@@ -251,16 +298,35 @@ describe("decodeArtifactInspectionResponse", () => {
     expect(decodeArtifactInspectionResponse(INSPECTION)).toEqual(INSPECTION);
   });
 
-  it("accepts an inspected artifact whose content is null", () => {
-    expect(decodeArtifactInspectionResponse({ ...INSPECTION, content: null })).toEqual({
+  it("accepts an invalid inspection whose content is null", () => {
+    const invalid = {
       ...INSPECTION,
+      validation_status: "invalid",
+      identifier: null,
+      version: null,
+      semantic_digest: null,
+      diagnostics: [DIAGNOSTIC],
       content: null,
-    });
+    };
+
+    expect(decodeArtifactInspectionResponse(invalid)).toEqual(invalid);
   });
 
   it.each([
     ["an empty object", {}],
     ["a missing content field", withoutField(INSPECTION, "content")],
+    ["a valid inspection whose content is null", withField(INSPECTION, "content", null)],
+    [
+      "an invalid inspection whose content is an object",
+      {
+        ...INSPECTION,
+        validation_status: "invalid",
+        identifier: null,
+        version: null,
+        semantic_digest: null,
+        content: { schema_version: "1" },
+      },
+    ],
     ["array content", withField(INSPECTION, "content", [])],
     ["scalar content", withField(INSPECTION, "content", "schema_version: 1")],
     ["a missing artifact identifier", withoutField(INSPECTION, "artifact_id")],
