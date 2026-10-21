@@ -63,12 +63,11 @@ describe("the workbench shell", () => {
     expect(rail).toHaveAttribute("data-collapsed", "false");
   });
 
-  it("does not offer a workspace link before there is a workspace", async () => {
+  it("offers the explicit open-workspace flow from the navigation rail", async () => {
     renderApplication("/");
 
-    const workspaces = await screen.findByText("Workspaces");
+    const open = await screen.findByRole("link", { name: "Open workspace" });
 
-    expect(workspaces.closest("[aria-disabled='true']")).not.toBeNull();
-    expect(screen.queryByRole("link", { name: "Workspaces" })).toBeNull();
+    expect(open).toHaveAttribute("href", "/#open-workspace");
   });
 });

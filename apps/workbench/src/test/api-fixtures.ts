@@ -92,6 +92,34 @@ export const OPEN_WORKSPACE: OpenWorkspaceResponse = {
   source_categories: SOURCE_CATEGORIES,
 };
 
+/** An artifact whose authoring document did not validate. */
+export const INVALID_ARTIFACT: ArtifactSummary = {
+  artifact_id: "artifact-invalid",
+  category: "benchmarks",
+  kind: "scenario",
+  logical_reference: "benchmarks/scenario/broken.yaml",
+  authoring_format: "yaml",
+  validation_status: "invalid",
+  identifier: null,
+  version: null,
+  semantic_digest: null,
+  diagnostics: [
+    {
+      code: "schema_validation",
+      message: "The document did not satisfy its declared model.",
+      reference: "benchmarks/scenario/broken.yaml",
+      location: "duration",
+      category: "scenario",
+    },
+  ],
+};
+
+/** Inspection of the invalid artifact: diagnostics, and no validated content. */
+export const INVALID_INSPECTION: ArtifactInspectionResponse = {
+  ...INVALID_ARTIFACT,
+  content: null,
+};
+
 export const DISCOVERY: WorkspaceDiscoveryResponse = {
   workspace_id: "workspace-1",
   categories: SOURCE_CATEGORIES,
@@ -100,7 +128,18 @@ export const DISCOVERY: WorkspaceDiscoveryResponse = {
   issues_truncated: false,
 };
 
+/** Discovery with one valid and one invalid artifact, for the selection gates. */
+export const DISCOVERY_WITH_INVALID: WorkspaceDiscoveryResponse = {
+  workspace_id: "workspace-1",
+  categories: SOURCE_CATEGORIES,
+  artifacts: { artifacts: [ARTIFACT, VERSIONLESS_FACTOR, INVALID_ARTIFACT] },
+  issues: [DIAGNOSTIC],
+  issues_truncated: true,
+};
+
+
 export const INSPECTION: ArtifactInspectionResponse = {
   ...ARTIFACT,
   content: { schema_version: "1", id: "example" },
 };
+

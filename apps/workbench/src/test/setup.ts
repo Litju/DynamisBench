@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
-import { afterEach } from "vitest";
+import { afterEach, vi } from "vitest";
 
 // The suite runs without Vitest's global `afterEach`, so Testing Library cannot register its
 // own automatic cleanup. Rendering two trees in one file would otherwise leave the first in
@@ -8,6 +8,7 @@ import { afterEach } from "vitest";
 // one node a test is about.
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
 });
 
 // jsdom implements no layout, so the router's scroll-on-navigation has nowhere to go and

@@ -69,21 +69,13 @@ function NavigationRail() {
       </Button>
 
       <RailItem to="/" icon={House} label="Overview" collapsed={collapsed} />
-
-      {/* Not a route yet, and not a dead link either: the workspace explorer is the next
-          milestone's surface, and a disabled entry states that rather than pretending. */}
-      <div
-        aria-disabled="true"
-        title="The workspace explorer arrives with the next milestone."
-        data-nav-item="workspaces"
-        className={cn(
-          "flex h-9 cursor-not-allowed items-center gap-2 rounded-md px-2 text-sm font-medium text-slate-300",
-          collapsed && "justify-center px-0",
-        )}
-      >
-        <FolderOpen aria-hidden className="h-4 w-4 shrink-0" />
-        {!collapsed && <span className="truncate">Workspaces</span>}
-      </div>
+      <RailItem
+        to="/"
+        hash="open-workspace"
+        icon={FolderOpen}
+        label="Open workspace"
+        collapsed={collapsed}
+      />
     </nav>
   );
 }
@@ -97,11 +89,13 @@ function NavigationRail() {
  */
 function RailItem({
   to,
+  hash,
   icon: Icon,
   label,
   collapsed,
 }: {
   to: string;
+  hash?: string;
   icon: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
   label: string;
   collapsed: boolean;
@@ -117,6 +111,7 @@ function RailItem({
     >
       <Link
         to={to}
+        hash={hash}
         activeProps={{ "data-active": "true" }}
         aria-label={collapsed ? label : undefined}
       >
