@@ -18,5 +18,9 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    // A hosted runner creates an environment per file. The gates are deterministic, but the
+    // arrow interoperability suite imports a large optional package once; the budget covers
+    // that import without turning any test into a wait loop.
+    testTimeout: 15_000,
   },
 });

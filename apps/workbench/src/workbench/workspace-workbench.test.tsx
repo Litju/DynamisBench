@@ -282,6 +282,38 @@ describe("the workspace workbench", () => {
     }
   });
 
+  it("re-reads an externally edited artifact on demand", async () => {
+    const user = userEvent.setup();
+    const source = readySource();
+    let reads = 0;
+    await renderWorkspace(discoveryHandler({
+      [BENCHMARK_ARTIFACT_PATH]: () => {
+        reads += 1;
+        return jsonResponse(
+          reads === 1
+            ? INSPECTION
+            : {
+                ...INSPECTION,
+                content: { schema_version: "1", id: "edited-after-first-read" },
+              },
+        );
+      },
+    }), source);
+
+    await user.click(screen.getByRole("option", { name: /example/ }));
+    const content = await screen.findByTestId("artifact-content");
+    expect(within(content).getByText("example")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Re-read" }));
+
+    await waitFor(() =>
+      expect(within(screen.getByTestId("artifact-content")).getByText(
+        "edited-after-first-read",
+      )).toBeInTheDocument(),
+    );
+    expect(reads).toBe(2);
+  });
+
   it("shows a live event stream and bounded activity lines", async () => {
     const source = readySource();
     await renderWorkspace(({ url }) => {

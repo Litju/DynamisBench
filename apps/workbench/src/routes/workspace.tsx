@@ -17,7 +17,7 @@
  * there are none to remember.
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createRoute, Link } from "@tanstack/react-router";
 import { AlertCircle, RotateCcw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -57,6 +57,7 @@ function WorkspacePage() {
 function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
   const { session } = useSession();
   const client = useApiClient();
+  const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // A credential rotation is a new session generation: the Query cache is discarded by the
@@ -157,6 +158,13 @@ function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
               inspection={currentInspection}
               inspectionPending={inspection.isPending && selectedId !== null}
               inspectionError={inspection.error}
+              onReRead={() => {
+                if (selectedId !== null) {
+                  void queryClient.invalidateQueries({
+                    queryKey: apiQueryKeys.artifact(workspaceId, selectedId),
+                  });
+                }
+              }}
             />
           </Pane>
 
@@ -176,6 +184,7 @@ function WorkspaceContentPane({
   inspection,
   inspectionPending,
   inspectionError,
+  onReRead,
 }: {
   workspaceId: string;
   selectedSummary: ArtifactSummary | null;
@@ -183,6 +192,7 @@ function WorkspaceContentPane({
   inspection: ArtifactInspectionResponse | null;
   inspectionPending: boolean;
   inspectionError: unknown;
+  onReRead(): void;
 }) {
   return (
     <section aria-labelledby="workspace-content-heading" className="flex min-h-0 flex-col gap-3">
@@ -190,11 +200,24 @@ function WorkspaceContentPane({
         <h2 id="workspace-content-heading" className="text-sm font-semibold text-slate-800">
           Validated content
         </h2>
-        {selectedSummary !== null && (
-          <Badge tone={selectedSummary.validation_status === "valid" ? "ready" : "danger"}>
-            {selectedSummary.validation_status}
-          </Badge>
-        )}
+        <div className="flex items-center gap-2">
+          {selectedSummary !== null && (
+            <Badge tone={selectedSummary.validation_status === "valid" ? "ready" : "danger"}>
+              {selectedSummary.validation_status}
+            </Badge>
+          )}
+          {selectedId !== null && (
+            <button
+              type="button"
+              onClick={onReRead}
+              disabled={inspectionPending}
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 disabled:opacity-50"
+            >
+              <RotateCcw aria-hidden className="h-3 w-3" />
+              Re-read
+            </button>
+          )}
+        </div>
       </div>
 
       {selectedId === null ? (

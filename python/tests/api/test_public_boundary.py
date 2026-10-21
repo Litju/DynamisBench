@@ -11,10 +11,11 @@ on a measured import, where an indirect call cannot hide.
 
 What is checked:
 
-* **A closed module set, in three groups.** Five boundary modules, reachable from
-  ``import dynamisbench.api``, the two session modules DB-2.2/DB-2.3 add and which are
-  reachable only by importing them directly, and the two workspace-reading modules
-  DB-2.4 (RES-377) adds. A tenth is a reviewed change rather than a silent one.
+* **A closed module set, in four groups.** Five boundary modules, reachable from
+  ``import dynamisbench.api``, the three session modules DB-2.2/DB-2.3 add and which are
+  reachable only by importing them directly, the two workspace-reading modules DB-2.4
+  (RES-377) adds, and the one event-transport module DB-2.6 (RES-379) adds. An eleventh is a
+  reviewed change rather than a silent one.
 * **No simulator, in transit or in source.** The repository-wide isolation gate already
   walks every file; this one names the package, so a regression says which boundary broke.
 * **No dependency on a layer that acts.** ``api`` may import the package root, its own

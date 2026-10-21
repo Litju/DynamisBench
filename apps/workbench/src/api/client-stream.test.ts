@@ -80,6 +80,38 @@ describe("ApiClient.streamEvents", () => {
     await expect(collect(client)).resolves.toEqual([READY, OPENED]);
   });
 
+  it("decodes a UTF-8 character split across byte chunks", async () => {
+    const payload = line({
+      schema_version: 1,
+      event: "artifact.inspected",
+      data: {
+        workspace_id: "w",
+        artifact_id: "a",
+        category: "benchmarks",
+        kind: "café",
+        validation_status: "valid",
+        diagnostic_count: 0,
+      },
+    });
+    const bytes = new TextEncoder().encode(payload);
+    const split = bytes.indexOf(0xc3) + 1; // between the two bytes of "é"
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes.slice(0, split));
+        controller.enqueue(bytes.slice(split));
+        controller.close();
+      },
+    });
+    const recorder = recordingFetch(
+      () => new Response(body, { status: 200 }),
+    );
+    const client = createApiClient(CONNECTION, { fetch: recorder.fetch });
+
+    const events = await collect(client);
+
+    expect(events[0]?.data.kind).toBe("café");
+  });
+
   it("ignores comment heartbeats", async () => {
     const { client } = streamClient([line(READY), ": heartbeat\n\n", line(OPENED)]);
 

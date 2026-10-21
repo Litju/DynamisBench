@@ -202,6 +202,52 @@ def test_the_application_lifespan_closes_live_subscriptions() -> None:
     asyncio.run(scenario())
 
 
+def test_the_broadcaster_is_owned_by_each_application() -> None:
+    first = create_app()
+    second = create_app()
+
+    first_broadcaster = getattr(first.state, EVENT_BROADCASTER_ATTRIBUTE)
+    second_broadcaster = getattr(second.state, EVENT_BROADCASTER_ATTRIBUTE)
+
+    assert first_broadcaster is not second_broadcaster
+    first_broadcaster.close()
+    # Closing one application's stream transport does not close another application's.
+    assert second_broadcaster.subscriber_count() == 0
+
+
+def test_the_event_module_has_no_durable_store() -> None:
+    source = (Path(__file__).resolve().parents[2] / "src/dynamisbench/api/events.py").read_text(
+        encoding="utf-8"
+    )
+
+    for forbidden in ("pathlib", "sqlite", "shelve", "pickle", "open(", "tempfile"):
+        assert forbidden not in source
+
+
+def test_the_broadcaster_is_safe_when_called_from_a_route_worker_thread(tmp_path: Path) -> None:
+    app = create_app()
+    broadcaster = getattr(app.state, EVENT_BROADCASTER_ATTRIBUTE)
+    worker: list[threading.Thread] = []
+
+    def publish_from_thread() -> None:
+        thread = threading.Thread(
+            target=broadcaster.publish,
+            args=(EventName.WORKSPACE_OPENED, {"workspace_id": "from-worker"}),
+        )
+        worker.append(thread)
+        thread.start()
+
+    _status, _headers, body = asyncio.run(
+        _drive_stream(app, headers={}, frames=2, on_first_frame=publish_from_thread)
+    )
+    for thread in worker:
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+
+    event = _decode_frame(body.split("\n\n")[1])
+    assert event.data == {"workspace_id": "from-worker"}
+
+
 # --------------------------------------------------------------------------- #
 # Authentication and CORS: the same middleware, no stream without a credential
 # --------------------------------------------------------------------------- #

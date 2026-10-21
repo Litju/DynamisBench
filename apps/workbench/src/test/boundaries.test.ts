@@ -330,6 +330,55 @@ describe("the browser depends on nothing scientific", () => {
   });
 });
 
+describe("the workbench cannot mutate authority", () => {
+  it("has no editable surface in the authority panes", () => {
+    for (const path of [
+      "workbench/artifact-tree.tsx",
+      "workbench/explorer.tsx",
+      "workbench/inspector.tsx",
+      "routes/workspace.tsx",
+    ]) {
+      const source = sourceOf(path);
+      expect(source).not.toMatch(/contentEditable|dangerouslySetInnerHTML|<textarea|<input/);
+    }
+  });
+
+  it("has no write verb in the HTTP client except the root-selection command", () => {
+    const client = sourceOf("api/client.ts");
+
+    expect(client).not.toMatch(/method:\s*["'](?:PUT|PATCH|DELETE)["']/i);
+    expect([...client.matchAll(/method:\s*["']POST["']/g)]).toHaveLength(1);
+    expect(client).toContain('"/workspaces/open"');
+  });
+
+  it("keeps operational roots out of routes, query keys and activity", () => {
+    for (const path of [
+      "api/queries.ts",
+      "router.tsx",
+      "routes/workspace.tsx",
+      "workbench/activity.tsx",
+      "workbench/activity-feed.ts",
+    ]) {
+      for (const forbidden of ["sourceRoot", "evidenceRoot", "source_root", "evidence_root"]) {
+        expect(sourceOf(path)).not.toContain(forbidden);
+      }
+    }
+  });
+
+  it("does not retain any read model in the activity feed", () => {
+    const feed = sourceOf("workbench/activity-feed.ts");
+
+    for (const forbidden of [
+      "logical_reference",
+      "semantic_digest",
+      "artifact_id",
+      "content",
+    ]) {
+      expect(feed).not.toContain(forbidden);
+    }
+  });
+});
+
 describe("Arrow is a lazy transport utility", () => {
   const ARROW = "arrow/arrow.ts";
 
