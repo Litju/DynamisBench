@@ -66,6 +66,7 @@ function stubClient() {
           content: null,
         }) satisfies ArtifactInspectionResponse,
     ),
+    streamEvents: () => (async function* () {})(),
   };
 
   return client;

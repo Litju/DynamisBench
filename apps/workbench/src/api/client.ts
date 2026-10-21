@@ -27,6 +27,7 @@
 
 import { EXPECTED_API_VERSION, EXPECTED_PROTOCOL_VERSION } from "../session/types";
 import {
+  decodeApplicationEvent,
   decodeApplicationInfoResponse,
   decodeArtifactInspectionResponse,
   decodeHealthResponse,
@@ -34,8 +35,10 @@ import {
   decodeWorkspaceDiscoveryResponse,
 } from "./decode";
 import { ApiClientError, MAX_API_MESSAGE_LENGTH, isApiErrorCode } from "./errors";
+import { SseParseError, SseParser } from "./sse";
 import type {
   ApiErrorCode,
+  ApplicationEvent,
   ApplicationInfoResponse,
   ArtifactInspectionResponse,
   HealthResponse,
@@ -79,6 +82,15 @@ export interface ApiClient {
   listArtifacts(workspaceId: string): Promise<WorkspaceDiscoveryResponse>;
   /** `GET /api/v1/workspaces/{workspaceId}/artifacts/{artifactId}` */
   getArtifact(workspaceId: string, artifactId: string): Promise<ArtifactInspectionResponse>;
+  /**
+   * `GET /api/v1/events` as a live stream.
+   *
+   * An async iterable rather than a callback so the consumer's loop owns cancellation: the
+   * supplied signal aborts the request and the iterator ends. A refusal (401, 5xx) is thrown
+   * as the client's bounded error before the first frame; a malformed frame is
+   * `invalid_response` and ends the iteration.
+   */
+  streamEvents(options: { signal: AbortSignal }): AsyncIterable<ApplicationEvent>;
 }
 
 function defaultFetch(input: string, init: RequestInit): Promise<Response> {
@@ -206,7 +218,126 @@ export function createApiClient(
         decodeArtifactInspectionResponse,
       );
     },
+
+    async *streamEvents({
+      signal,
+    }: {
+      signal: AbortSignal;
+    }): AsyncIterable<ApplicationEvent> {
+      let response: Response;
+      try {
+        response = await fetchImpl(url("/events"), {
+          method: "GET",
+          headers: {
+            Accept: "text/event-stream",
+            Authorization: authorization,
+          },
+          credentials: "omit",
+          cache: "no-store",
+          signal,
+        });
+      } catch {
+        if (signal.aborted) {
+          return;
+        }
+        throw new ApiClientError("network");
+      }
+
+      if (!response.ok) {
+        const failure = await readEnvelope(response, connection.credential);
+        throw new ApiClientError("http", {
+          status: response.status,
+          code: failure?.code ?? null,
+          apiMessage: failure?.message ?? null,
+        });
+      }
+
+      if (response.body === null) {
+        throw new ApiClientError("invalid_response", { status: response.status });
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8", { fatal: true });
+      const parser = new SseParser();
+
+      // Cancelling the reader is what makes an abort settle promptly even when the
+      // implementation that supplied `Response` does not itself propagate the signal to the
+      // body. It is idempotent with the fetch's own abort.
+      const cancelReader = () => {
+        void reader.cancel().catch(() => {});
+      };
+      if (signal.aborted) {
+        cancelReader();
+      } else {
+        signal.addEventListener("abort", cancelReader, { once: true });
+      }
+
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+
+          let text: string;
+          try {
+            text = decoder.decode(value, { stream: true });
+          } catch {
+            throw new ApiClientError("invalid_response", { status: response.status });
+          }
+
+          for (const frame of parser.push(text)) {
+            yield decodeFrame(frame.data, response.status);
+          }
+        }
+
+        const tail = decoder.decode();
+        for (const frame of [...(tail === "" ? [] : parser.push(tail)), ...parser.end()]) {
+          yield decodeFrame(frame.data, response.status);
+        }
+      } catch (error) {
+        if (signal.aborted) {
+          return;
+        }
+        if (error instanceof ApiClientError) {
+          throw error;
+        }
+        if (error instanceof SseParseError) {
+          throw new ApiClientError("invalid_response", { status: response.status });
+        }
+        throw new ApiClientError("invalid_response", { status: response.status });
+      } finally {
+        signal.removeEventListener("abort", cancelReader);
+        try {
+          reader.releaseLock();
+        } catch {
+          // A reader whose stream has already errored has nothing left to release.
+        }
+      }
+    },
   };
+}
+
+/**
+ * One SSE frame's JSON, decoded as the application's event contract.
+ *
+ * A frame that is not JSON, or JSON that is not this transport's envelope, is not skipped:
+ * skipping would let one malformed frame pass as a quiet gap in an otherwise authoritative
+ * feed. The iterator ends and the reconnect layer decides whether the failure is retryable.
+ */
+function decodeFrame(data: string, status: number): ApplicationEvent {
+  let body: unknown;
+  try {
+    body = JSON.parse(data);
+  } catch {
+    throw new ApiClientError("invalid_response", { status });
+  }
+
+  const event = decodeApplicationEvent(body);
+  if (event === null) {
+    throw new ApiClientError("invalid_response", { status });
+  }
+  return event;
 }
 
 /** A JSON body, if the bytes were one; `null` otherwise. */

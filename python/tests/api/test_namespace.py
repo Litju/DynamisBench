@@ -206,6 +206,7 @@ def test_the_published_paths_are_the_versioned_routes() -> None:
     paths = set(create_app().openapi()["paths"])
 
     assert paths == {
+        f"{API_V1_PREFIX}/events",
         f"{API_V1_PREFIX}/health",
         f"{API_V1_PREFIX}/info",
         f"{API_V1_PREFIX}/workspaces/open",

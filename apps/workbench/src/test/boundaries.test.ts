@@ -250,6 +250,29 @@ describe("the credential stays in the session and the client", () => {
   });
 });
 
+describe("the event stream is fetch-based and transient", () => {
+  it("never uses the browser's EventSource or a WebSocket", () => {
+    const users = filesMatching(
+      (source) => /\bEventSource\b/.test(source) || /\bWebSocket\b/.test(source),
+    );
+
+    expect(users).toEqual([]);
+  });
+
+  it("keeps the reconnect loop out of the HTTP client module", () => {
+    // One module decides how to ask again, and one module decides how to ask at all.
+    expect(sourceOf("api/client.ts")).not.toContain("maxConsecutiveFailures");
+    expect(sourceOf("api/event-stream.ts")).not.toContain("/api/v1");
+  });
+
+  it("does not persist activity", () => {
+    for (const path of ["workbench/activity.tsx", "workbench/activity-feed.ts"]) {
+      const source = sourceOf(path);
+      expect(source).not.toMatch(/localStorage|sessionStorage|indexedDB|document\.cookie/);
+    }
+  });
+});
+
 describe("the browser depends on nothing scientific", () => {
   /** The runtime dependencies the workbench is allowed to import, and nothing else. */
   const ALLOWED_SPECIFIERS = new Set([
@@ -262,6 +285,7 @@ describe("the browser depends on nothing scientific", () => {
     "lucide-react",
     "zustand",
     "@radix-ui/react-slot",
+    "apache-arrow",
     "class-variance-authority",
     "clsx",
     "tailwind-merge",
@@ -303,6 +327,81 @@ describe("the browser depends on nothing scientific", () => {
     );
 
     expect(namers).toEqual([]);
+  });
+});
+
+describe("the workbench cannot mutate authority", () => {
+  it("has no editable surface in the authority panes", () => {
+    for (const path of [
+      "workbench/artifact-tree.tsx",
+      "workbench/explorer.tsx",
+      "workbench/inspector.tsx",
+      "routes/workspace.tsx",
+    ]) {
+      const source = sourceOf(path);
+      expect(source).not.toMatch(/contentEditable|dangerouslySetInnerHTML|<textarea|<input/);
+    }
+  });
+
+  it("has no write verb in the HTTP client except the root-selection command", () => {
+    const client = sourceOf("api/client.ts");
+
+    expect(client).not.toMatch(/method:\s*["'](?:PUT|PATCH|DELETE)["']/i);
+    expect([...client.matchAll(/method:\s*["']POST["']/g)]).toHaveLength(1);
+    expect(client).toContain('"/workspaces/open"');
+  });
+
+  it("keeps operational roots out of routes, query keys and activity", () => {
+    for (const path of [
+      "api/queries.ts",
+      "router.tsx",
+      "routes/workspace.tsx",
+      "workbench/activity.tsx",
+      "workbench/activity-feed.ts",
+    ]) {
+      for (const forbidden of ["sourceRoot", "evidenceRoot", "source_root", "evidence_root"]) {
+        expect(sourceOf(path)).not.toContain(forbidden);
+      }
+    }
+  });
+
+  it("does not retain any read model in the activity feed", () => {
+    const feed = sourceOf("workbench/activity-feed.ts");
+
+    for (const forbidden of [
+      "logical_reference",
+      "semantic_digest",
+      "artifact_id",
+      "content",
+    ]) {
+      expect(feed).not.toContain(forbidden);
+    }
+  });
+});
+
+describe("Arrow is a lazy transport utility", () => {
+  const ARROW = "arrow/arrow.ts";
+
+  it("is the only production module that names the Arrow package", () => {
+    const namers = filesMatching((source) => source.includes("apache-arrow"));
+
+    expect(namers).toEqual([ARROW]);
+  });
+
+  it("imports the package dynamically, never into the initial module graph", () => {
+    const source = sourceOf(ARROW);
+
+    expect(source).toMatch(/import\s*\(\s*["']apache-arrow["']\s*\)/);
+    expect(source).not.toMatch(/^\s*import\s+[^;]*from\s*["']apache-arrow["']/m);
+    expect(source).not.toMatch(/^\s*import\s*["']apache-arrow["']/m);
+  });
+
+  it("is not imported by the route tree, the client or the shell", () => {
+    const importers = filesMatching((source) =>
+      importSpecifiers(source).some((specifier) => specifier.includes("arrow/arrow")),
+    );
+
+    expect(importers).toEqual([]);
   });
 });
 
@@ -459,12 +558,16 @@ describe("the scan itself", () => {
       "main.tsx",
       "api/client.ts",
       "api/queries.ts",
+      "api/sse.ts",
+      "api/event-stream.ts",
       "router.tsx",
       "session/tauri-source.ts",
       "session/source.ts",
       "store/ui.ts",
       "ui/button.tsx",
       "shell/app-shell.tsx",
+      "workbench/activity.tsx",
+      "workbench/activity-feed.ts",
     ];
 
     for (const path of expected) {
