@@ -63,6 +63,31 @@ export const API_ERROR_CODES = [
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];
 
+/** The closed vocabulary of application events carried by `/api/v1/events`. */
+export const APPLICATION_EVENT_NAMES = [
+  "stream.ready",
+  "workspace.opened",
+  "workspace.discovered",
+  "artifact.inspected",
+] as const;
+
+export type ApplicationEventName = (typeof APPLICATION_EVENT_NAMES)[number];
+
+/** One scalar value an event may carry. The server bounds each of them. */
+export type ApplicationEventValue = string | number | boolean | null;
+
+/**
+ * One event frame, exactly as the SSE `data:` field carries it.
+ *
+ * `data` is a mapping of bounded scalar facts, not a read model: an event says an operation
+ * happened and how many of something it touched, never what the document contained.
+ */
+export interface ApplicationEvent {
+  schema_version: 1;
+  event: ApplicationEventName;
+  data: Record<string, ApplicationEventValue>;
+}
+
 /** `GET /api/v1/health` — the application process is serving its versioned API. */
 export interface HealthResponse {
   status: "ok";

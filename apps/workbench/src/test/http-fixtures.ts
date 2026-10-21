@@ -52,3 +52,52 @@ export function recordingFetch(
     },
   };
 }
+
+/** A `Response` whose body is a stream of the supplied UTF-8 chunks. */
+export function streamResponse(chunks: readonly string[]): Response {
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    }),
+    { status: 200, headers: { "Content-Type": "text/event-stream" } },
+  );
+}
+
+/** A stream a test can feed after the request has been made. */
+export function controlledStreamResponse(): {
+  readonly response: Response;
+  push(chunk: string): void;
+  close(): void;
+} {
+  const encoder = new TextEncoder();
+  let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+  const response = new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller;
+      },
+    }),
+    { status: 200, headers: { "Content-Type": "text/event-stream" } },
+  );
+
+  return {
+    response,
+    push(chunk) {
+      streamController?.enqueue(encoder.encode(chunk));
+    },
+    close() {
+      streamController?.close();
+    },
+  };
+}
+
+/** A `Response` whose body yields exactly these bytes. */
+export function bytesResponse(bytes: Uint8Array, status = 200): Response {
+  return new Response(bytes as BodyInit, { status });
+}

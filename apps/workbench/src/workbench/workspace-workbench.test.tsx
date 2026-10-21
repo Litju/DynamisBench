@@ -23,7 +23,7 @@ import {
 } from "../test/api-fixtures";
 import { controlledSource } from "../test/controlled-source";
 import { errorResponse, stubFetch, unavailableEvents } from "../test/fetch-stub";
-import { jsonResponse } from "../test/http-fixtures";
+import { jsonResponse, streamResponse } from "../test/http-fixtures";
 import { renderApplication } from "../test/render-app";
 import { FIXTURE_CREDENTIAL, readyApiSession } from "../test/session-fixtures";
 
@@ -35,6 +35,10 @@ const FACTOR_INSPECTION: ArtifactInspectionResponse = {
 const FACTOR_ARTIFACT_PATH = `/artifacts/${VERSIONLESS_FACTOR.artifact_id}`;
 const BENCHMARK_ARTIFACT_PATH = `/artifacts/${ARTIFACT.artifact_id}`;
 const INVALID_ARTIFACT_PATH = `/artifacts/${INVALID_INSPECTION.artifact_id}`;
+
+function eventLine(event: unknown): string {
+  return `data: ${JSON.stringify(event)}\n\n`;
+}
 
 function readySource() {
   const controlled = controlledSource();
@@ -56,7 +60,7 @@ async function renderWorkspace(
   const recorder = stubFetch(handler);
   const view = renderApplication("/workspace/workspace-1", { source: source.source });
   await source.publishReady();
-  await screen.findByRole("heading", { name: "Explorer" });
+  await screen.findByRole("heading", { name: "Explorer" }, { timeout: 5_000 });
   return { ...view, calls: recorder.calls };
 }
 
@@ -99,7 +103,10 @@ describe("the workspace workbench", () => {
     expect(screen.getByText("2 valid")).toBeInTheDocument();
     expect(screen.getByText("1 invalid")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Activity" })).toBeInTheDocument();
-    expect(screen.getByText(/no events yet/i)).toBeInTheDocument();
+    expect(await screen.findByText("Events: refused")).toBeInTheDocument();
+    expect(
+      screen.getByText(/refused the event stream for this session/i),
+    ).toBeInTheDocument();
   });
 
   it("renders validated content as structure and the documented inspector facts", async () => {
@@ -273,5 +280,49 @@ describe("the workspace workbench", () => {
       expect(call.url).not.toContain("source_root");
       expect(call.url).not.toContain("evidence_root");
     }
+  });
+
+  it("shows a live event stream and bounded activity lines", async () => {
+    const source = readySource();
+    await renderWorkspace(({ url }) => {
+      if (url.endsWith("/events")) {
+        return streamResponse([
+          eventLine({
+            schema_version: 1,
+            event: "stream.ready",
+            data: { heartbeat_seconds: 15, queue_capacity: 32 },
+          }),
+          eventLine({
+            schema_version: 1,
+            event: "workspace.opened",
+            data: { workspace_id: "workspace-1", categories_present: 3 },
+          }),
+          eventLine({
+            schema_version: 1,
+            event: "workspace.discovered",
+            data: {
+              workspace_id: "workspace-1",
+              artifact_count: 3,
+              valid_count: 2,
+              invalid_count: 1,
+              issue_count: 1,
+              issues_truncated: true,
+            },
+          }),
+        ]);
+      }
+      if (url.endsWith("/artifacts")) {
+        return jsonResponse(DISCOVERY_WITH_INVALID);
+      }
+      if (url.endsWith("/info")) {
+        return jsonResponse(APPLICATION_INFO);
+      }
+      return unavailableEvents();
+    }, source);
+
+    expect(await screen.findByText("Events: live")).toBeInTheDocument();
+    expect(await screen.findAllByText("Workspace opened")).not.toHaveLength(0);
+    const activity = screen.getByRole("region", { name: "Activity" });
+    expect(activity.textContent).toContain("Discovery completed");
   });
 });

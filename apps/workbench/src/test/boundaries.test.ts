@@ -250,6 +250,29 @@ describe("the credential stays in the session and the client", () => {
   });
 });
 
+describe("the event stream is fetch-based and transient", () => {
+  it("never uses the browser's EventSource or a WebSocket", () => {
+    const users = filesMatching(
+      (source) => /\bEventSource\b/.test(source) || /\bWebSocket\b/.test(source),
+    );
+
+    expect(users).toEqual([]);
+  });
+
+  it("keeps the reconnect loop out of the HTTP client module", () => {
+    // One module decides how to ask again, and one module decides how to ask at all.
+    expect(sourceOf("api/client.ts")).not.toContain("maxConsecutiveFailures");
+    expect(sourceOf("api/event-stream.ts")).not.toContain("/api/v1");
+  });
+
+  it("does not persist activity", () => {
+    for (const path of ["workbench/activity.tsx", "workbench/activity-feed.ts"]) {
+      const source = sourceOf(path);
+      expect(source).not.toMatch(/localStorage|sessionStorage|indexedDB|document\.cookie/);
+    }
+  });
+});
+
 describe("the browser depends on nothing scientific", () => {
   /** The runtime dependencies the workbench is allowed to import, and nothing else. */
   const ALLOWED_SPECIFIERS = new Set([
@@ -459,12 +482,16 @@ describe("the scan itself", () => {
       "main.tsx",
       "api/client.ts",
       "api/queries.ts",
+      "api/sse.ts",
+      "api/event-stream.ts",
       "router.tsx",
       "session/tauri-source.ts",
       "session/source.ts",
       "store/ui.ts",
       "ui/button.tsx",
       "shell/app-shell.tsx",
+      "workbench/activity.tsx",
+      "workbench/activity-feed.ts",
     ];
 
     for (const path of expected) {

@@ -29,10 +29,14 @@
 
 import { EXPECTED_API_VERSION } from "../session/types";
 import {
+  APPLICATION_EVENT_NAMES,
   AUTHORING_FORMATS,
   DIAGNOSTIC_CODES,
   SOURCE_CATEGORIES,
   VALIDATION_STATUSES,
+  type ApplicationEvent,
+  type ApplicationEventName,
+  type ApplicationEventValue,
   type ApplicationInfoResponse,
   type ArtifactDiagnostic,
   type ArtifactInspectionResponse,
@@ -396,4 +400,73 @@ export function decodeArtifactInspectionResponse(
   }
 
   return record.content === null ? { ...summary, content: null } : null;
+}
+
+/** The same bounds the Python envelope applies. */
+export const MAX_EVENT_DATA_FIELDS = 8;
+export const MAX_EVENT_KEY_LENGTH = 32;
+export const MAX_EVENT_VALUE_LENGTH = 128;
+export const MAX_EVENT_INTEGER = 2 ** 53;
+
+/**
+ * One application event, or `null` if the frame is not this transport's contract.
+ *
+ * The version is compared, not coerced: a `schema_version` this client does not speak is a
+ * frame it must refuse rather than interpret. The event name is drawn from the same closed
+ * vocabulary the server publishes, and every data value is a bounded scalar. An unknown
+ * field inside `data` is not accepted into the event, because a client that kept one would
+ * be the place a future server field leaked through unchecked.
+ */
+export function decodeApplicationEvent(value: unknown): ApplicationEvent | null {
+  const record = asObject(value);
+  if (record === null) {
+    return null;
+  }
+
+  if (record.schema_version !== 1) {
+    return null;
+  }
+
+  const event = requiredEnum<ApplicationEventName>(
+    record,
+    "event",
+    APPLICATION_EVENT_NAMES,
+  );
+  if (event === null) {
+    return null;
+  }
+
+  const dataRecord = asObject(record.data);
+  if (dataRecord === null) {
+    return null;
+  }
+
+  const entries = Object.entries(dataRecord);
+  if (entries.length > MAX_EVENT_DATA_FIELDS) {
+    return null;
+  }
+
+  const data: Record<string, ApplicationEventValue> = {};
+  for (const [key, entry] of entries) {
+    if (key.length === 0 || key.length > MAX_EVENT_KEY_LENGTH) {
+      return null;
+    }
+    if (typeof entry === "string") {
+      if (entry.length > MAX_EVENT_VALUE_LENGTH) {
+        return null;
+      }
+      data[key] = entry;
+    } else if (typeof entry === "boolean" || entry === null) {
+      data[key] = entry;
+    } else if (typeof entry === "number") {
+      if (!Number.isInteger(entry) || Math.abs(entry) > MAX_EVENT_INTEGER) {
+        return null;
+      }
+      data[key] = entry;
+    } else {
+      return null;
+    }
+  }
+
+  return { schema_version: 1, event, data };
 }
