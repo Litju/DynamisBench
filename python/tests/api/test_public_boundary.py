@@ -104,7 +104,6 @@ READER_MODULES = (
     "workspaces.py",
 )
 """The workspace-reading surface DB-2.4 (RES-377) adds, reachable only through ``create_app``.
-
 Two modules, and the split between them is the whole reason the boundary survived the change.
 ``workspace_registry`` holds the application's in-memory map of open workspaces and nothing
 else — no scientific type, no filesystem, no validation. ``workspaces`` is the only module in
@@ -117,8 +116,15 @@ Neither module is in ``__all__``: the API advertises its application surface, an
 route's read models are reached by the routes that publish them.
 """
 
-EXPECTED_MODULES = tuple(sorted((*BOUNDARY_MODULES, *SESSION_MODULES, *READER_MODULES)))
-"""The union of the three groups, in the filesystem order the measurement produces."""
+EXPECTED_MODULES = tuple(
+    sorted((*BOUNDARY_MODULES, *SESSION_MODULES, *READER_MODULES, "events.py"))
+)
+"""The union of the three groups plus DB-2.6's event transport, in filesystem order.
+
+``events.py`` is a fourth, one-module group rather than part of the reader modules: it owns
+the application-instance broadcaster and the one streaming route, imports no workspace or
+domain layer, and adds exactly one reviewed public route to the boundary.
+"""
 
 FORBIDDEN_ENGINE_MODULES = frozenset(
     {"mujoco", "opensim", "simtk", "gym", "gymnasium", "pybullet", "brax", "dm_control"}
@@ -319,6 +325,7 @@ def test_no_digest_reaches_an_api_module_directly(filename: str) -> None:
         ("control.py", ALLOWED_EXTERNAL_SURFACE),
         ("session.py", ALLOWED_EXTERNAL_SURFACE),
         ("server.py", SESSION_EXTERNAL_SURFACE),
+        ("events.py", ALLOWED_EXTERNAL_SURFACE),
     ],
 )
 def test_the_api_package_has_a_closed_external_surface(
@@ -448,7 +455,10 @@ def test_the_module_set_is_the_whole_package() -> None:
     assert set(BOUNDARY_MODULES) & set(SESSION_MODULES) == set()
     assert set(BOUNDARY_MODULES) & set(READER_MODULES) == set()
     assert set(SESSION_MODULES) & set(READER_MODULES) == set()
-    assert len(BOUNDARY_MODULES) + len(SESSION_MODULES) + len(READER_MODULES) == len(
+    assert "events.py" not in set(BOUNDARY_MODULES)
+    assert "events.py" not in set(SESSION_MODULES)
+    assert "events.py" not in set(READER_MODULES)
+    assert len(BOUNDARY_MODULES) + len(SESSION_MODULES) + len(READER_MODULES) + 1 == len(
         EXPECTED_MODULES
     )
 
@@ -458,14 +468,15 @@ def _openapi() -> dict[str, Any]:
 
 
 def test_the_openapi_document_publishes_exactly_the_versioned_routes() -> None:
-    """Five routes under one namespace, and no verb that publishes itself for free.
+    """Six routes under one namespace, and no verb that publishes itself for free.
 
     Stated as a closed set, so an unversioned route or a second namespace fails here instead
     of quietly becoming a public interface. The workspace routes read; the one non-GET verb is
-    the root-selection operation and nothing else.
+    the root-selection operation and nothing else. DB-2.6 adds exactly one GET stream.
     """
     paths = _openapi()["paths"]
     assert sorted(paths) == [
+        f"{API_V1_PREFIX}/events",
         f"{API_V1_PREFIX}/health",
         f"{API_V1_PREFIX}/info",
         f"{API_V1_PREFIX}/workspaces/open",
@@ -488,6 +499,12 @@ def test_the_openapi_document_types_every_success_response() -> None:
     assert response_of(f"{API_V1_PREFIX}/health", "get")["content"]["application/json"]["schema"][
         "$ref"
     ].endswith("/HealthResponse")
+    assert (
+        response_of(f"{API_V1_PREFIX}/events", "get")["content"]["text/event-stream"]["schema"][
+            "type"
+        ]
+        == "string"
+    )
     assert response_of(f"{API_V1_PREFIX}/info", "get")["content"]["application/json"]["schema"][
         "$ref"
     ].endswith("/ApplicationInfoResponse")

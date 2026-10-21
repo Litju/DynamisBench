@@ -33,6 +33,12 @@ from typing import Annotated, Final
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from dynamisbench.api.errors import ErrorResponse, refusal_responses
+from dynamisbench.api.events import (
+    artifact_inspected_event,
+    publish_from_request,
+    workspace_discovered_event,
+    workspace_opened_event,
+)
 from dynamisbench.api.models import (
     MAX_DIAGNOSTIC_REFERENCE_LENGTH,
     ArtifactDiagnostic,
@@ -153,6 +159,7 @@ def _summary(artifact_id: str, inspection: SourceInspection) -> ArtifactSummary:
 )
 def open_workspace_route(
     request: OpenWorkspaceRequest,
+    http_request: Request,
     registry: RegisteredWorkspace,
 ) -> OpenWorkspaceResponse:
     """Open an existing workspace and return the identifier the API will know it by.
@@ -173,7 +180,7 @@ def open_workspace_route(
 
     workspace = registration.workspace
     report = workspace.inspect()
-    return OpenWorkspaceResponse(
+    response = OpenWorkspaceResponse(
         workspace_id=registration.identifier,
         evidence_inside_source=workspace.evidence_is_inside_source,
         source_categories=tuple(
@@ -181,6 +188,15 @@ def open_workspace_route(
             for category in SourceCategory
         ),
     )
+    publish_from_request(
+        http_request,
+        workspace_opened_event(
+            workspace_id=response.workspace_id,
+            categories_present=sum(status.exists for status in response.source_categories),
+            evidence_inside_source=response.evidence_inside_source,
+        ),
+    )
+    return response
 
 
 @workspace_router.get(
@@ -192,6 +208,7 @@ def open_workspace_route(
 )
 def read_artifacts(
     workspace_id: str,
+    request: Request,
     registry: RegisteredWorkspace,
 ) -> WorkspaceDiscoveryResponse:
     """Rescan a workspace's source categories and describe what they currently hold.
@@ -216,13 +233,26 @@ def read_artifacts(
         inspection = inspect_locator(workspace, locator)
         summaries.append(_summary(artifact_id=artifact_id, inspection=inspection))
 
-    return WorkspaceDiscoveryResponse(
+    response = WorkspaceDiscoveryResponse(
         workspace_id=workspace_id,
         categories=_category_statuses(discovery),
         artifacts=ArtifactSummaryList(artifacts=tuple(summaries)),
         issues=tuple(_discovery_diagnostic(issue) for issue in discovery.issues),
         issues_truncated=discovery.issues_truncated,
     )
+    valid_count = sum(summary.validation_status is ValidationStatus.VALID for summary in summaries)
+    publish_from_request(
+        request,
+        workspace_discovered_event(
+            workspace_id=workspace_id,
+            artifact_count=len(summaries),
+            valid_count=valid_count,
+            invalid_count=len(summaries) - valid_count,
+            issue_count=len(response.issues),
+            issues_truncated=response.issues_truncated,
+        ),
+    )
+    return response
 
 
 @workspace_router.get(
@@ -233,6 +263,7 @@ def read_artifacts(
 def read_artifact(
     workspace_id: str,
     artifact_id: str,
+    request: Request,
     registry: RegisteredWorkspace,
 ) -> ArtifactInspectionResponse:
     """Re-read and revalidate the current bytes of one located artifact.
@@ -256,10 +287,22 @@ def read_artifact(
     inspection = inspect_locator(workspace, locator)
     summary = _summary(artifact_id=artifact_id, inspection=inspection)
 
-    return ArtifactInspectionResponse(
+    response = ArtifactInspectionResponse(
         **summary.model_dump(),
         content=inspection.content if inspection.valid else None,
     )
+    publish_from_request(
+        request,
+        artifact_inspected_event(
+            workspace_id=workspace_id,
+            artifact_id=artifact_id,
+            category=summary.category.value,
+            kind=summary.kind,
+            validation_status=summary.validation_status.value,
+            diagnostic_count=len(summary.diagnostics),
+        ),
+    )
+    return response
 
 
 _REFERENCE_OVERFLOW_MARKER: Final = "\u2026"

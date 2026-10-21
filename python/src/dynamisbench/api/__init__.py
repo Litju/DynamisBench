@@ -12,10 +12,12 @@ session, not the library, decides whether and where to serve it (RES-375).
 Three submodules exist and are deliberately absent from that surface. ``session`` is the
 session's credential, origin allow-list and authentication policy; ``server`` is the
 supervised process that binds a socket and serves the application; ``control`` is the
-parent's private stdin channel that asks a running sidecar to stop. None is imported
-here, so ``import dynamisbench.api`` still loads no Uvicorn and still starts nothing — the
-session reaches them by importing the modules, which is also why no name advertised below
-mentions a session, a credential or a control record.
+parent's private stdin channel that asks a running sidecar to stop. A fourth, ``events``, owns
+the application-instance event broadcaster and the one streaming route; it is reached only
+through the factory and is not advertised here either. None is imported here, so
+``import dynamisbench.api`` still loads no Uvicorn and still starts nothing — the session
+reaches them by importing the modules, which is also why no name advertised below mentions a
+session, a credential, a control record or a stream.
 """
 
 from __future__ import annotations

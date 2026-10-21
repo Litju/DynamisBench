@@ -16,14 +16,26 @@ filesystem access, so an application built and never asked about a workspace has
 nothing. A second application instance builds a second registry, which is what makes the
 restart guarantee structural rather than documented — an identifier held by the first means
 nothing to the second, because the second has never heard of it.
+
+**One empty broadcaster, per application.** The event stream needs somewhere to keep its live
+subscribers, and the factory creates that too: empty, in memory, and owned by this application.
+It starts no thread and opens no file; a second application's subscribers are not the first's.
 """
 
 from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from dynamisbench import __version__
 from dynamisbench.api.errors import install_error_contract
+from dynamisbench.api.events import (
+    EVENT_BROADCASTER_ATTRIBUTE,
+    EventBroadcaster,
+    events_router,
+)
 from dynamisbench.api.routing import (
     API_V1_PREFIX,
     APPLICATION_NAME,
@@ -52,19 +64,37 @@ def create_app() -> FastAPI:
     """Build the DynamisBench application.
 
     Deterministic and side-effect free. Two calls in one process produce two independent
-    applications describing the same schema, with their own empty registries, and neither
-    call reads the workspace, loads a simulator, touches the filesystem, or opens a socket.
+    applications describing the same schema, with their own empty registries and broadcasters,
+    and neither call reads the workspace, loads a simulator, touches the filesystem, or opens
+    a socket.
     """
+    broadcaster = EventBroadcaster()
+
+    @asynccontextmanager
+    async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
+        """Close live event streams when this application stops serving.
+
+        Only subscribers are affected: there is no background task to join and no state to
+        flush, because the broadcaster is transient by construction.
+        """
+        try:
+            yield
+        finally:
+            broadcaster.close()
+
     app = FastAPI(
         title=f"{APPLICATION_NAME} API",
         description=API_DESCRIPTION,
         version=__version__,
+        lifespan=lifespan,
     )
     app.include_router(v1_router)
     app.include_router(workspace_router, prefix=API_V1_PREFIX)
+    app.include_router(events_router, prefix=API_V1_PREFIX)
     # In-memory and empty. Creating a registry is object construction, so the factory's
     # own contract — one object out, nothing touched on the way — is unchanged by it.
     setattr(app.state, WORKSPACE_REGISTRY_ATTRIBUTE, WorkspaceRegistry())
+    setattr(app.state, EVENT_BROADCASTER_ATTRIBUTE, broadcaster)
     install_error_contract(app)
     return app
 
