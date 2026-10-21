@@ -125,13 +125,11 @@ export class SseParser {
         const line = this.buffer.slice(0, index);
         const skip = this.buffer[index + 1] === "\n" ? 2 : 1;
         this.buffer = this.buffer.slice(index + skip);
-        this.frameChars += line.length;
         return line;
       }
       if (character === "\n") {
         const line = this.buffer.slice(0, index);
         this.buffer = this.buffer.slice(index + 1);
-        this.frameChars += line.length;
         return line;
       }
     }

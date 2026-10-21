@@ -75,11 +75,11 @@ describe("SseParser", () => {
   it("refuses a frame larger than the reviewed bound", () => {
     const parser = new SseParser();
 
-    expect(() => parser.push(`data: ${"x".repeat(MAX_SSE_FRAME_CHARS)}`)).toThrow(
+    expect(() => parser.push(`data: ${"x".repeat(MAX_SSE_FRAME_CHARS + 1)}`)).toThrow(
       SseParseError,
     );
     try {
-      parser.push(`data: ${"x".repeat(MAX_SSE_FRAME_CHARS)}`);
+      parser.push(`data: ${"x".repeat(MAX_SSE_FRAME_CHARS + 1)}`);
     } catch (error) {
       expect((error as SseParseError).reason).toBe("frame_too_large");
     }
@@ -87,7 +87,7 @@ describe("SseParser", () => {
 
   it("can be reset after a refusal and read the next stream", () => {
     const parser = new SseParser();
-    expect(() => parser.push(`data: ${"x".repeat(MAX_SSE_FRAME_CHARS)}`)).toThrow();
+    expect(() => parser.push(`data: ${"x".repeat(MAX_SSE_FRAME_CHARS + 1)}`)).toThrow();
     parser.reset();
     expect(parser.push("data: fresh\n\n").map((frame) => frame.data)).toEqual(["fresh"]);
   });
