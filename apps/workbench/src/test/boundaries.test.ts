@@ -285,6 +285,7 @@ describe("the browser depends on nothing scientific", () => {
     "lucide-react",
     "zustand",
     "@radix-ui/react-slot",
+    "apache-arrow",
     "class-variance-authority",
     "clsx",
     "tailwind-merge",
@@ -326,6 +327,32 @@ describe("the browser depends on nothing scientific", () => {
     );
 
     expect(namers).toEqual([]);
+  });
+});
+
+describe("Arrow is a lazy transport utility", () => {
+  const ARROW = "arrow/arrow.ts";
+
+  it("is the only production module that names the Arrow package", () => {
+    const namers = filesMatching((source) => source.includes("apache-arrow"));
+
+    expect(namers).toEqual([ARROW]);
+  });
+
+  it("imports the package dynamically, never into the initial module graph", () => {
+    const source = sourceOf(ARROW);
+
+    expect(source).toMatch(/import\s*\(\s*["']apache-arrow["']\s*\)/);
+    expect(source).not.toMatch(/^\s*import\s+[^;]*from\s*["']apache-arrow["']/m);
+    expect(source).not.toMatch(/^\s*import\s*["']apache-arrow["']/m);
+  });
+
+  it("is not imported by the route tree, the client or the shell", () => {
+    const importers = filesMatching((source) =>
+      importSpecifiers(source).some((specifier) => specifier.includes("arrow/arrow")),
+    );
+
+    expect(importers).toEqual([]);
   });
 });
 
