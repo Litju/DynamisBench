@@ -31,7 +31,6 @@ import {
 import type { ArtifactInspectionResponse, ArtifactSummary } from "../api/types";
 import { useApiClient, useSession } from "../session/provider";
 import { Badge } from "../ui/badge";
-import { ActivityPanel } from "../workbench/activity";
 import { ArtifactContent } from "../workbench/artifact-tree";
 import { ExplorerPane } from "../workbench/explorer";
 import { InspectorPane } from "../workbench/inspector";
@@ -49,7 +48,6 @@ function WorkspacePage() {
   return (
     <div className="mx-auto flex w-full max-w-[110rem] flex-col gap-4">
       <WorkspaceWorkbench workspaceId={workspaceId} />
-      <ActivityPanel />
     </div>
   );
 }
