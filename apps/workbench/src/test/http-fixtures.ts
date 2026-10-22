@@ -97,6 +97,57 @@ export function controlledStreamResponse(): {
   };
 }
 
+/**
+ * A controlled stream with an observable `cancel()` callback.
+ *
+ * The callback is the connection-lifecycle evidence: a test can keep the server side of the
+ * stream open indefinitely and assert that the client closed it, rather than inferring
+ * closure from a rejected promise or a released reader lock.
+ */
+export function observableStreamResponse(): {
+  readonly response: Response;
+  push(chunk: string): void;
+  close(): void;
+  cancelCount(): number;
+  cancelReason(): unknown;
+} {
+  const encoder = new TextEncoder();
+  let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+  let cancels = 0;
+  let reason: unknown;
+
+  const response = new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller;
+      },
+      cancel(cause) {
+        cancels += 1;
+        reason = cause;
+        streamController = null;
+      },
+    }),
+    { status: 200, headers: { "Content-Type": "text/event-stream" } },
+  );
+
+  return {
+    response,
+    push(chunk) {
+      streamController?.enqueue(encoder.encode(chunk));
+    },
+    close() {
+      streamController?.close();
+      streamController = null;
+    },
+    cancelCount() {
+      return cancels;
+    },
+    cancelReason() {
+      return reason;
+    },
+  };
+}
+
 /** A `Response` whose body yields exactly these bytes. */
 export function bytesResponse(bytes: Uint8Array, status = 200): Response {
   return new Response(bytes as BodyInit, { status });
