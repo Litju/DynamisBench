@@ -34,7 +34,11 @@ const READY: ApplicationEvent = {
 const OPENED: ApplicationEvent = {
   schema_version: 1,
   event: "workspace.opened",
-  data: { workspace_id: "workspace-1", categories_present: 3 },
+  data: {
+    workspace_id: "workspace-1",
+    categories_present: 3,
+    evidence_inside_source: false,
+  },
 };
 
 async function collect(
@@ -85,10 +89,10 @@ describe("ApiClient.streamEvents", () => {
       schema_version: 1,
       event: "artifact.inspected",
       data: {
-        workspace_id: "w",
+        workspace_id: "café",
         artifact_id: "a",
         category: "benchmarks",
-        kind: "café",
+        kind: "benchmark",
         validation_status: "valid",
         diagnostic_count: 0,
       },
@@ -109,7 +113,18 @@ describe("ApiClient.streamEvents", () => {
 
     const events = await collect(client);
 
-    expect(events[0]?.data.kind).toBe("café");
+    expect(events[0]).toEqual({
+      schema_version: 1,
+      event: "artifact.inspected",
+      data: {
+        workspace_id: "café",
+        artifact_id: "a",
+        category: "benchmarks",
+        kind: "benchmark",
+        validation_status: "valid",
+        diagnostic_count: 0,
+      },
+    });
   });
 
   it("ignores comment heartbeats", async () => {

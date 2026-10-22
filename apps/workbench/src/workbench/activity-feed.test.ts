@@ -19,7 +19,11 @@ import {
 const OPENED: ApplicationEvent = {
   schema_version: 1,
   event: "workspace.opened",
-  data: { workspace_id: "w", categories_present: 3 },
+  data: {
+    workspace_id: "w",
+    categories_present: 3,
+    evidence_inside_source: false,
+  },
 };
 
 const DISCOVERED: ApplicationEvent = {

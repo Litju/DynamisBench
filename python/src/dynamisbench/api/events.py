@@ -32,14 +32,16 @@ is ignored by the SSE parser, so it cannot be mistaken for an application event.
 from __future__ import annotations
 
 import asyncio
+import re
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Final, Literal
+from typing import Final, Literal, NamedTuple
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
-from pydantic import Field, field_validator
+from pydantic import Field, StrictBool, StrictInt, StrictStr, model_validator
 
 from dynamisbench.api.errors import refusal_responses
 from dynamisbench.api.models import ApiModel
@@ -85,7 +87,40 @@ something it was describing.
 MAX_EVENT_INTEGER: Final = 2**53
 """The largest integer a JavaScript client can represent exactly."""
 
-EventValue = str | bool | int | None
+EventValue = StrictStr | StrictBool | StrictInt | None
+"""One scalar an event payload may carry.
+
+The strict variants are deliberate. A lax union would admit ``"15"`` where an integer is
+published, or ``15.0`` where an integer was meant, and the per-event validation below would
+then be checking a value pydantic had already converted. An event carries the primitive it
+declares or it is refused.
+"""
+
+EVENT_SOURCE_CATEGORIES: Final = (
+    "benchmarks",
+    "realizations",
+    "studies",
+    "references",
+    "schemas",
+)
+"""The accepted source categories an inspection event may name.
+
+Restated rather than imported: this module is the event transport and imports no workspace
+or domain layer, so a category reaches a client only because this module admitted it. A
+qualification test compares the tuple with the workspace layer's declaration so the two
+cannot drift silently.
+"""
+
+EVENT_VALIDATION_STATUSES: Final = ("valid", "invalid")
+"""The two validation states an inspection event may report."""
+
+EVENT_KIND_PATTERN: Final = re.compile(r"^[a-z][a-z0-9_]*$")
+"""What a bounded authority-kind string looks like.
+
+A kind is the first directory below a source category, so it is a single lowercase token:
+no separator, no drive letter, no prose. The length bound is the envelope's own
+:data:`MAX_EVENT_VALUE_LENGTH`.
+"""
 
 
 class EventName(StrEnum):
@@ -101,32 +136,117 @@ class EventName(StrEnum):
     ARTIFACT_INSPECTED = "artifact.inspected"
 
 
-class ApplicationEvent(ApiModel):
-    """One frame's payload: the version, the event name, and bounded scalar data.
+class _ValueKind(StrEnum):
+    """What one published payload field is allowed to be."""
 
-    ``data`` is a mapping rather than a union of per-event models so that the envelope stays
-    one small shape a client can decode before it knows which event arrived. The mapping is
-    bounded by validators; each builder below fixes the keys it publishes.
+    STRING = "string"
+    KIND = "kind"
+    CATEGORY = "category"
+    VALIDATION_STATUS = "validation_status"
+    INTEGER = "integer"
+    BOOLEAN = "boolean"
+
+
+class _EventField(NamedTuple):
+    """One required field: its published name, its kind, and an integer's lower bound."""
+
+    name: str
+    kind: _ValueKind
+    minimum: int = 0
+
+
+_EVENT_FIELDS: Final[Mapping[EventName, tuple[_EventField, ...]]] = {
+    EventName.STREAM_READY: (
+        _EventField("heartbeat_seconds", _ValueKind.INTEGER),
+        _EventField("queue_capacity", _ValueKind.INTEGER, minimum=1),
+    ),
+    EventName.WORKSPACE_OPENED: (
+        _EventField("workspace_id", _ValueKind.STRING),
+        _EventField("categories_present", _ValueKind.INTEGER),
+        _EventField("evidence_inside_source", _ValueKind.BOOLEAN),
+    ),
+    EventName.WORKSPACE_DISCOVERED: (
+        _EventField("workspace_id", _ValueKind.STRING),
+        _EventField("artifact_count", _ValueKind.INTEGER),
+        _EventField("valid_count", _ValueKind.INTEGER),
+        _EventField("invalid_count", _ValueKind.INTEGER),
+        _EventField("issue_count", _ValueKind.INTEGER),
+        _EventField("issues_truncated", _ValueKind.BOOLEAN),
+    ),
+    EventName.ARTIFACT_INSPECTED: (
+        _EventField("workspace_id", _ValueKind.STRING),
+        _EventField("artifact_id", _ValueKind.STRING),
+        _EventField("category", _ValueKind.CATEGORY),
+        _EventField("kind", _ValueKind.KIND),
+        _EventField("validation_status", _ValueKind.VALIDATION_STATUS),
+        _EventField("diagnostic_count", _ValueKind.INTEGER),
+    ),
+}
+"""The exact, closed payload of every event name.
+
+There is no wildcard entry and no permissive fallback: an event name that is not a key here
+cannot be published at all, and an event that is one carries exactly the fields listed. That
+is what makes "the event has no field for a root or a credential" a structural statement
+rather than a review checklist.
+"""
+
+
+def validate_event_data(event: EventName, data: Mapping[str, object]) -> None:
+    """Refuse a payload that is not exactly the one ``event`` publishes.
+
+    Called for every constructed :class:`ApplicationEvent`, including the one
+    :class:`EventBroadcaster` builds from an operation. Unknown keys are refused by the set
+    comparison rather than copied or filtered out; a refused event is never published.
+    """
+    fields = _EVENT_FIELDS[event]
+    if set(data) != {field.name for field in fields}:
+        raise ValueError("an event's data is not its published payload")
+
+    for field_definition in fields:
+        value = data[field_definition.name]
+        kind = field_definition.kind
+
+        if kind is _ValueKind.INTEGER:
+            if type(value) is not int:
+                raise ValueError("an event integer is not an integer")
+            if value < field_definition.minimum or value > MAX_EVENT_INTEGER:
+                raise ValueError("an event integer is outside its published range")
+            continue
+
+        if kind is _ValueKind.BOOLEAN:
+            if type(value) is not bool:
+                raise ValueError("an event boolean is not a boolean")
+            continue
+
+        if type(value) is not str or not value or len(value) > MAX_EVENT_VALUE_LENGTH:
+            raise ValueError("an event string is not bounded")
+
+        if kind is _ValueKind.CATEGORY and value not in EVENT_SOURCE_CATEGORIES:
+            raise ValueError("an event category is not a published source category")
+        if kind is _ValueKind.VALIDATION_STATUS and value not in EVENT_VALIDATION_STATUSES:
+            raise ValueError("an event validation status is not published")
+        if kind is _ValueKind.KIND and EVENT_KIND_PATTERN.fullmatch(value) is None:
+            raise ValueError("an event kind is not a bounded authority kind")
+
+
+class ApplicationEvent(ApiModel):
+    """One frame's payload: the version, the event name, and that event's exact data.
+
+    ``data`` remains one mapping so the envelope has one shape a client decodes before it
+    knows the event, but the mapping is no longer open: :func:`validate_event_data` admits
+    exactly the fields the event name publishes, with their declared primitive types and
+    the envelope's bounds. A key such as ``credential`` or ``source_root`` is not a field of
+    any event, so it is refused at construction rather than carried to a subscriber.
     """
 
     schema_version: Literal[1] = EVENT_SCHEMA_VERSION
     event: EventName
     data: dict[str, EventValue] = Field(default_factory=dict)
 
-    @field_validator("data")
-    @classmethod
-    def _bounded_data(cls, value: dict[str, EventValue]) -> dict[str, EventValue]:
-        if len(value) > MAX_EVENT_DATA_FIELDS:
-            raise ValueError("an event carries too many data fields")
-        for key, entry in value.items():
-            if not key or len(key) > MAX_EVENT_KEY_LENGTH:
-                raise ValueError("an event data key is not bounded")
-            if isinstance(entry, str) and len(entry) > MAX_EVENT_VALUE_LENGTH:
-                raise ValueError("an event data value is not bounded")
-            if isinstance(entry, int) and not isinstance(entry, bool):
-                if abs(entry) > MAX_EVENT_INTEGER:
-                    raise ValueError("an event integer is outside the exact range")
-        return value
+    @model_validator(mode="after")
+    def _closed_payload(self) -> ApplicationEvent:
+        validate_event_data(self.event, self.data)
+        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -463,10 +583,16 @@ async def read_events(request: Request) -> StreamingResponse:
 __all__ = [
     "EVENT_BROADCASTER_ATTRIBUTE",
     "EVENT_CONTENT_TYPE",
+    "EVENT_KIND_PATTERN",
     "EVENT_PATH",
     "EVENT_SCHEMA_VERSION",
+    "EVENT_SOURCE_CATEGORIES",
+    "EVENT_VALIDATION_STATUSES",
     "HEARTBEAT_SECONDS",
     "MAX_EVENT_DATA_FIELDS",
+    "MAX_EVENT_INTEGER",
+    "MAX_EVENT_KEY_LENGTH",
+    "MAX_EVENT_VALUE_LENGTH",
     "SUBSCRIBER_QUEUE_CAPACITY",
     "ApplicationEvent",
     "EventBroadcaster",
@@ -479,6 +605,7 @@ __all__ = [
     "publish_from_request",
     "read_events",
     "stream_ready_event",
+    "validate_event_data",
     "workspace_discovered_event",
     "workspace_opened_event",
 ]

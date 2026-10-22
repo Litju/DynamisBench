@@ -14,6 +14,7 @@ import json
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,6 +22,8 @@ from fastapi.testclient import TestClient
 from dynamisbench.api import API_V1_PREFIX, create_app
 from dynamisbench.api.events import (
     EVENT_BROADCASTER_ATTRIBUTE,
+    EVENT_SOURCE_CATEGORIES,
+    EVENT_VALIDATION_STATUSES,
     ApplicationEvent,
     EventBroadcaster,
     EventName,
@@ -165,7 +168,11 @@ def test_a_live_stream_receives_a_published_operation_event() -> None:
     def publish() -> None:
         broadcaster.publish(
             EventName.WORKSPACE_OPENED,
-            {"workspace_id": "opaque-id", "categories_present": 3},
+            {
+                "workspace_id": "opaque-id",
+                "categories_present": 3,
+                "evidence_inside_source": False,
+            },
         )
 
     _status, _headers, body = asyncio.run(
@@ -174,7 +181,11 @@ def test_a_live_stream_receives_a_published_operation_event() -> None:
 
     event = _decode_frame(body.split("\n\n")[1])
     assert event.event is EventName.WORKSPACE_OPENED
-    assert event.data == {"workspace_id": "opaque-id", "categories_present": 3}
+    assert event.data == {
+        "workspace_id": "opaque-id",
+        "categories_present": 3,
+        "evidence_inside_source": False,
+    }
 
 
 def test_closing_the_connection_unsubscribes_it() -> None:
@@ -232,7 +243,14 @@ def test_the_broadcaster_is_safe_when_called_from_a_route_worker_thread(tmp_path
     def publish_from_thread() -> None:
         thread = threading.Thread(
             target=broadcaster.publish,
-            args=(EventName.WORKSPACE_OPENED, {"workspace_id": "from-worker"}),
+            args=(
+                EventName.WORKSPACE_OPENED,
+                {
+                    "workspace_id": "from-worker",
+                    "categories_present": 0,
+                    "evidence_inside_source": False,
+                },
+            ),
         )
         worker.append(thread)
         thread.start()
@@ -245,7 +263,11 @@ def test_the_broadcaster_is_safe_when_called_from_a_route_worker_thread(tmp_path
         assert not thread.is_alive()
 
     event = _decode_frame(body.split("\n\n")[1])
-    assert event.data == {"workspace_id": "from-worker"}
+    assert event.data == {
+        "workspace_id": "from-worker",
+        "categories_present": 0,
+        "evidence_inside_source": False,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -306,7 +328,17 @@ def test_two_subscribers_each_receive_the_same_event() -> None:
         broadcaster = EventBroadcaster()
         first = broadcaster.subscribe()
         second = broadcaster.subscribe()
-        broadcaster.publish(EventName.WORKSPACE_DISCOVERED, {"artifact_count": 4})
+        broadcaster.publish(
+            EventName.WORKSPACE_DISCOVERED,
+            {
+                "workspace_id": "w",
+                "artifact_count": 4,
+                "valid_count": 4,
+                "invalid_count": 0,
+                "issue_count": 0,
+                "issues_truncated": False,
+            },
+        )
         await asyncio.sleep(0)
         first_event = await asyncio.wait_for(first.queue.get(), timeout=1)
         second_event = await asyncio.wait_for(second.queue.get(), timeout=1)
@@ -318,7 +350,17 @@ def test_two_subscribers_each_receive_the_same_event() -> None:
     assert (
         first
         == second
-        == ApplicationEvent(event=EventName.WORKSPACE_DISCOVERED, data={"artifact_count": 4})
+        == ApplicationEvent(
+            event=EventName.WORKSPACE_DISCOVERED,
+            data={
+                "workspace_id": "w",
+                "artifact_count": 4,
+                "valid_count": 4,
+                "invalid_count": 0,
+                "issue_count": 0,
+                "issues_truncated": False,
+            },
+        )
     )
 
 
@@ -328,7 +370,14 @@ def test_publishing_from_a_worker_thread_is_safe() -> None:
         subscription = broadcaster.subscribe()
         thread = threading.Thread(
             target=broadcaster.publish,
-            args=(EventName.WORKSPACE_OPENED, {"workspace_id": "threaded"}),
+            args=(
+                EventName.WORKSPACE_OPENED,
+                {
+                    "workspace_id": "threaded",
+                    "categories_present": 0,
+                    "evidence_inside_source": False,
+                },
+            ),
         )
         thread.start()
         event = await asyncio.wait_for(subscription.queue.get(), timeout=2)
@@ -338,7 +387,11 @@ def test_publishing_from_a_worker_thread_is_safe() -> None:
         return event
 
     event = asyncio.run(scenario())
-    assert event.data == {"workspace_id": "threaded"}
+    assert event.data == {
+        "workspace_id": "threaded",
+        "categories_present": 0,
+        "evidence_inside_source": False,
+    }
 
 
 def test_a_slow_subscriber_is_disconnected_instead_of_buffering_without_bound() -> None:
@@ -346,13 +399,27 @@ def test_a_slow_subscriber_is_disconnected_instead_of_buffering_without_bound() 
         broadcaster = EventBroadcaster(queue_capacity=1)
         subscription = broadcaster.subscribe()
 
-        broadcaster.publish(EventName.WORKSPACE_OPENED, {"workspace_id": "first"})
+        broadcaster.publish(
+            EventName.WORKSPACE_OPENED,
+            {
+                "workspace_id": "first",
+                "categories_present": 0,
+                "evidence_inside_source": False,
+            },
+        )
         await asyncio.sleep(0)
         assert broadcaster.subscriber_count() == 1
 
         # The first event is still queued (this subscriber has not read it), so the next
         # publish finds a full queue and exercises the slow-consumer decision.
-        broadcaster.publish(EventName.WORKSPACE_OPENED, {"workspace_id": "second"})
+        broadcaster.publish(
+            EventName.WORKSPACE_OPENED,
+            {
+                "workspace_id": "second",
+                "categories_present": 0,
+                "evidence_inside_source": False,
+            },
+        )
         await asyncio.sleep(0)
 
         assert await asyncio.wait_for(subscription.queue.get(), timeout=1) is None
@@ -365,7 +432,17 @@ def test_a_new_subscription_receives_no_replayed_event() -> None:
     async def scenario() -> None:
         broadcaster = EventBroadcaster()
         first = broadcaster.subscribe()
-        broadcaster.publish(EventName.ARTIFACT_INSPECTED, {"artifact_id": "one"})
+        broadcaster.publish(
+            EventName.ARTIFACT_INSPECTED,
+            {
+                "workspace_id": "w",
+                "artifact_id": "one",
+                "category": "benchmarks",
+                "kind": "benchmark",
+                "validation_status": "valid",
+                "diagnostic_count": 0,
+            },
+        )
         await asyncio.sleep(0)
         await asyncio.wait_for(first.queue.get(), timeout=1)
         broadcaster.unsubscribe(first.identifier)
@@ -393,18 +470,139 @@ def test_closing_the_broadcaster_ends_every_queue_and_refuses_new_ones() -> None
 
 
 # --------------------------------------------------------------------------- #
-# The envelope: closed, bounded, and free of operational state
+# The envelope: closed per-event payloads, bounded, and free of operational state
 # --------------------------------------------------------------------------- #
-def test_the_envelope_rejects_unbounded_data() -> None:
+def _published_payloads() -> dict[EventName, dict[str, Any]]:
+    """One accepted payload per event, so a negative case can name the single fact it changes."""
+    return {
+        EventName.STREAM_READY: {"heartbeat_seconds": 15, "queue_capacity": 32},
+        EventName.WORKSPACE_OPENED: {
+            "workspace_id": "workspace-opaque",
+            "categories_present": 3,
+            "evidence_inside_source": False,
+        },
+        EventName.WORKSPACE_DISCOVERED: {
+            "workspace_id": "workspace-opaque",
+            "artifact_count": 3,
+            "valid_count": 2,
+            "invalid_count": 1,
+            "issue_count": 1,
+            "issues_truncated": False,
+        },
+        EventName.ARTIFACT_INSPECTED: {
+            "workspace_id": "workspace-opaque",
+            "artifact_id": "artifact-opaque",
+            "category": "benchmarks",
+            "kind": "benchmark",
+            "validation_status": "valid",
+            "diagnostic_count": 0,
+        },
+    }
+
+
+def test_every_published_event_accepts_its_exact_payload() -> None:
+    for event, payload in _published_payloads().items():
+        built = ApplicationEvent(event=event, data=payload)
+
+        assert built.model_dump(mode="json") == {
+            "schema_version": 1,
+            "event": event.value,
+            "data": payload,
+        }
+        assert ApplicationEvent.model_validate_json(built.model_dump_json()) == built
+
+
+def test_every_event_refuses_a_missing_required_field() -> None:
+    for event, payload in _published_payloads().items():
+        for missing in payload:
+            incomplete = {key: value for key, value in payload.items() if key != missing}
+            with pytest.raises(ValueError):
+                ApplicationEvent(event=event, data=incomplete)
+
+
+@pytest.mark.parametrize("unknown", ["credential", "source_root", "evidence_root", "note"])
+def test_no_published_event_accepts_an_unpublished_key(unknown: str) -> None:
+    for event, payload in _published_payloads().items():
+        with pytest.raises(ValueError):
+            ApplicationEvent(event=event, data={**payload, unknown: "a-value"})
+
+
+def test_a_refused_payload_is_never_copied_to_a_subscriber() -> None:
+    async def scenario() -> None:
+        broadcaster = EventBroadcaster()
+        subscription = broadcaster.subscribe()
+        payload = {**_published_payloads()[EventName.WORKSPACE_OPENED], "credential": "secret"}
+        broadcaster.publish(EventName.WORKSPACE_OPENED, payload)
+        await asyncio.sleep(0)
+        assert subscription.queue.empty()
+        broadcaster.unsubscribe(subscription.identifier)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("event", "field", "value"),
+    [
+        (EventName.STREAM_READY, "heartbeat_seconds", "15"),
+        (EventName.STREAM_READY, "queue_capacity", 3.5),
+        (EventName.STREAM_READY, "queue_capacity", True),
+        (EventName.WORKSPACE_OPENED, "workspace_id", 1),
+        (EventName.WORKSPACE_OPENED, "categories_present", "3"),
+        (EventName.WORKSPACE_OPENED, "categories_present", -1),
+        (EventName.WORKSPACE_OPENED, "evidence_inside_source", 0),
+        (EventName.WORKSPACE_DISCOVERED, "artifact_count", 2**53 + 1),
+        (EventName.WORKSPACE_DISCOVERED, "issues_truncated", "false"),
+        (EventName.ARTIFACT_INSPECTED, "category", "invented"),
+        (EventName.ARTIFACT_INSPECTED, "kind", "../benchmark"),
+        (EventName.ARTIFACT_INSPECTED, "kind", "Benchmark"),
+        (EventName.ARTIFACT_INSPECTED, "validation_status", "partial"),
+        (EventName.ARTIFACT_INSPECTED, "diagnostic_count", -1),
+    ],
+)
+def test_an_event_refuses_a_wrong_primitive_or_unpublished_vocabulary(
+    event: EventName, field: str, value: Any
+) -> None:
+    with pytest.raises(ValueError):
+        ApplicationEvent(event=event, data={**_published_payloads()[event], field: value})
+
+
+def test_an_event_refuses_unbounded_strings_and_integers() -> None:
+    payload = _published_payloads()[EventName.WORKSPACE_OPENED]
+
+    with pytest.raises(ValueError):
+        ApplicationEvent(event=EventName.WORKSPACE_OPENED, data={**payload, "workspace_id": ""})
+    with pytest.raises(ValueError):
+        ApplicationEvent(
+            event=EventName.WORKSPACE_OPENED, data={**payload, "workspace_id": "x" * 129}
+        )
     with pytest.raises(ValueError):
         ApplicationEvent(
             event=EventName.WORKSPACE_OPENED,
-            data={f"key-{index}": index for index in range(9)},
+            data={**payload, "categories_present": 2**53 + 1},
         )
+
+
+def test_an_event_refuses_an_unknown_name_and_a_foreign_schema_version() -> None:
     with pytest.raises(ValueError):
-        ApplicationEvent(event=EventName.WORKSPACE_OPENED, data={"workspace_id": "x" * 129})
+        ApplicationEvent.model_validate(
+            {"schema_version": 1, "event": "workspace.deleted", "data": {}}
+        )
+
+    payload = _published_payloads()[EventName.WORKSPACE_OPENED]
     with pytest.raises(ValueError):
-        ApplicationEvent(event=EventName.WORKSPACE_OPENED, data={"count": 2**53 + 1})
+        ApplicationEvent.model_validate(
+            {"schema_version": 2, "event": EventName.WORKSPACE_OPENED.value, "data": payload}
+        )
+
+
+def test_the_event_vocabularies_match_the_workspace_authority() -> None:
+    """The transport restates these closed sets; this is the check that they cannot drift."""
+
+    from dynamisbench.workspace import SourceCategory
+    from dynamisbench.workspace.source_authority import ValidationStatus
+
+    assert EVENT_SOURCE_CATEGORIES == tuple(category.value for category in SourceCategory)
+    assert EVENT_VALIDATION_STATUSES == tuple(status.value for status in ValidationStatus)
 
 
 def test_the_published_events_carry_no_root_content_or_credential() -> None:

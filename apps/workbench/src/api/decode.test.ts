@@ -19,6 +19,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { ApplicationEvent } from "./types";
 import {
   APPLICATION_INFO,
   ARTIFACT,
@@ -32,6 +33,7 @@ import {
 } from "../test/api-fixtures";
 import {
   decodeApplicationInfoResponse,
+  decodeApplicationEvent,
   decodeArtifactInspectionResponse,
   decodeHealthResponse,
   decodeOpenWorkspaceResponse,
@@ -336,5 +338,204 @@ describe("decodeArtifactInspectionResponse", () => {
     ["a non-string logical reference", withField(INSPECTION, "logical_reference", 1)],
   ])("refuses %s", (_label, value) => {
     expect(decodeArtifactInspectionResponse(value)).toBeNull();
+  });
+});
+
+const STREAM_READY_EVENT: ApplicationEvent = {
+  schema_version: 1,
+  event: "stream.ready",
+  data: { heartbeat_seconds: 15, queue_capacity: 32 },
+};
+
+const WORKSPACE_OPENED_EVENT: ApplicationEvent = {
+  schema_version: 1,
+  event: "workspace.opened",
+  data: {
+    workspace_id: "workspace-1",
+    categories_present: 3,
+    evidence_inside_source: false,
+  },
+};
+
+const WORKSPACE_DISCOVERED_EVENT: ApplicationEvent = {
+  schema_version: 1,
+  event: "workspace.discovered",
+  data: {
+    workspace_id: "workspace-1",
+    artifact_count: 3,
+    valid_count: 2,
+    invalid_count: 1,
+    issue_count: 1,
+    issues_truncated: true,
+  },
+};
+
+const ARTIFACT_INSPECTED_EVENT: ApplicationEvent = {
+  schema_version: 1,
+  event: "artifact.inspected",
+  data: {
+    workspace_id: "workspace-1",
+    artifact_id: "artifact-1",
+    category: "benchmarks",
+    kind: "benchmark",
+    validation_status: "valid",
+    diagnostic_count: 0,
+  },
+};
+
+/** The opened payload with one field added; the event's exact key set is the gate. */
+function withEventField(
+  event: Extract<ApplicationEvent, { event: "workspace.opened" }>,
+  key: string,
+  value: unknown,
+): unknown {
+  return { ...event, data: { ...event.data, [key]: value } };
+}
+
+describe("decodeApplicationEvent", () => {
+  it("accepts every published event payload exactly as it travels", () => {
+    for (const event of [
+      STREAM_READY_EVENT,
+      WORKSPACE_OPENED_EVENT,
+      WORKSPACE_DISCOVERED_EVENT,
+      ARTIFACT_INSPECTED_EVENT,
+    ]) {
+      expect(decodeApplicationEvent(event)).toEqual(event);
+    }
+  });
+
+  it.each([
+    ["credential", "secret"],
+    ["source_root", "C:\\research\\source"],
+    ["evidence_root", "C:\\research\\evidence"],
+    ["note", "anything else"],
+    ["workspaceId", "a-camel-case-alias"],
+  ])("refuses the unpublished field %s", (key, value) => {
+    expect(decodeApplicationEvent(withEventField(WORKSPACE_OPENED_EVENT, key, value))).toBeNull();
+  });
+
+  it.each([
+    ["stream.ready", { heartbeat_seconds: 15 }],
+    ["workspace.opened", { workspace_id: "w", evidence_inside_source: false }],
+    [
+      "workspace.discovered",
+      {
+        workspace_id: "w",
+        artifact_count: 1,
+        valid_count: 1,
+        invalid_count: 0,
+        issue_count: 0,
+      },
+    ],
+    [
+      "artifact.inspected",
+      {
+        workspace_id: "w",
+        artifact_id: "a",
+        category: "benchmarks",
+        kind: "benchmark",
+        validation_status: "valid",
+      },
+    ],
+  ])("refuses a %s payload with a missing required field", (event, data) => {
+    expect(decodeApplicationEvent({ schema_version: 1, event, data })).toBeNull();
+  });
+
+  it.each([
+    [
+      "a string heartbeat",
+      { ...STREAM_READY_EVENT, data: { heartbeat_seconds: "15", queue_capacity: 32 } },
+    ],
+    [
+      "a fractional integer",
+      { ...STREAM_READY_EVENT, data: { heartbeat_seconds: 15, queue_capacity: 3.5 } },
+    ],
+    [
+      "a zero queue capacity",
+      { ...STREAM_READY_EVENT, data: { heartbeat_seconds: 15, queue_capacity: 0 } },
+    ],
+    [
+      "an integer-backed boolean",
+      {
+        ...WORKSPACE_OPENED_EVENT,
+        data: { ...WORKSPACE_OPENED_EVENT.data, evidence_inside_source: 0 },
+      },
+    ],
+    [
+      "a string count",
+      {
+        ...WORKSPACE_OPENED_EVENT,
+        data: { ...WORKSPACE_OPENED_EVENT.data, categories_present: "3" },
+      },
+    ],
+    [
+      "a negative count",
+      {
+        ...WORKSPACE_OPENED_EVENT,
+        data: { ...WORKSPACE_OPENED_EVENT.data, categories_present: -1 },
+      },
+    ],
+    [
+      "a non-string workspace identifier",
+      {
+        ...WORKSPACE_OPENED_EVENT,
+        data: { ...WORKSPACE_OPENED_EVENT.data, workspace_id: 1 },
+      },
+    ],
+    [
+      "an unknown category",
+      {
+        ...ARTIFACT_INSPECTED_EVENT,
+        data: { ...ARTIFACT_INSPECTED_EVENT.data, category: "invented" },
+      },
+    ],
+    [
+      "an unknown validation status",
+      {
+        ...ARTIFACT_INSPECTED_EVENT,
+        data: { ...ARTIFACT_INSPECTED_EVENT.data, validation_status: "partial" },
+      },
+    ],
+    [
+      "an unbounded kind",
+      {
+        ...ARTIFACT_INSPECTED_EVENT,
+        data: { ...ARTIFACT_INSPECTED_EVENT.data, kind: "x".repeat(129) },
+      },
+    ],
+    [
+      "a path-like kind",
+      {
+        ...ARTIFACT_INSPECTED_EVENT,
+        data: { ...ARTIFACT_INSPECTED_EVENT.data, kind: "../benchmark" },
+      },
+    ],
+    [
+      "an integer beyond exact representation",
+      {
+        ...WORKSPACE_DISCOVERED_EVENT,
+        data: { ...WORKSPACE_DISCOVERED_EVENT.data, artifact_count: 2 ** 53 + 2 },
+      },
+    ],
+    ["an array payload", { schema_version: 1, event: "workspace.opened", data: [] }],
+    ["a null payload", { schema_version: 1, event: "workspace.opened", data: null }],
+  ])("refuses %s", (_label, value) => {
+    expect(decodeApplicationEvent(value)).toBeNull();
+  });
+
+  it("refuses an event name outside the closed vocabulary", () => {
+    expect(
+      decodeApplicationEvent({
+        schema_version: 1,
+        event: "workspace.deleted",
+        data: { workspace_id: "w" },
+      }),
+    ).toBeNull();
+  });
+
+  it.each([2, 0, "1", null])("refuses the schema version %s", (schemaVersion) => {
+    expect(
+      decodeApplicationEvent({ ...WORKSPACE_OPENED_EVENT, schema_version: schemaVersion }),
+    ).toBeNull();
   });
 });
