@@ -36,9 +36,9 @@ import {
   VALIDATION_STATUSES,
   type ApplicationEvent,
   type ApplicationEventName,
-  type ApplicationEventValue,
   type ApplicationInfoResponse,
   type ArtifactDiagnostic,
+  type ArtifactInspectedEventData,
   type ArtifactInspectionResponse,
   type ArtifactSummary,
   type AuthoringFormat,
@@ -48,8 +48,11 @@ import {
   type SemanticDigestView,
   type SourceCategory,
   type SourceCategoryStatus,
+  type StreamReadyEventData,
   type ValidationStatus,
+  type WorkspaceDiscoveredEventData,
   type WorkspaceDiscoveryResponse,
+  type WorkspaceOpenedEventData,
 } from "./types";
 
 type JsonObject = Record<string, unknown>;
@@ -408,14 +411,184 @@ export const MAX_EVENT_KEY_LENGTH = 32;
 export const MAX_EVENT_VALUE_LENGTH = 128;
 export const MAX_EVENT_INTEGER = 2 ** 53;
 
+/** What a bounded authority-kind string looks like, matching the server's own pattern. */
+const EVENT_KIND_PATTERN = /^[a-z][a-z0-9_]*$/;
+
+/**
+ * Whether a payload object has exactly the published keys.
+ *
+ * `Object.keys` and a length check, not a subset test: an extra key is the failure this
+ * exists to catch. Unknown keys are refused rather than copied or dropped, so no accepted
+ * event can contain a field the contract does not publish.
+ */
+function hasExactKeys(record: JsonObject, required: readonly string[]): boolean {
+  return (
+    Object.keys(record).length === required.length &&
+    required.every((key) => Object.prototype.hasOwnProperty.call(record, key))
+  );
+}
+
+function eventString(record: JsonObject, key: string): string | null {
+  const value = record[key];
+  return typeof value === "string" && value.length > 0 && value.length <= MAX_EVENT_VALUE_LENGTH
+    ? value
+    : null;
+}
+
+function eventInteger(record: JsonObject, key: string, minimum = 0): number | null {
+  const value = record[key];
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= minimum &&
+    value <= MAX_EVENT_INTEGER
+    ? value
+    : null;
+}
+
+function eventBoolean(record: JsonObject, key: string): boolean | null {
+  const value = record[key];
+  return typeof value === "boolean" ? value : null;
+}
+
+function eventEnum<T extends string>(
+  record: JsonObject,
+  key: string,
+  vocabulary: readonly T[],
+): T | null {
+  const value = record[key];
+  return isOneOf(vocabulary, value) ? value : null;
+}
+
+function decodeStreamReadyData(record: JsonObject): StreamReadyEventData | null {
+  if (!hasExactKeys(record, ["heartbeat_seconds", "queue_capacity"])) {
+    return null;
+  }
+
+  const heartbeatSeconds = eventInteger(record, "heartbeat_seconds");
+  const queueCapacity = eventInteger(record, "queue_capacity", 1);
+  if (heartbeatSeconds === null || queueCapacity === null) {
+    return null;
+  }
+
+  return { heartbeat_seconds: heartbeatSeconds, queue_capacity: queueCapacity };
+}
+
+function decodeWorkspaceOpenedData(record: JsonObject): WorkspaceOpenedEventData | null {
+  if (
+    !hasExactKeys(record, ["workspace_id", "categories_present", "evidence_inside_source"])
+  ) {
+    return null;
+  }
+
+  const workspaceId = eventString(record, "workspace_id");
+  const categoriesPresent = eventInteger(record, "categories_present");
+  const evidenceInsideSource = eventBoolean(record, "evidence_inside_source");
+  if (workspaceId === null || categoriesPresent === null || evidenceInsideSource === null) {
+    return null;
+  }
+
+  return {
+    workspace_id: workspaceId,
+    categories_present: categoriesPresent,
+    evidence_inside_source: evidenceInsideSource,
+  };
+}
+
+function decodeWorkspaceDiscoveredData(record: JsonObject): WorkspaceDiscoveredEventData | null {
+  if (
+    !hasExactKeys(record, [
+      "workspace_id",
+      "artifact_count",
+      "valid_count",
+      "invalid_count",
+      "issue_count",
+      "issues_truncated",
+    ])
+  ) {
+    return null;
+  }
+
+  const workspaceId = eventString(record, "workspace_id");
+  const artifactCount = eventInteger(record, "artifact_count");
+  const validCount = eventInteger(record, "valid_count");
+  const invalidCount = eventInteger(record, "invalid_count");
+  const issueCount = eventInteger(record, "issue_count");
+  const issuesTruncated = eventBoolean(record, "issues_truncated");
+  if (
+    workspaceId === null ||
+    artifactCount === null ||
+    validCount === null ||
+    invalidCount === null ||
+    issueCount === null ||
+    issuesTruncated === null
+  ) {
+    return null;
+  }
+
+  return {
+    workspace_id: workspaceId,
+    artifact_count: artifactCount,
+    valid_count: validCount,
+    invalid_count: invalidCount,
+    issue_count: issueCount,
+    issues_truncated: issuesTruncated,
+  };
+}
+
+function decodeArtifactInspectedData(record: JsonObject): ArtifactInspectedEventData | null {
+  if (
+    !hasExactKeys(record, [
+      "workspace_id",
+      "artifact_id",
+      "category",
+      "kind",
+      "validation_status",
+      "diagnostic_count",
+    ])
+  ) {
+    return null;
+  }
+
+  const workspaceId = eventString(record, "workspace_id");
+  const artifactId = eventString(record, "artifact_id");
+  const category = eventEnum<SourceCategory>(record, "category", SOURCE_CATEGORIES);
+  const kind = eventString(record, "kind");
+  const validationStatus = eventEnum<ValidationStatus>(
+    record,
+    "validation_status",
+    VALIDATION_STATUSES,
+  );
+  const diagnosticCount = eventInteger(record, "diagnostic_count");
+  if (
+    workspaceId === null ||
+    artifactId === null ||
+    category === null ||
+    kind === null ||
+    !EVENT_KIND_PATTERN.test(kind) ||
+    validationStatus === null ||
+    diagnosticCount === null
+  ) {
+    return null;
+  }
+
+  return {
+    workspace_id: workspaceId,
+    artifact_id: artifactId,
+    category,
+    kind,
+    validation_status: validationStatus,
+    diagnostic_count: diagnosticCount,
+  };
+}
+
 /**
  * One application event, or `null` if the frame is not this transport's contract.
  *
  * The version is compared, not coerced: a `schema_version` this client does not speak is a
- * frame it must refuse rather than interpret. The event name is drawn from the same closed
- * vocabulary the server publishes, and every data value is a bounded scalar. An unknown
- * field inside `data` is not accepted into the event, because a client that kept one would
- * be the place a future server field leaked through unchecked.
+ * frame it must refuse rather than interpret. The event name selects exactly one payload
+ * decoder, each of which requires the event's complete key set, refuses unknown keys, and
+ * checks every value's primitive type and bound. The returned object is assembled from the
+ * validated fields alone, so no unrecognised key can survive into an accepted event.
  */
 export function decodeApplicationEvent(value: unknown): ApplicationEvent | null {
   const record = asObject(value);
@@ -441,32 +614,22 @@ export function decodeApplicationEvent(value: unknown): ApplicationEvent | null 
     return null;
   }
 
-  const entries = Object.entries(dataRecord);
-  if (entries.length > MAX_EVENT_DATA_FIELDS) {
-    return null;
-  }
-
-  const data: Record<string, ApplicationEventValue> = {};
-  for (const [key, entry] of entries) {
-    if (key.length === 0 || key.length > MAX_EVENT_KEY_LENGTH) {
-      return null;
+  switch (event) {
+    case "stream.ready": {
+      const data = decodeStreamReadyData(dataRecord);
+      return data === null ? null : { schema_version: 1, event, data };
     }
-    if (typeof entry === "string") {
-      if (entry.length > MAX_EVENT_VALUE_LENGTH) {
-        return null;
-      }
-      data[key] = entry;
-    } else if (typeof entry === "boolean" || entry === null) {
-      data[key] = entry;
-    } else if (typeof entry === "number") {
-      if (!Number.isInteger(entry) || Math.abs(entry) > MAX_EVENT_INTEGER) {
-        return null;
-      }
-      data[key] = entry;
-    } else {
-      return null;
+    case "workspace.opened": {
+      const data = decodeWorkspaceOpenedData(dataRecord);
+      return data === null ? null : { schema_version: 1, event, data };
+    }
+    case "workspace.discovered": {
+      const data = decodeWorkspaceDiscoveredData(dataRecord);
+      return data === null ? null : { schema_version: 1, event, data };
+    }
+    case "artifact.inspected": {
+      const data = decodeArtifactInspectedData(dataRecord);
+      return data === null ? null : { schema_version: 1, event, data };
     }
   }
-
-  return { schema_version: 1, event, data };
 }

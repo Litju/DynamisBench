@@ -327,7 +327,11 @@ describe("the workspace workbench", () => {
           eventLine({
             schema_version: 1,
             event: "workspace.opened",
-            data: { workspace_id: "workspace-1", categories_present: 3 },
+            data: {
+              workspace_id: "workspace-1",
+              categories_present: 3,
+              evidence_inside_source: false,
+            },
           }),
           eventLine({
             schema_version: 1,

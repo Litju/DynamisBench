@@ -73,20 +73,58 @@ export const APPLICATION_EVENT_NAMES = [
 
 export type ApplicationEventName = (typeof APPLICATION_EVENT_NAMES)[number];
 
-/** One scalar value an event may carry. The server bounds each of them. */
-export type ApplicationEventValue = string | number | boolean | null;
+/** The exact payload `stream.ready` carries: what this transport will do. */
+export interface StreamReadyEventData {
+  heartbeat_seconds: number;
+  queue_capacity: number;
+}
+
+/** The exact payload `workspace.opened` carries: an opaque handle and the workspace's shape. */
+export interface WorkspaceOpenedEventData {
+  workspace_id: string;
+  categories_present: number;
+  evidence_inside_source: boolean;
+}
+
+/** The exact payload `workspace.discovered` carries: counts and one truncation fact. */
+export interface WorkspaceDiscoveredEventData {
+  workspace_id: string;
+  artifact_count: number;
+  valid_count: number;
+  invalid_count: number;
+  issue_count: number;
+  issues_truncated: boolean;
+}
+
+/**
+ * The exact payload `artifact.inspected` carries.
+ *
+ * `workspace_id` and `artifact_id` are opaque handles; `category` and `validation_status`
+ * are closed vocabularies and `kind` is a bounded authority-kind token. No field can hold
+ * a root, a credential, content or a diagnostic message.
+ */
+export interface ArtifactInspectedEventData {
+  workspace_id: string;
+  artifact_id: string;
+  category: SourceCategory;
+  kind: string;
+  validation_status: ValidationStatus;
+  diagnostic_count: number;
+}
 
 /**
  * One event frame, exactly as the SSE `data:` field carries it.
  *
- * `data` is a mapping of bounded scalar facts, not a read model: an event says an operation
- * happened and how many of something it touched, never what the document contained.
+ * A discriminated union rather than an open mapping: each event name owns one payload
+ * interface, so `data` cannot grow a key no event publishes and a consumer reading a field
+ * after narrowing the event name is reading the accepted contract. An event that does not
+ * match one of these four members is refused by the decoder.
  */
-export interface ApplicationEvent {
-  schema_version: 1;
-  event: ApplicationEventName;
-  data: Record<string, ApplicationEventValue>;
-}
+export type ApplicationEvent =
+  | { schema_version: 1; event: "stream.ready"; data: StreamReadyEventData }
+  | { schema_version: 1; event: "workspace.opened"; data: WorkspaceOpenedEventData }
+  | { schema_version: 1; event: "workspace.discovered"; data: WorkspaceDiscoveredEventData }
+  | { schema_version: 1; event: "artifact.inspected"; data: ArtifactInspectedEventData };
 
 /** `GET /api/v1/health` — the application process is serving its versioned API. */
 export interface HealthResponse {

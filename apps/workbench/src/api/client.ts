@@ -260,16 +260,33 @@ export function createApiClient(
       const decoder = new TextDecoder("utf-8", { fatal: true });
       const parser = new SseParser();
 
-      // Cancelling the reader is what makes an abort settle promptly even when the
-      // implementation that supplied `Response` does not itself propagate the signal to the
-      // body. It is idempotent with the fetch's own abort.
-      const cancelReader = () => {
-        void reader.cancel().catch(() => {});
+      // One cancellation for this response body, however many reasons arrive. `reader.cancel()`
+      // is what closes the connection: an abort signal may not otherwise reach the body, and
+      // releasing a lock is not cancellation. The promise is retained so the generator can
+      // await it before it completes, and so a second caller joins the first rather than
+      // cancelling twice.
+      let completed = false;
+      let cancellation: Promise<void> | null = null;
+
+      const cancelReader = (): Promise<void> => {
+        if (cancellation !== null) {
+          return cancellation;
+        }
+        try {
+          cancellation = Promise.resolve(reader.cancel()).catch(() => {});
+        } catch {
+          cancellation = Promise.resolve();
+        }
+        return cancellation;
+      };
+
+      const onAbort = () => {
+        void cancelReader();
       };
       if (signal.aborted) {
-        cancelReader();
+        void cancelReader();
       } else {
-        signal.addEventListener("abort", cancelReader, { once: true });
+        signal.addEventListener("abort", onAbort, { once: true });
       }
 
       try {
@@ -295,6 +312,7 @@ export function createApiClient(
         for (const frame of [...(tail === "" ? [] : parser.push(tail)), ...parser.end()]) {
           yield decodeFrame(frame.data, response.status);
         }
+        completed = true;
       } catch (error) {
         if (signal.aborted) {
           return;
@@ -307,7 +325,16 @@ export function createApiClient(
         }
         throw new ApiClientError("invalid_response", { status: response.status });
       } finally {
-        signal.removeEventListener("abort", cancelReader);
+        signal.removeEventListener("abort", onAbort);
+        // A natural EOF needs no cancellation. Every other exit - malformed frame, oversized
+        // frame, unknown event, invalid UTF-8, an abort, or a consumer that stopped iterating
+        // early - must close the body before the generator is allowed to complete. Awaiting
+        // the cancellation here is what makes it settled rather than merely requested.
+        if (cancellation !== null) {
+          await cancellation;
+        } else if (!completed) {
+          await cancelReader();
+        }
         try {
           reader.releaseLock();
         } catch {

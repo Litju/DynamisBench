@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ApiClient } from "./client";
+import { createApiClient } from "./client";
 import {
   startEventStream,
   reconnectDelay,
@@ -15,6 +16,8 @@ import {
 } from "./event-stream";
 import { ApiClientError } from "./errors";
 import type { ApplicationEvent } from "./types";
+import { observableStreamResponse, recordingFetch } from "../test/http-fixtures";
+import { readyApiSession } from "../test/session-fixtures";
 
 const READY: ApplicationEvent = {
   schema_version: 1,
@@ -215,5 +218,32 @@ describe("startEventStream", () => {
 
     expect(aborted).toBe(true);
     expect(states).not.toContain("reconnecting");
+  });
+});
+
+describe("startEventStream terminal cancellation", () => {
+  it("closes the connection once on a malformed frame and never reconnects", async () => {
+    const controlled = observableStreamResponse();
+    const recorder = recordingFetch(() => controlled.response);
+    const client = createApiClient(readyApiSession(), { fetch: recorder.fetch });
+    const states: EventStreamState[] = [];
+    const controller = new AbortController();
+
+    const handle = startEventStream({
+      client,
+      signal: controller.signal,
+      onEvent: () => {},
+      onState: (state) => states.push(state),
+      policy: { wait: async () => {} },
+    });
+
+    controlled.push("data: {not json}\n\n");
+    await handle.done;
+
+    expect(states).toEqual(["connecting", "refused"]);
+    expect(recorder.calls).toHaveLength(1);
+    expect(controlled.cancelCount()).toBe(1);
+
+    controller.abort();
   });
 });

@@ -14,6 +14,7 @@ import { ApiClientError } from "./errors";
 import {
   bytesResponse,
   controlledStreamResponse,
+  observableStreamResponse,
   recordingFetch,
   streamResponse,
 } from "../test/http-fixtures";
@@ -34,7 +35,11 @@ const READY: ApplicationEvent = {
 const OPENED: ApplicationEvent = {
   schema_version: 1,
   event: "workspace.opened",
-  data: { workspace_id: "workspace-1", categories_present: 3 },
+  data: {
+    workspace_id: "workspace-1",
+    categories_present: 3,
+    evidence_inside_source: false,
+  },
 };
 
 async function collect(
@@ -85,10 +90,10 @@ describe("ApiClient.streamEvents", () => {
       schema_version: 1,
       event: "artifact.inspected",
       data: {
-        workspace_id: "w",
+        workspace_id: "café",
         artifact_id: "a",
         category: "benchmarks",
-        kind: "café",
+        kind: "benchmark",
         validation_status: "valid",
         diagnostic_count: 0,
       },
@@ -109,7 +114,18 @@ describe("ApiClient.streamEvents", () => {
 
     const events = await collect(client);
 
-    expect(events[0]?.data.kind).toBe("café");
+    expect(events[0]).toEqual({
+      schema_version: 1,
+      event: "artifact.inspected",
+      data: {
+        workspace_id: "café",
+        artifact_id: "a",
+        category: "benchmarks",
+        kind: "benchmark",
+        validation_status: "valid",
+        diagnostic_count: 0,
+      },
+    });
   });
 
   it("ignores comment heartbeats", async () => {
@@ -197,5 +213,117 @@ describe("ApiClient.streamEvents", () => {
     const error = await collect(client).catch((failure: unknown) => failure);
     expect(error).toBeInstanceOf(ApiClientError);
     expect((error as ApiClientError).kind).toBe("invalid_response");
+  });
+});
+
+/** A live response whose `cancel()` callback is observable, and that stays open. */
+function observableClient() {
+  const controlled = observableStreamResponse();
+  const recorder = recordingFetch(() => controlled.response);
+  return {
+    controlled,
+    client: createApiClient(CONNECTION, { fetch: recorder.fetch }),
+    calls: recorder.calls,
+  };
+}
+
+describe("ApiClient.streamEvents connection lifecycle", () => {
+  it("cancels the body when a malformed frame ends the stream", async () => {
+    const { client, controlled } = observableClient();
+    const collecting = collect(client);
+
+    controlled.push("data: {not json}\n\n");
+
+    const error = await collecting.catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(ApiClientError);
+    expect((error as ApiClientError).kind).toBe("invalid_response");
+    expect(controlled.cancelCount()).toBe(1);
+
+    await Promise.resolve();
+    expect(controlled.cancelCount()).toBe(1);
+  });
+
+  it.each([
+    [
+      "an unknown event name",
+      { schema_version: 1, event: "workspace.deleted", data: {} },
+    ],
+    [
+      "a foreign schema version",
+      { schema_version: 2, event: "stream.ready", data: { heartbeat_seconds: 15, queue_capacity: 32 } },
+    ],
+    [
+      "an unpublished payload field",
+      {
+        schema_version: 1,
+        event: "workspace.opened",
+        data: {
+          workspace_id: "workspace-1",
+          categories_present: 3,
+          evidence_inside_source: false,
+          credential: "secret",
+        },
+      },
+    ],
+  ])("cancels the body after %s", async (_label, body) => {
+    const { client, controlled } = observableClient();
+    const collecting = collect(client);
+
+    controlled.push(`data: ${JSON.stringify(body)}\n\n`);
+
+    const error = await collecting.catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(ApiClientError);
+    expect((error as ApiClientError).kind).toBe("invalid_response");
+    expect(controlled.cancelCount()).toBe(1);
+  });
+
+  it("cancels the body when a frame exceeds the parser's bound", async () => {
+    const { client, controlled } = observableClient();
+    const collecting = collect(client);
+
+    controlled.push(`data: ${"x".repeat(70 * 1024)}`);
+
+    const error = await collecting.catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(ApiClientError);
+    expect((error as ApiClientError).kind).toBe("invalid_response");
+    expect(controlled.cancelCount()).toBe(1);
+  });
+
+  it("cancels the body when the consumer stops iterating early", async () => {
+    const { client, controlled } = observableClient();
+    const iterator = client.streamEvents({ signal: new AbortController().signal })[
+      Symbol.asyncIterator
+    ]();
+
+    controlled.push(line(READY));
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: READY });
+
+    await iterator.return?.();
+
+    expect(controlled.cancelCount()).toBe(1);
+  });
+
+  it("cancels the body on an abort while the server keeps the stream open", async () => {
+    const { client, controlled } = observableClient();
+    const controller = new AbortController();
+    const iterator = client.streamEvents({ signal: controller.signal })[Symbol.asyncIterator]();
+
+    controlled.push(line(READY));
+    await expect(iterator.next()).resolves.toEqual({ done: false, value: READY });
+
+    controller.abort();
+    await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined });
+
+    expect(controlled.cancelCount()).toBe(1);
+  });
+
+  it("does not cancel a stream that reached its natural end", async () => {
+    const { client, controlled } = observableClient();
+
+    controlled.push(line(READY));
+    controlled.close();
+
+    await expect(collect(client)).resolves.toEqual([READY]);
+    expect(controlled.cancelCount()).toBe(0);
   });
 });
