@@ -10,6 +10,7 @@
     "build": "pnpm -r --if-present run build",
     "dev:workbench": "pnpm --filter @dynamisbench/workbench run dev",
     "test": "pnpm -r --if-present run test",
+    "test:e2e": "pnpm --filter @dynamisbench/workbench run test:e2e",
     "typecheck": "pnpm -r --if-present run typecheck"
   }
 }

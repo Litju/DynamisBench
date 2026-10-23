@@ -6,12 +6,12 @@
   "build": {
     "beforeDevCommand": {
       "cwd": "../..",
-      "script": "dev:workbench"
+      "script": "pnpm run dev:workbench"
     },
     "devUrl": "http://localhost:5173",
     "beforeBuildCommand": {
       "cwd": "../..",
-      "script": "build"
+      "script": "pnpm run build"
     },
     "frontendDist": "../../apps/workbench/dist"
   },

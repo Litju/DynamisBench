@@ -26,3 +26,9 @@ coverage/
 Thumbs.db
 .idea/
 .vscode/
+
+# Playwright/test-run output (never publish a page that held a credential)
+test-results/
+playwright-report/
+blob-report/
+

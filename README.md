@@ -77,6 +77,10 @@ pnpm run typecheck
 pnpm run test
 pnpm run build
 
+# Browser-grade end-to-end gate (production routes, real secured sidecar)
+pnpm --filter @dynamisbench/workbench exec playwright install chromium
+pnpm --filter @dynamisbench/workbench run test:e2e
+
 # Tauri desktop shell (thin shell only; no sidecar, no product UI yet)
 cargo build --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
@@ -94,7 +98,7 @@ gate runs on both explicit GitHub-hosted images, `windows-2025` and `ubuntu-24.0
 | --- | --- |
 | `platform-identity` | runner image, OS/architecture, commit, and resolved Python/uv/Node/pnpm/Rust/Cargo versions, published as a run artifact |
 | `python` | locked `uv sync`, Ruff lint + format, Pyright, pytest with the `ci` Hypothesis profile |
-| `frontend` | locked `pnpm install`, `tsc --noEmit`, Vitest, Vite build |
+| `frontend` | locked `pnpm install`, `tsc --noEmit`, Vitest, Vite build, pinned Chromium Playwright against a real secured sidecar |
 | `desktop` | Rust toolchain, Tauri Linux system deps, workbench build, `cargo build --locked` |
 
 Hosted runs are authoritative for portable software claims: repository code and

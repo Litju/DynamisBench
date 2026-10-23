@@ -298,6 +298,56 @@ def test_the_announced_port_is_the_port_the_process_is_listening_on() -> None:
         assert _request(port, "GET", "/api/v1/health", token=CREDENTIAL)[0] == 200
 
 
+def test_a_shutdown_record_ends_the_process_cleanly_and_leaves_nothing_serving() -> None:
+    """The supervisor's graceful path, on the real process and its real control channel.
+
+    ``test_a_stopped_sidecar_leaves_nothing_serving`` covers force-termination, which is what
+    a Windows supervisor can always do. This is the other outcome: the parent asks through
+    stdin, the sidecar runs Uvicorn's own shutdown, exits with the clean code, writes nothing
+    further on the protocol channel, and its port stops serving.
+    """
+    with _sidecar() as child:
+        port = Readiness.model_validate_json(_readiness(child)).port
+        assert _request(port, "GET", "/api/v1/health", token=CREDENTIAL)[0] == 200
+
+        assert child.stdin is not None
+        child.stdin.write(
+            json.dumps({"kind": "dynamisbench.api.shutdown", "protocol_version": 1}) + "\n"
+        )
+        child.stdin.flush()
+
+        assert child.wait(timeout=SHUTDOWN_TIMEOUT_SECONDS) == Exit.CLEAN
+        assert child.stdout is not None
+        assert child.stdout.read() == "", "a clean shutdown wrote after the handshake"
+
+    assert _answered(port, CREDENTIAL) is None
+
+
+def test_a_malformed_control_record_is_refused_without_stopping_or_echoing() -> None:
+    """One malformed line is not a command, a shutdown, or an echo surface.
+
+    The record carries a value that must never appear anywhere: the channel's own diagnostic
+    is bounded to naming the fact that a record was refused, never its content.
+    """
+    with _sidecar() as child:
+        port = Readiness.model_validate_json(_readiness(child)).port
+        assert child.stdin is not None
+        child.stdin.write(REJECTED_CREDENTIAL + "\n")
+        child.stdin.flush()
+
+        assert _request(port, "GET", "/api/v1/health", token=CREDENTIAL)[0] == 200
+
+        child.stdin.write(
+            json.dumps({"kind": "dynamisbench.api.shutdown", "protocol_version": 1}) + "\n"
+        )
+        child.stdin.flush()
+        assert child.wait(timeout=SHUTDOWN_TIMEOUT_SECONDS) == Exit.CLEAN
+        assert child.stdout is not None and child.stderr is not None
+        written = child.stdout.read() + child.stderr.read()
+
+    assert REJECTED_CREDENTIAL not in written
+
+
 @pytest.mark.parametrize(
     ("path", "token"),
     [
