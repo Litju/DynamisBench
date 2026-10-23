@@ -202,8 +202,24 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
+      # The browser tests drive a real secured sidecar, so this job resolves the same locked
+      # Python environment the desktop gate does rather than a browser-only stub.
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Resolve the locked Python environment
+        working-directory: python
+        run: uv sync --frozen
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+      - name: Install the pinned Chromium build
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            pnpm exec playwright install --with-deps chromium
+          else
+            pnpm exec playwright install chromium
+          fi
       - name: Record resolved frontend toolchain
         run: |
           {
@@ -217,6 +233,11 @@ jobs:
         run: pnpm run test
       - name: Build (Vite)
         run: pnpm run build
+      # Browser-grade qualification of the production route tree against a real secured
+      # sidecar. The test-only session transport is explicit in the gate's own titles and is
+      # never part of the production build.
+      - name: Test the workbench end to end (Playwright/Chromium)
+        run: pnpm --filter @dynamisbench/workbench run test:e2e
 
   desktop:
     name: desktop (${{ matrix.name }})

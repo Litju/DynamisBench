@@ -88,7 +88,14 @@ pnpm install --frozen-lockfile
 pnpm run typecheck
 pnpm run test
 pnpm run build
+pnpm --filter @dynamisbench/workbench exec playwright install chromium
+pnpm --filter @dynamisbench/workbench run test:e2e
 ```
+
+The Playwright gate drives the production route tree against a real secured sidecar. It
+needs the locked Python environment above and a pinned Chromium build; the first command
+installs that browser and is required once per machine. The gate is part of CI's `frontend`
+job, so `pnpm run test` alone is not the complete frontend qualification.
 
 Touching `apps/desktop/src-tauri` additionally requires
 `cargo build --locked --manifest-path apps/desktop/src-tauri/Cargo.toml`.
