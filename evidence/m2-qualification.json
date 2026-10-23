@@ -1,0 +1,236 @@
+{
+  "schema": "dynamisbench.m2.qualification/1",
+  "issue": "RES-380",
+  "title": "DB-2.7 Qualify the local-first desktop workbench end to end",
+  "milestone": "M2 — Local-First Full-Stack Workbench Foundation",
+  "qualification_date": "2026-10-23",
+  "status": "ALL_GATES_PASS_AWAITING_INDEPENDENT_ACCEPTANCE",
+  "issue_disposition": "In Review (not Done)",
+  "authority": {
+    "architecture": "Linear P-RES-35 — DynamisBench (Architecture, ADR register, locked stack)",
+    "ci": "ADR-025 — ephemeral GitHub-hosted qualification",
+    "scientific_boundary": "M1 preserved; no simulator, numerical claim, visualization or packaging work added"
+  },
+  "baseline": {
+    "repository": "Litju/DynamisBench",
+    "protected_main_commit": "a6c1f01e28c3b36e8d50fe2d95d5cbf096469cd8",
+    "branch": "julitocrztuga/res-380-m2-e2e-qualification",
+    "pull_request": "https://github.com/Litju/DynamisBench/pull/15",
+    "tested_head_commit": "eb199bab1d5c29d65f2b67b9d5af0b851cf51a0c",
+    "merge_commit": "af81b73f5143d60e1d6f42efeb151e694b94b3db",
+    "merged_at": "2026-10-23T03:35:37Z",
+    "merge_method": "merge commit"
+  },
+  "ci": {
+    "workflow": ".github/workflows/quality.yml",
+    "workflow_name": "quality",
+    "jobs": 4,
+    "required_statuses": 8,
+    "matrix": ["windows-2025", "ubuntu-24.04"],
+    "pr_run": {
+      "id": 39895397345,
+      "head_sha": "eb199bab1d5c29d65f2b67b9d5af0b851cf51a0c",
+      "conclusion": "success",
+      "required_statuses_passed": 8,
+      "required_statuses_total": 8,
+      "url": "https://github.com/Litju/DynamisBench/actions/runs/39895397345"
+    },
+    "post_merge_main_run": {
+      "id": 39895843594,
+      "head_sha": "af81b73f5143d60e1d6f42efeb151e694b94b3db",
+      "conclusion": "success",
+      "jobs_passed": 8,
+      "jobs_total": 8,
+      "url": "https://github.com/Litju/DynamisBench/actions/runs/39895843594"
+    }
+  },
+  "gates": [
+    {
+      "id": "gate-1-real-sidecar",
+      "name": "Real sidecar process and security boundary",
+      "status": "PASS",
+      "claim": "The actual development launch spec starts one secured API on 127.0.0.1 with an operating-system-assigned port; readiness, authentication refusal, exact-origin CORS, bounded real-process failures, one-session ownership and clean shutdown are proved without a fake supervisor.",
+      "evidence": [
+        "apps/desktop/src-tauri/tests/sidecar_integration.rs (6 real-process Rust cases)",
+        "apps/desktop/src-tauri/tests/sidecar_supervision.rs (21 supervision cases)",
+        "apps/desktop/src-tauri/src/sidecar (72 unit cases)",
+        "python/tests/api/test_sidecar_process.py (34 real-process Python cases, including the stdin shutdown record and malformed-control refusal)"
+      ],
+      "test_counts": {
+        "rust_unit": 72,
+        "rust_real_sidecar_integration": 6,
+        "rust_supervision": 21,
+        "python_real_process": 34
+      },
+      "limitations": [
+        "The credential is generated per session and never appears in stdout, stderr, the readiness record, the event payload, a URL or a report.",
+        "The force-termination path is covered by the Rust fake-child supervision gates and the Python terminate gate; the real-process shutdown exercised here is the supervisor's graceful path."
+      ]
+    },
+    {
+      "id": "gate-2-authority-workflow",
+      "name": "Real temporary workspace authority workflow",
+      "status": "PASS",
+      "claim": "A live secured API opens real temporary roots, mints an opaque identifier, discovers and selects artifacts, re-reads and revalidates valid and invalid JSON, publishes semantic digests that an independent computation reproduces, refuses cross-workspace/stale/traversal/linked requests without disclosure, and preserves the source and evidence trees byte for byte.",
+      "evidence": [
+        "python/tests/api/test_m2_gate02_workspace_authority.py (4 live-process cases)",
+        "python/tests/api/live_sidecar.py (real secured process and snapshot helper)",
+        "evidence/m2/native-observation.json (the same authority read from the native desktop shell)"
+      ],
+      "test_counts": {
+        "python_live_process": 4
+      },
+      "scientific_authority": {
+        "valid_reference": "benchmarks/scenario/valid_scenario.json",
+        "valid_semantic_digest": "c3557fca32fc9c120e420a062fd329e0904c58264b10973d36ed226a1945c284",
+        "invalid_reference": "benchmarks/scenario/invalid_scenario.json",
+        "invalid_diagnostic": "schema_validation at duration_s (greater_than)",
+        "source_file_sha256": "78e9724e738b981377728440abcca1868a47c70c90ba5addd3c84d03dd5bd54b",
+        "invalid_file_sha256": "fe30f12bcf0d7e77973edccd31aa21b71a582fd1233cd107870c62b34a5c2c75",
+        "changed_by_qualification": false
+      },
+      "limitations": [
+        "The workspace roots are test-owned temporary roots, never a research root.",
+        "An external edit is the only thing that changes the next inspection; the API creates no cache, index or side file."
+      ]
+    },
+    {
+      "id": "gate-3-playwright",
+      "name": "Pinned Playwright/Chromium browser qualification",
+      "status": "PASS",
+      "claim": "Chromium drives the production route tree, session provider, typed client, Explorer, inspector, re-read control, Activity feed and keyboard semantics against a real secured Python sidecar. A normal browser without the test bridge still reports the production unavailable state.",
+      "evidence": [
+        "apps/workbench/e2e/gate3-workbench.spec.ts (5 cases)",
+        "apps/workbench/e2e/support (real sidecar and workspace fixtures)",
+        "apps/workbench/playwright.config.ts (pinned Chromium, one worker, no traces/screenshots/videos/HAR)",
+        "apps/workbench/vite.e2e.config.ts (test-only application root; not used by pnpm build)",
+        ".github/workflows/quality.yml (frontend job on windows-2025 and ubuntu-24.04)"
+      ],
+      "test_counts": {
+        "playwright_chromium": 5
+      },
+      "simulated_component": "The desktop shell's two session IPC facts are supplied by an explicitly named browser-test transport in e2e/app/bridge.ts. It is absent from the production build, and no production session fallback was added.",
+      "limitations": [
+        "This is browser-grade evidence, not native WebView2 evidence.",
+        "The test-only bridge is a simulated Tauri session transport; it is not a production path."
+      ]
+    },
+    {
+      "id": "gate-4-failure-transport",
+      "name": "Failure, replacement, reconnection and Arrow transport",
+      "status": "PASS",
+      "claim": "A real sidecar loss is visibly classified and leaves no credential or read model; a replacement session invalidates old workspace IDs and old bearer proof while reopening the same roots yields the same digest under a fresh identifier; SSE refuses, fails, reconnects with its bounded policy and never replays; a delayed previous selection cannot republish authority; the 832-byte Arrow IPC fixture is identical in Python and JavaScript.",
+      "evidence": [
+        "apps/workbench/e2e/gate4-failure-transport.spec.ts (5 cases)",
+        "python/tests/api/test_m2_gate04_transport_failure.py (3 live-process cases)",
+        "python/tests/api/test_m2_gate02_workspace_authority.py (restart invalidation)",
+        "apps/workbench/src/test/fixtures/qualification.arrow.b64 (existing golden fixture)",
+        "python/tests/transport/test_arrow_transport.py (existing Python encoder/reader contract)"
+      ],
+      "test_counts": {
+        "playwright_chromium": 5,
+        "python_live_process": 3
+      },
+      "not_added": [
+        "production Arrow HTTP endpoint",
+        "WebSocket",
+        "persistent event store",
+        "UI restart command"
+      ],
+      "limitations": [
+        "The reconnect assertion uses a controlled network reset on the first connection of a new session; the retry is then served by the real sidecar.",
+        "Restart is simulated by terminating and relaunching the application/sidecar session; no restart command was exposed."
+      ]
+    },
+    {
+      "id": "gate-5-native-windows-desktop",
+      "name": "Native Windows Tauri development desktop",
+      "status": "PASS",
+      "claim": "The real Tauri development shell ran with WebView2 and the locked Python sidecar. Readiness, workspace opening, discovery, valid/invalid inspection, Activity events, clean shutdown and a clean relaunch were observed directly.",
+      "evidence": [
+        "evidence/m2/native-observation.json",
+        "evidence/m2/native/01-readiness.png",
+        "evidence/m2/native/02-workspace-valid.png",
+        "evidence/m2/native/03-workspace-invalid.png",
+        "evidence/m2/native/04-relaunch-valid.png",
+        "apps/desktop/src-tauri/tauri.conf.json (corrected beforeDevCommand/beforeBuildCommand)"
+      ],
+      "environment": {
+        "os": "Microsoft Windows NT 10.0.26300.0",
+        "webview2": "155.0.4283.62",
+        "tauri": "2.12.1",
+        "python": "3.12.13",
+        "node": "24.15.0"
+      },
+      "observations": {
+        "visible_readiness": true,
+        "workspace_opened": true,
+        "discovery": "2 artifacts (1 valid, 1 invalid)",
+        "valid_inspection": true,
+        "invalid_inspection": true,
+        "activity_events": true,
+        "desktop_shutdown_contained": true,
+        "relaunch_clean": true,
+        "source_and_evidence_unchanged": true
+      },
+      "limitations": [
+        "Manual UI Automation and reviewed window-content screenshots, not automated visual regression.",
+        "Not scientific validation; no simulator was executed.",
+        "The observation is Windows-native only and is not cross-platform desktop evidence.",
+        "On this host the locked environment's python.exe ran the server in a child interpreter; graceful shutdown contained the whole API process tree and socket, but the gate does not claim a single OS process."
+      ]
+    }
+  ],
+  "test_totals": {
+    "python": {
+      "windows_x64": { "passed": 2234, "skipped": 1, "total": 2235 },
+      "linux_x64": { "passed": 2233, "skipped": 2, "total": 2235 },
+      "skips": [
+        "Windows file symbolic link unavailable without Developer Mode/elevation (junction case proves the shared rejection)",
+        "Linux port-reservation socket option absent (loopback/ephemeral/bind-once gates prove the rest)",
+        "Linux filesystem accepts the reference length (the reference bound is proved by the naming gates)"
+      ],
+      "ruff": "clean",
+      "ruff_format": "clean",
+      "pyright": "0 errors"
+    },
+    "vitest": { "test_files": 25, "tests": 355 },
+    "playwright": { "browser": "Chromium 156.0.8078.4 (Playwright 1.64.1)", "tests": 10 },
+    "rust": {
+      "unit": 72,
+      "real_sidecar_integration": 6,
+      "supervision": 21,
+      "total": 99,
+      "fmt": "clean",
+      "build_locked": "clean"
+    },
+    "frontend": {
+      "typecheck": "clean",
+      "vite_build": "clean",
+      "production_bundle_contains_e2e_harness": false
+    }
+  },
+  "preserved_contracts": [
+    "Tauri single command `get_api_session` and single event `dynamisbench-api-status`",
+    "Tauri ACL grants only core:event:allow-listen and core:event:allow-unlisten",
+    "Read-only authority inspection; no write route or client-side authority cache",
+    "M1 domain, identity, workspace, evidence, planning and import boundaries",
+    "Query owns server state; Zustand owns UI-local state",
+    "Closed SSE payloads and bounded retention; no persistence or replay",
+    "No simulator execution, scientific visualization or M8 packaging work"
+  ],
+  "claim_ceiling": [
+    "M2 proves local application/product plumbing and read-only authority inspection.",
+    "It does not prove simulator execution, numerical validity, scientific visualization, remote deployment or packaging/release readiness.",
+    "A green CI matrix proves portable software behaviour and browser-grade UI behaviour; it does not prove native interaction on a human's machine or scientific validity.",
+    "The native Gate 5 observation is Windows-specific and manual; it is not reproduced by Linux CI.",
+    "Independent acceptance is required before RES-380 can move to Done."
+  ],
+  "unmodified_scientific_authority": {
+    "m1_scope_changed": false,
+    "semantic_digest_before_after": "c3557fca32fc9c120e420a062fd329e0904c58264b10973d36ed226a1945c284",
+    "source_evidence_tree_changed_by_qualification": false,
+    "note": "The committed gate fixtures are test authority, not user research roots; every live run used temporary roots and left them byte-identical apart from the one controlled external edit the re-read case performs."
+  },
+  "working_tree": "clean at the tested implementation commit; this record is an evidence-only addition on top of the merged implementation"
+}
