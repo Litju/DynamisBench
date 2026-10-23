@@ -7,14 +7,15 @@
  * here proxies the API or answers on its behalf.
  *
  * Diagnostics stay local. A failure message names the stage that failed and at most a bounded
- * excerpt of stderr; it never prints the credential. Workspace roots are created under the
- * operating system's temporary directory and removed by `dispose`.
+ * excerpt of stderr; it never prints the credential or an absolute path. Workspace roots are
+ * created under the operating system's temporary directory and removed by `dispose`.
  */
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -22,6 +23,8 @@ import { e2eOrigin, e2eWorkspaceTool, pythonExecutable, repositoryRoot } from ".
 
 const READINESS_TIMEOUT_MS = 60_000;
 const SHUTDOWN_TIMEOUT_MS = 30_000;
+const FORCED_SHUTDOWN_TIMEOUT_MS = 5_000;
+const LISTENER_CHECK_TIMEOUT_MS = 2_000;
 const MAX_DIAGNOSTIC_CHARS = 400;
 
 /** The one record the sidecar accepts on its private control channel. */
@@ -76,6 +79,17 @@ export interface SidecarSession {
   kill(): Promise<number>;
 }
 
+/** Test-only launch and observation seams; the fixture defaults remain the development launch. */
+export interface SidecarStartOptions {
+  readonly launch?: {
+    readonly executable: string;
+    readonly args: readonly string[];
+  };
+  readonly credential?: string;
+  readonly readinessTimeoutMs?: number;
+  readonly onSpawn?: (child: ChildProcess) => void;
+}
+
 interface Readiness {
   readonly kind: string;
   readonly protocol_version: number;
@@ -84,15 +98,64 @@ interface Readiness {
   readonly port: number;
 }
 
-function boundedDiagnostic(value: string): string {
-  const trimmed = value.trim();
+function boundedDiagnostic(value: string, credentials: readonly string[] = []): string {
+  let safe = value;
+  for (const credential of credentials) {
+    if (credential.length > 0) {
+      safe = safe.split(credential).join("[redacted-credential]");
+    }
+  }
+  safe = safe.replace(/Bearer\s+[^\s,;]+/gi, "Bearer [redacted-credential]");
+  // Do not echo host paths through child or browser errors. The Windows expression consumes
+  // the rest of that line so paths containing spaces cannot leak a partially absolute suffix.
+  safe = safe.replace(/(?:[A-Za-z]:[\\/]|\\\\)[^\r\n"'<>|]*/g, "[redacted-path]");
+  safe = safe.replace(/(?<![:/\\])\/[^\s"'<>]*/g, "[redacted-path]");
+  const trimmed = safe.trim();
   return trimmed.length <= MAX_DIAGNOSTIC_CHARS
     ? trimmed
     : `${trimmed.slice(0, MAX_DIAGNOSTIC_CHARS)}…`;
 }
 
+/** A bounded, credential- and host-path-safe message for any harness failure. */
+export function diagnosticMessage(
+  error: unknown,
+  credentials: readonly string[] = [],
+): string {
+  return boundedDiagnostic(error instanceof Error ? error.message : String(error), credentials);
+}
+
+/** Keep the original failure first, and append independent containment failures if any. */
+export function containedError(
+  primary: unknown,
+  cleanupFailures: readonly unknown[] = [],
+  credentials: readonly string[] = [],
+): Error {
+  const messages = [diagnosticMessage(primary, credentials)];
+  for (const failure of cleanupFailures) {
+    messages.push(`containment also failed: ${diagnosticMessage(failure, credentials)}`);
+  }
+  const error = new Error(messages.join("\n"));
+  // A stack contains checkout and temporary paths. The safe stage/message is the diagnostic.
+  error.stack = undefined;
+  return error;
+}
+
+function hasExited(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+function closeStdio(child: ChildProcess): void {
+  child.stdin?.destroy();
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+}
+
 /** The first line on the child's stdout, or a bounded failure after the deadline. */
-function firstLine(child: ChildProcess): Promise<string> {
+function firstLine(
+  child: ChildProcess,
+  timeoutMs: number,
+  credential: string,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     if (child.stdout === null) {
       reject(new Error("the sidecar has no stdout"));
@@ -105,7 +168,7 @@ function firstLine(child: ChildProcess): Promise<string> {
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => {
       if (stderr.length < MAX_DIAGNOSTIC_CHARS) {
-        stderr += chunk.toString("utf8");
+        stderr = (stderr + chunk.toString("utf8")).slice(0, MAX_DIAGNOSTIC_CHARS);
       }
     });
 
@@ -117,6 +180,7 @@ function firstLine(child: ChildProcess): Promise<string> {
       clearTimeout(timer);
       stdout.off("data", onData);
       child.off("exit", onExit);
+      child.off("error", onError);
       if (error !== null) {
         reject(error);
         return;
@@ -134,21 +198,27 @@ function firstLine(child: ChildProcess): Promise<string> {
     const onExit = (code: number | null) => {
       finish(
         new Error(
-          `the sidecar exited before readiness (code ${String(code)}): ${boundedDiagnostic(stderr)}`,
+          `the sidecar exited before readiness (code ${String(code)}): ${boundedDiagnostic(stderr, [credential])}`,
         ),
       );
     };
+    const onError = (error: Error) => {
+      finish(new Error(`the sidecar could not be spawned: ${diagnosticMessage(error, [credential])}`));
+    };
     const timer = setTimeout(() => {
-      child.kill();
       finish(
         new Error(
-          `the sidecar announced no readiness within ${READINESS_TIMEOUT_MS} ms: ${boundedDiagnostic(stderr)}`,
+          `the sidecar announced no readiness within ${timeoutMs} ms: ${boundedDiagnostic(stderr, [credential])}`,
         ),
       );
-    }, READINESS_TIMEOUT_MS);
+    }, timeoutMs);
 
     stdout.on("data", onData);
     child.once("exit", onExit);
+    child.once("error", onError);
+    if (hasExited(child)) {
+      onExit(child.exitCode);
+    }
   });
 }
 
@@ -168,7 +238,7 @@ function waitForExit(child: ChildProcess, timeoutMs: number): Promise<number> {
     // that has already passed. A process terminated by a signal reports `exitCode === null`
     // and `signalCode !== null`, so both have to be read.
     child.once("exit", onExit);
-    if (child.exitCode !== null || child.signalCode !== null) {
+    if (hasExited(child)) {
       child.off("exit", onExit);
       resolve(child.exitCode ?? -1);
       return;
@@ -181,7 +251,193 @@ function waitForExit(child: ChildProcess, timeoutMs: number): Promise<number> {
   });
 }
 
-function parseReadiness(line: string): Readiness {  let value: unknown;
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function taskkillTree(pid: number): void {
+  const terminated = spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
+    stdio: "ignore",
+    timeout: FORCED_SHUTDOWN_TIMEOUT_MS,
+    windowsHide: true,
+  });
+  if ((terminated.error !== undefined || terminated.status !== 0) && processExists(pid)) {
+    throw new Error("the Windows sidecar process tree could not be terminated");
+  }
+}
+
+/** Find descendants by their recorded parent IDs even when the root has already exited. */
+function windowsDescendants(rootPid: number): number[] {
+  const script = [
+    `$processes = @(Get-CimInstance Win32_Process);`,
+    `$found = @();`,
+    `$parents = @(${rootPid});`,
+    `while ($parents.Count -gt 0) {`,
+    `  $next = @();`,
+    `  foreach ($parent in $parents) {`,
+    `    foreach ($child in @($processes | Where-Object { $_.ParentProcessId -eq $parent })) {`,
+    `      if ($found -notcontains $child.ProcessId) {`,
+    `        $found += $child.ProcessId; $next += $child.ProcessId;`,
+    `      }`,
+    `    }`,
+    `  }`,
+    `  $parents = @($next);`,
+    `}`,
+    `[Console]::Out.Write($found -join ',');`,
+  ].join(" ");
+  const listed = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", script],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: FORCED_SHUTDOWN_TIMEOUT_MS, windowsHide: true },
+  );
+  if (listed.error !== undefined || listed.status !== 0) {
+    throw new Error("the exited Windows sidecar's descendants could not be inspected");
+  }
+  return listed.stdout
+    .split(",")
+    .filter((value) => /^\d+$/.test(value))
+    .map((value) => Number(value));
+}
+
+/** Force the whole spawned tree, not only a Windows venv launcher or POSIX direct child. */
+function terminateProcessTree(child: ChildProcess): void {
+  if (child.pid === undefined) {
+    return;
+  }
+  const pid = child.pid;
+  if (process.platform === "win32") {
+    if (processExists(pid)) {
+      taskkillTree(pid);
+    } else {
+      // taskkill /T needs a living root. ParentProcessId still names the exited launcher, so
+      // an early root exit cannot strand the real Python server (or a test's grandchild).
+      for (const descendant of windowsDescendants(pid)) {
+        taskkillTree(descendant);
+      }
+    }
+    return;
+  }
+
+  try {
+    // Non-Windows children are spawned as process-group leaders, so descendants are contained
+    // even when the direct child has already exited but its group still has members.
+    process.kill(-pid, "SIGKILL");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+      return;
+    }
+    if (!hasExited(child)) {
+      child.kill("SIGKILL");
+    }
+    if (processExists(pid)) {
+      throw new Error("the sidecar process group could not be terminated");
+    }
+  }
+}
+
+/** Terminate and boundedly reap, always closing every stdio handle. */
+async function terminateAndReap(child: ChildProcess): Promise<number> {
+  if (child.pid === undefined) {
+    closeStdio(child);
+    return -1;
+  }
+
+  const failures: unknown[] = [];
+  let code = -1;
+  try {
+    terminateProcessTree(child);
+  } catch (error) {
+    failures.push(error);
+  }
+  try {
+    code = await waitForExit(child, FORCED_SHUTDOWN_TIMEOUT_MS);
+  } catch (error) {
+    failures.push(error);
+  } finally {
+    closeStdio(child);
+  }
+  if (failures.length > 0) {
+    throw containedError(new Error("the sidecar could not be terminated and reaped"), failures);
+  }
+  return code;
+}
+
+/** Whether a real HTTP server still answers, rather than whether TCP merely connects. */
+export async function apiIsServing(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (serving: boolean) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve(serving);
+    };
+    const request = httpRequest(
+      {
+        host: "127.0.0.1",
+        port,
+        path: "/api/v1/health",
+        method: "GET",
+        agent: false,
+        headers: { Connection: "close" },
+      },
+      (response) => {
+        response.destroy();
+        finish(true);
+      },
+    );
+    const timer = setTimeout(() => {
+      request.destroy();
+      finish(false);
+    }, LISTENER_CHECK_TIMEOUT_MS);
+    request.on("error", () => finish(false));
+    request.end();
+  });
+}
+
+async function assertPortNotServing(port: number): Promise<void> {
+  if (await apiIsServing(port)) {
+    throw new Error("the sidecar API listener is still serving");
+  }
+}
+
+/** Independently verify the listener after graceful or forced session cleanup. */
+export async function assertSidecarNotServing(
+  session: Pick<SidecarSession, "port">,
+): Promise<void> {
+  await assertPortNotServing(session.port);
+}
+
+async function forceContainment(
+  child: ChildProcess,
+  port: number | undefined,
+): Promise<{ readonly code: number; readonly failures: readonly unknown[] }> {
+  const failures: unknown[] = [];
+  let code = -1;
+  try {
+    code = await terminateAndReap(child);
+  } catch (error) {
+    failures.push(error);
+  }
+  if (port !== undefined) {
+    try {
+      await assertPortNotServing(port);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  return { code, failures };
+}
+
+function parseReadiness(line: string): Readiness {
+  let value: unknown;
   try {
     value = JSON.parse(line);
   } catch {
@@ -206,16 +462,39 @@ function parseReadiness(line: string): Readiness {  let value: unknown;
   return record as Readiness;
 }
 
+/** Recover only a loopback port from an otherwise invalid record; never contact another host. */
+function announcedLoopbackPort(line: string | undefined): number | undefined {
+  if (line === undefined) {
+    return undefined;
+  }
+  try {
+    const value = JSON.parse(line) as Partial<Readiness> | null;
+    if (
+      value !== null &&
+      value.host === "127.0.0.1" &&
+      typeof value.port === "number" &&
+      Number.isInteger(value.port) &&
+      value.port > 0 &&
+      value.port <= 65535
+    ) {
+      return value.port;
+    }
+  } catch {
+    // Malformed JSON announces no address the harness can safely verify.
+  }
+  return undefined;
+}
+
 /** Start one real secured sidecar and wait for the port it actually bound. */
-export async function startSidecar(): Promise<SidecarSession> {
-  const executable = pythonExecutable();
+export async function startSidecar(options: SidecarStartOptions = {}): Promise<SidecarSession> {
+  const executable = options.launch?.executable ?? pythonExecutable();
   if (!existsSync(executable)) {
     throw new Error(
       "the locked Python environment is missing; run `uv sync --frozen` in python/ first",
     );
   }
 
-  const credential = randomBytes(32).toString("base64url");
+  const credential = options.credential ?? randomBytes(32).toString("base64url");
   const environment: NodeJS.ProcessEnv = { ...process.env };
   for (const name of Object.keys(environment)) {
     if (name.startsWith("DYNAMISBENCH_")) {
@@ -227,22 +506,37 @@ export async function startSidecar(): Promise<SidecarSession> {
 
   const child = spawn(
     executable,
-    ["-m", "dynamisbench", "api", "serve"],
+    [...(options.launch?.args ?? ["-m", "dynamisbench", "api", "serve"])],
     {
       cwd: repositoryRoot(),
       env: environment,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
+      detached: process.platform !== "win32",
     },
   );
 
-  const line = await firstLine(child);
-  const readiness = parseReadiness(line);
-  const origin = `http://${readiness.host}:${readiness.port}`;
+  // A child can exit between the state check and a shutdown write. Keep that late EPIPE from
+  // becoming an uncaught stream error; stop still waits or force-contains within its deadline.
+  child.stdin?.on("error", () => undefined);
 
+  let line: string | undefined;
+  let readiness: Readiness | undefined;
+  try {
+    options.onSpawn?.(child);
+    line = await firstLine(child, options.readinessTimeoutMs ?? READINESS_TIMEOUT_MS, credential);
+    readiness = parseReadiness(line);
+  } catch (error) {
+    const port = readiness?.port ?? announcedLoopbackPort(line);
+    const contained = await forceContainment(child, port);
+    throw containedError(error, contained.failures, [credential]);
+  }
+
+  const origin = `http://${readiness.host}:${readiness.port}`;
+  const port = readiness.port;
   return {
     origin,
-    port: readiness.port,
+    port,
     credential,
     process: child,
     bootstrap: () => ({
@@ -255,37 +549,27 @@ export async function startSidecar(): Promise<SidecarSession> {
       failure: null,
     }),
     async stop() {
-      const stdin = child.stdin;
-      if (child.exitCode === null && child.signalCode === null && stdin !== null) {
-        stdin.write(`${SHUTDOWN_RECORD}\n`);
-        stdin.end();
-      }
-      const code = await waitForExit(child, SHUTDOWN_TIMEOUT_MS);
-      child.stdout?.destroy();
-      child.stderr?.destroy();
-      return code;
-    },
-    async kill() {
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill();
-      }
       try {
-        const code = await waitForExit(child, 5_000);
-        child.stdout?.destroy();
-        child.stderr?.destroy();
-        return code;
-      } catch {
-        // On POSIX, `kill()` delivers SIGTERM, which Uvicorn handles as a graceful shutdown;
-        // an open event stream can keep that shutdown waiting. An unexpected loss is not
-        // graceful, so the test escalates to SIGKILL rather than letting teardown time out.
-        if (child.exitCode === null && child.signalCode === null) {
-          child.kill("SIGKILL");
+        const stdin = child.stdin;
+        if (!hasExited(child) && stdin !== null) {
+          stdin.write(`${SHUTDOWN_RECORD}\n`);
+          stdin.end();
         }
         const code = await waitForExit(child, SHUTDOWN_TIMEOUT_MS);
-        child.stdout?.destroy();
-        child.stderr?.destroy();
+        closeStdio(child);
+        await assertPortNotServing(port);
         return code;
+      } catch (error) {
+        const contained = await forceContainment(child, port);
+        throw containedError(error, contained.failures, [credential]);
       }
+    },
+    async kill() {
+      const contained = await forceContainment(child, port);
+      if (contained.failures.length > 0) {
+        throw containedError(new Error("the sidecar could not be contained"), contained.failures, [credential]);
+      }
+      return contained.code;
     },
   };
 }
