@@ -269,10 +269,23 @@ export async function startSidecar(): Promise<SidecarSession> {
       if (child.exitCode === null && child.signalCode === null) {
         child.kill();
       }
-      const code = await waitForExit(child, SHUTDOWN_TIMEOUT_MS);
-      child.stdout?.destroy();
-      child.stderr?.destroy();
-      return code;
+      try {
+        const code = await waitForExit(child, 5_000);
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        return code;
+      } catch {
+        // On POSIX, `kill()` delivers SIGTERM, which Uvicorn handles as a graceful shutdown;
+        // an open event stream can keep that shutdown waiting. An unexpected loss is not
+        // graceful, so the test escalates to SIGKILL rather than letting teardown time out.
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+        const code = await waitForExit(child, SHUTDOWN_TIMEOUT_MS);
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        return code;
+      }
     },
   };
 }
