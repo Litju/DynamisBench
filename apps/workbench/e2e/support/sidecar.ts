@@ -593,48 +593,69 @@ interface WorkspaceDescription {
 
 /** Create two real temporary roots with one valid and one invalid authority document. */
 export async function createWorkspaceFixture(): Promise<WorkspaceFixture> {
-  const root = await mkdtemp(path.join(tmpdir(), "dynamisbench-e2e-"));
-  const created = spawnSync(pythonExecutable(), [e2eWorkspaceTool(), "--root", root], {
-    cwd: repositoryRoot(),
-    encoding: "utf8",
-    timeout: 60_000,
-  });
-  if (created.status !== 0) {
-    await rm(root, { recursive: true, force: true });
-    throw new Error(
-      `the workspace fixture could not be created: ${boundedDiagnostic(created.stderr)}`,
-    );
-  }
-
-  let value: unknown;
+  let root: string;
   try {
-    value = JSON.parse(created.stdout);
-  } catch {
-    await rm(root, { recursive: true, force: true });
-    throw new Error("the workspace fixture did not publish a JSON description");
+    root = await mkdtemp(path.join(tmpdir(), "dynamisbench-e2e-"));
+  } catch (error) {
+    throw containedError(error);
   }
-  const description = value as Partial<WorkspaceDescription>;
-  if (
-    typeof description.source_root !== "string" ||
-    typeof description.evidence_root !== "string" ||
-    typeof description.valid_reference !== "string" ||
-    typeof description.invalid_reference !== "string" ||
-    typeof description.valid_digest !== "string"
-  ) {
-    await rm(root, { recursive: true, force: true });
-    throw new Error("the workspace fixture description was incomplete");
-  }
+  try {
+    const created = spawnSync(pythonExecutable(), [e2eWorkspaceTool(), "--root", root], {
+      cwd: repositoryRoot(),
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    if (created.status !== 0) {
+      throw new Error(
+        `the workspace fixture could not be created: ${boundedDiagnostic(created.error?.message ?? created.stderr)}`,
+      );
+    }
 
-  return {
-    sourceRoot: description.source_root,
-    evidenceRoot: description.evidence_root,
-    validReference: description.valid_reference,
-    invalidReference: description.invalid_reference,
-    validDigest: description.valid_digest,
-    dispose: async () => {
+    let value: unknown;
+    try {
+      value = JSON.parse(created.stdout);
+    } catch {
+      throw new Error("the workspace fixture did not publish a JSON description");
+    }
+    if (typeof value !== "object" || value === null) {
+      throw new Error("the workspace fixture description was incomplete");
+    }
+    const description = value as Partial<WorkspaceDescription>;
+    if (
+      typeof description.source_root !== "string" ||
+      typeof description.evidence_root !== "string" ||
+      typeof description.valid_reference !== "string" ||
+      typeof description.invalid_reference !== "string" ||
+      typeof description.valid_digest !== "string"
+    ) {
+      throw new Error("the workspace fixture description was incomplete");
+    }
+
+    return {
+      sourceRoot: description.source_root,
+      evidenceRoot: description.evidence_root,
+      validReference: description.valid_reference,
+      invalidReference: description.invalid_reference,
+      validDigest: description.valid_digest,
+      dispose: async () => {
+        try {
+          await rm(root, { recursive: true, force: true });
+        } catch (error) {
+          throw containedError(error);
+        }
+      },
+    };
+  } catch (error) {
+    const cleanupFailures: unknown[] = [];
+    try {
       await rm(root, { recursive: true, force: true });
-    },
-  };
+    } catch (cleanupError) {
+      cleanupFailures.push(
+        new Error(`the temporary workspace could not be removed: ${diagnosticMessage(cleanupError)}`),
+      );
+    }
+    throw containedError(error, cleanupFailures);
+  }
 }
 
 export interface ArrowFixture {
