@@ -197,7 +197,25 @@ export async function runHarness(
       if (stopFailed) {
         await attempt("forced sidecar containment", () => lifecycle.killSidecar(session));
       }
-      await attempt("sidecar listener verification", () => lifecycle.verifySidecar(session));
+      let verificationFailed = false;
+      await attempt("sidecar listener verification", async () => {
+        try {
+          await lifecycle.verifySidecar(session);
+        } catch (error) {
+          verificationFailed = true;
+          throw error;
+        }
+      });
+      if (verificationFailed) {
+        // A listener outlived graceful stop: force the tree down and prove it again rather
+        // than trusting the first, failed observation.
+        await attempt("forced sidecar containment after listener verification", () =>
+          lifecycle.killSidecar(session),
+        );
+        await attempt("sidecar listener reverification", () =>
+          lifecycle.verifySidecar(session),
+        );
+      }
     }
 
     if (workspace !== undefined) {

@@ -15,7 +15,7 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
-import { request as httpRequest } from "node:http";
+import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -24,8 +24,10 @@ import { e2eOrigin, e2eWorkspaceTool, pythonExecutable, repositoryRoot } from ".
 const READINESS_TIMEOUT_MS = 60_000;
 const SHUTDOWN_TIMEOUT_MS = 30_000;
 const FORCED_SHUTDOWN_TIMEOUT_MS = 5_000;
+const TREE_TERMINATION_TIMEOUT_MS = 10_000;
 const LISTENER_CHECK_TIMEOUT_MS = 2_000;
 const MAX_DIAGNOSTIC_CHARS = 400;
+const MAX_READINESS_LINE_CHARS = 8 * 1024;
 
 /** The one record the sidecar accepts on its private control channel. */
 const SHUTDOWN_RECORD = JSON.stringify({
@@ -165,12 +167,14 @@ function firstLine(
     let buffer = "";
     let settled = false;
     const stdout = child.stdout;
+    const stderrStream = child.stderr;
     let stderr = "";
-    child.stderr?.on("data", (chunk: Buffer) => {
+    const onStderr = (chunk: Buffer) => {
       if (stderr.length < MAX_DIAGNOSTIC_CHARS) {
         stderr = (stderr + chunk.toString("utf8")).slice(0, MAX_DIAGNOSTIC_CHARS);
       }
-    });
+    };
+    stderrStream?.on("data", onStderr);
 
     const finish = (error: Error | null, line?: string) => {
       if (settled) {
@@ -179,6 +183,7 @@ function firstLine(
       settled = true;
       clearTimeout(timer);
       stdout.off("data", onData);
+      stderrStream?.off("data", onStderr);
       child.off("exit", onExit);
       child.off("error", onError);
       if (error !== null) {
@@ -192,7 +197,23 @@ function firstLine(
       buffer += chunk.toString("utf8");
       const newline = buffer.indexOf("\n");
       if (newline !== -1) {
+        if (newline > MAX_READINESS_LINE_CHARS) {
+          finish(
+            new Error(
+              `the sidecar's readiness line exceeded ${MAX_READINESS_LINE_CHARS} characters`,
+            ),
+          );
+          return;
+        }
         finish(null, buffer.slice(0, newline));
+        return;
+      }
+      if (buffer.length > MAX_READINESS_LINE_CHARS) {
+        finish(
+          new Error(
+            `the sidecar's readiness line exceeded ${MAX_READINESS_LINE_CHARS} characters before a newline`,
+          ),
+        );
       }
     };
     const onExit = (code: number | null) => {
@@ -260,10 +281,19 @@ function processExists(pid: number): boolean {
   }
 }
 
-function taskkillTree(pid: number): void {
+/** Spend at most the remaining whole-tree budget; never extend it per descendant. */
+function remainingTreeTimeout(deadline: number): number {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) {
+    throw new Error("the sidecar process tree termination exceeded its deadline");
+  }
+  return remaining;
+}
+
+function taskkillTree(pid: number, timeoutMs: number): void {
   const terminated = spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
     stdio: "ignore",
-    timeout: FORCED_SHUTDOWN_TIMEOUT_MS,
+    timeout: timeoutMs,
     windowsHide: true,
   });
   if ((terminated.error !== undefined || terminated.status !== 0) && processExists(pid)) {
@@ -272,7 +302,7 @@ function taskkillTree(pid: number): void {
 }
 
 /** Find descendants by their recorded parent IDs even when the root has already exited. */
-function windowsDescendants(rootPid: number): number[] {
+function windowsDescendants(rootPid: number, timeoutMs: number): number[] {
   const script = [
     `$processes = @(Get-CimInstance Win32_Process);`,
     `$found = @();`,
@@ -293,7 +323,7 @@ function windowsDescendants(rootPid: number): number[] {
   const listed = spawnSync(
     "powershell.exe",
     ["-NoProfile", "-NonInteractive", "-Command", script],
-    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: FORCED_SHUTDOWN_TIMEOUT_MS, windowsHide: true },
+    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: timeoutMs, windowsHide: true },
   );
   if (listed.error !== undefined || listed.status !== 0) {
     throw new Error("the exited Windows sidecar's descendants could not be inspected");
@@ -311,13 +341,16 @@ function terminateProcessTree(child: ChildProcess): void {
   }
   const pid = child.pid;
   if (process.platform === "win32") {
+    // The whole recursive termination shares one budget: a tree full of descendants cannot
+    // multiply the per-command timeout into an unbounded teardown.
+    const deadline = Date.now() + TREE_TERMINATION_TIMEOUT_MS;
     if (processExists(pid)) {
-      taskkillTree(pid);
+      taskkillTree(pid, remainingTreeTimeout(deadline));
     } else {
       // taskkill /T needs a living root. ParentProcessId still names the exited launcher, so
       // an early root exit cannot strand the real Python server (or a test's grandchild).
-      for (const descendant of windowsDescendants(pid)) {
-        taskkillTree(descendant);
+      for (const descendant of windowsDescendants(pid, remainingTreeTimeout(deadline))) {
+        taskkillTree(descendant, remainingTreeTimeout(deadline));
       }
     }
     return;
@@ -367,38 +400,32 @@ async function terminateAndReap(child: ChildProcess): Promise<number> {
   return code;
 }
 
-/** Whether a real HTTP server still answers, rather than whether TCP merely connects. */
+/**
+ * Whether anything still accepts TCP on this loopback port.
+ *
+ * A real API listener answers the readiness contract, but a stray non-HTTP process squatting
+ * on the announced port is also a containment failure after teardown. The probe is bounded,
+ * loopback-only and never sends application data.
+ */
 export async function apiIsServing(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const socket = createConnection({ host: "127.0.0.1", port });
     const finish = (serving: boolean) => {
       if (settled) {
         return;
       }
       settled = true;
-      clearTimeout(timer);
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+      socket.destroy();
       resolve(serving);
     };
-    const request = httpRequest(
-      {
-        host: "127.0.0.1",
-        port,
-        path: "/api/v1/health",
-        method: "GET",
-        agent: false,
-        headers: { Connection: "close" },
-      },
-      (response) => {
-        response.destroy();
-        finish(true);
-      },
-    );
-    const timer = setTimeout(() => {
-      request.destroy();
-      finish(false);
-    }, LISTENER_CHECK_TIMEOUT_MS);
-    request.on("error", () => finish(false));
-    request.end();
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+    timer = setTimeout(() => finish(false), LISTENER_CHECK_TIMEOUT_MS);
   });
 }
 
@@ -462,27 +489,48 @@ function parseReadiness(line: string): Readiness {
   return record as Readiness;
 }
 
+function isLoopbackPort(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value > 0 &&
+    value <= 65535
+  );
+}
+
 /** Recover only a loopback port from an otherwise invalid record; never contact another host. */
 function announcedLoopbackPort(line: string | undefined): number | undefined {
   if (line === undefined) {
     return undefined;
   }
+  let malformed = false;
   try {
     const value = JSON.parse(line) as Partial<Readiness> | null;
     if (
       value !== null &&
       value.host === "127.0.0.1" &&
-      typeof value.port === "number" &&
-      Number.isInteger(value.port) &&
-      value.port > 0 &&
-      value.port <= 65535
+      isLoopbackPort(value.port)
     ) {
       return value.port;
     }
   } catch {
-    // Malformed JSON announces no address the harness can safely verify.
+    malformed = true;
   }
-  return undefined;
+  if (!malformed) {
+    return undefined;
+  }
+
+  // A truncated record can still have announced a real loopback listener. Accept it only when
+  // this same line explicitly names numeric loopback; every other shape stays unverifiable.
+  if (!/"host"\s*:\s*"127\.0\.0\.1"/.test(line)) {
+    return undefined;
+  }
+  const match = /"port"\s*:\s*(\d+)/.exec(line);
+  if (match === null) {
+    return undefined;
+  }
+  const port = Number(match[1]);
+  return isLoopbackPort(port) ? port : undefined;
 }
 
 /** Start one real secured sidecar and wait for the port it actually bound. */
@@ -591,8 +639,15 @@ interface WorkspaceDescription {
   readonly valid_digest: string;
 }
 
+/** Test-only failure injection after the temporary root exists and before it is populated. */
+export interface WorkspaceCreateOptions {
+  readonly afterRootCreated?: (root: string) => void;
+}
+
 /** Create two real temporary roots with one valid and one invalid authority document. */
-export async function createWorkspaceFixture(): Promise<WorkspaceFixture> {
+export async function createWorkspaceFixture(
+  options: WorkspaceCreateOptions = {},
+): Promise<WorkspaceFixture> {
   let root: string;
   try {
     root = await mkdtemp(path.join(tmpdir(), "dynamisbench-e2e-"));
@@ -600,6 +655,7 @@ export async function createWorkspaceFixture(): Promise<WorkspaceFixture> {
     throw containedError(error);
   }
   try {
+    options.afterRootCreated?.(root);
     const created = spawnSync(pythonExecutable(), [e2eWorkspaceTool(), "--root", root], {
       cwd: repositoryRoot(),
       encoding: "utf8",

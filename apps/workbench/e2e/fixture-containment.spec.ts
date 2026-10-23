@@ -5,7 +5,7 @@
 
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -17,6 +17,7 @@ import {
 } from "./support/fixtures";
 import {
   apiIsServing,
+  assertSidecarNotServing,
   createWorkspaceFixture,
   startSidecar,
   type SidecarSession,
@@ -26,6 +27,7 @@ import {
 interface Capture {
   sidecar?: SidecarSession;
   workspace?: WorkspaceFixture;
+  createdRoot?: string;
 }
 
 async function rejectionOf(promise: Promise<unknown>): Promise<Error> {
@@ -89,6 +91,9 @@ async function expectContained(
   if (workspace !== undefined) {
     expect(existsSync(path.dirname(workspace.sourceRoot))).toBe(false);
   }
+  if (capture.createdRoot !== undefined) {
+    expect(existsSync(capture.createdRoot)).toBe(false);
+  }
   const after = await temporaryWorkspaces();
   expect([...after].filter((name) => !before.has(name))).toEqual([]);
 }
@@ -103,6 +108,9 @@ async function backupCleanup(page: Page, capture: Capture): Promise<void> {
   }
   if (capture.workspace !== undefined) {
     await capture.workspace.dispose().catch(() => undefined);
+  }
+  if (capture.createdRoot !== undefined) {
+    await rm(capture.createdRoot, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
@@ -139,13 +147,20 @@ test("harness: workspace setup failure after sidecar startup is contained", asyn
         async () => { bodyRan = true; },
         {
           ...capturedLifecycle(capture),
-          createWorkspace: async () => { throw new Error("injected workspace setup failure"); },
+          createWorkspace: () => createWorkspaceFixture({
+            afterRootCreated: (root) => {
+              capture.createdRoot = root;
+              expect(existsSync(root)).toBe(true);
+              throw new Error("injected workspace setup failure");
+            },
+          }),
         },
       ),
     );
 
     expect(bodyRan).toBe(false);
     expect(error.message).toContain("injected workspace setup failure");
+    expect(capture.createdRoot).toBeDefined();
     await expectContained(page, capture, before);
   } finally {
     await backupCleanup(page, capture);
@@ -255,6 +270,38 @@ test("harness: a stop exception falls back to forced containment and workspace c
     );
 
     expect(error.message).toContain("injected sidecar stop failure");
+    await expectContained(page, capture, before);
+  } finally {
+    await backupCleanup(page, capture);
+  }
+});
+
+test("harness: a listener verification failure forces containment and is verified again", async ({ page }) => {
+  const capture: Capture = {};
+  const before = await temporaryWorkspaces();
+  let verifications = 0;
+  let forcedKills = 0;
+  try {
+    const error = await rejectionOf(
+      runHarness(page, async () => undefined, {
+        ...capturedLifecycle(capture),
+        killSidecar: async (sidecar) => {
+          forcedKills += 1;
+          await sidecar.kill();
+        },
+        verifySidecar: async (sidecar) => {
+          verifications += 1;
+          if (verifications === 1) {
+            throw new Error("injected listener verification failure");
+          }
+          await assertSidecarNotServing(sidecar);
+        },
+      }),
+    );
+
+    expect(error.message).toContain("injected listener verification failure");
+    expect(forcedKills).toBe(1);
+    expect(verifications).toBe(2);
     await expectContained(page, capture, before);
   } finally {
     await backupCleanup(page, capture);
