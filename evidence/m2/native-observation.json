@@ -1,0 +1,144 @@
+{
+  "schema": "dynamisbench.m2.native-observation/1",
+  "issue": "RES-380",
+  "gate": "gate-5-native-windows-desktop",
+  "status": "PASS",
+  "method": {
+    "platform": "Windows x86-64, native checkout, no WSL",
+    "commands": [
+      "uv sync --frozen (python/)",
+      "pnpm install --frozen-lockfile",
+      "pnpm --filter @dynamisbench/desktop run dev"
+    ],
+    "shell": "real Tauri 2 development binary with the locked Python environment as its supervised sidecar and the installed WebView2 runtime",
+    "not_substituted": [
+      "not a Rust build",
+      "not a Playwright Chromium run",
+      "not a mocked Tauri bridge"
+    ],
+    "observation_tool": "Windows UI Automation (WebView2 accessibility tree) plus window-content screen capture",
+    "configuration_change_required": "tauri.conf.json beforeDevCommand/beforeBuildCommand invoked the pnpm script name as a shell command; both now invoke `pnpm run <script>`, which is the command the desktop development contract needs"
+  },
+  "environment": {
+    "os_version": "Microsoft Windows NT 10.0.26300.0",
+    "webview2_version": "155.0.4283.62",
+    "tauri_version": "2.12.1",
+    "python": "3.12.13",
+    "node": "24.15.0",
+    "rustc": "1.99.0"
+  },
+  "temporary_workspace": {
+    "created_by": "python/tools/e2e_workspace.py (initialize_workspace plus the committed M1 domain fixtures)",
+    "files": [
+      {
+        "relative_path": "authority-repository/benchmarks/scenario/valid_scenario.json",
+        "bytes": 758,
+        "sha256": "78e9724e738b981377728440abcca1868a47c70c90ba5addd3c84d03dd5bd54b",
+        "expected": "valid",
+        "semantic_digest": "c3557fca32fc9c120e420a062fd329e0904c58264b10973d36ed226a1945c284"
+      },
+      {
+        "relative_path": "authority-repository/benchmarks/scenario/invalid_scenario.json",
+        "bytes": 758,
+        "sha256": "fe30f12bcf0d7e77973edccd31aa21b71a582fd1233cd107870c62b34a5c2c75",
+        "expected": "invalid"
+      }
+    ],
+    "evidence_root_present": true,
+    "snapshot_method": "file name, byte length and SHA-256 for every file under both roots; names are relative to the temporary root"
+  },
+  "observations": [
+    {
+      "step": 1,
+      "name": "visible readiness",
+      "observed": [
+        "runtime badge `Ready`",
+        "detail `DynamisBench 0.0.0, API v1.`",
+        "Activity badge `Events: live`",
+        "Activity detail `Connected. Activity describes application operations and is not persisted.`"
+      ],
+      "screenshot": "evidence/m2/native/01-readiness.png"
+    },
+    {
+      "step": 2,
+      "name": "real temporary workspace opened and discovered",
+      "observed": [
+        "explicit source and evidence roots submitted through the production form",
+        "opaque workspace identifier rendered, with no absolute root in the response or the address bar",
+        "Explorer `2 artifacts` with `1 valid` and `1 invalid`",
+        "Activity `Workspace opened` and `Discovery completed · 2 artifacts · 1 valid · 1 invalid`"
+      ],
+      "screenshot": "evidence/m2/native/02-workspace-valid.png"
+    },
+    {
+      "step": 3,
+      "name": "valid authority inspected",
+      "observed": [
+        "identifier `sc.loaded-cmj`",
+        "version `1.0.0`",
+        "validation `valid`",
+        "semantic digest `c3557fca32fc9c120e420a062fd329e0904c58264b10973d36ed226a1945c284`",
+        "validated content rendered read-only",
+        "Activity `Inspected scenario · valid`"
+      ],
+      "screenshot": "evidence/m2/native/02-workspace-valid.png"
+    },
+    {
+      "step": 4,
+      "name": "invalid authority inspected",
+      "observed": [
+        "validation `invalid`",
+        "no validated content published",
+        "diagnostic code `schema_validation` at `duration_s` (category `greater_than`)",
+        "identifier, version and semantic digest reported as `none published`",
+        "Activity `Inspected scenario · invalid`"
+      ],
+      "screenshot": "evidence/m2/native/03-workspace-invalid.png"
+    },
+    {
+      "step": 5,
+      "name": "desktop shutdown",
+      "observed": [
+        "window closed through the real Tauri window",
+        "desktop process exited",
+        "the supervised interpreter and the interpreter process that served the API both exited",
+        "no process in that tree remained",
+        "the API's listening socket no longer existed on 127.0.0.1 (only TIME_WAIT records remained)",
+        "the development Vite server was stopped by the desktop launcher"
+      ]
+    },
+    {
+      "step": 6,
+      "name": "clean relaunch and reopen",
+      "observed": [
+        "a second real Tauri development session reached `Ready`",
+        "a new opaque workspace identifier was minted",
+        "the same valid artifact produced the same semantic digest `c3557fca32fc9c120e420a062fd329e0904c58264b10973d36ed226a1945c284`",
+        "Activity was live again and showed only the new session's operations",
+        "the source and evidence files were byte-identical to the pre-shutdown snapshot"
+      ],
+      "screenshot": "evidence/m2/native/04-relaunch-valid.png"
+    }
+  ],
+  "process_containment": {
+    "listening_interface": "127.0.0.1 only",
+    "port_selection": "operating-system assigned, distinct across the two launches",
+    "after_shutdown": {
+      "desktop_processes": 0,
+      "api_process_tree_processes": 0,
+      "api_listening_sockets": 0
+    },
+    "note": "On this host the locked environment's python.exe ran the server in a child interpreter process. Graceful desktop shutdown ended the desktop, the supervised interpreter and that server child, and released the socket. This gate claims the API process tree and its listening socket were contained; it does not claim a single OS process. Force-termination containment is qualified separately by the locked-env sidecar process suite and the Rust supervisor's fake-child gates."
+  },
+  "sanitization": {
+    "capture_scope": "application document rectangle intersected with the Windows work area; no desktop background, taskbar, other windows, absolute paths, usernames, credentials, process ids or environment variables",
+    "credential_visibility": "the session credential is never rendered by the workbench; no credential appears in the screenshots, the observation record, or the temporary files committed here",
+    "opaque_identifiers": "the workspace identifiers visible in the screenshots are process-local handles that no longer resolve after the sessions ended"
+  },
+  "claim_ceiling": [
+    "This is product/runtime qualification of the local desktop workbench, not scientific validation.",
+    "It does not prove simulator execution, numerical validity, VVUQ results, visualization, remote deployment or M8 packaging.",
+    "The observations are manually driven through Windows UI Automation and reviewed screenshots; they are not an automated visual-regression suite.",
+    "The Windows-native result is not reproduced by the hosted Linux job and must not be cited as cross-platform desktop evidence."
+  ]
+}
