@@ -27,7 +27,7 @@ const FORCED_SHUTDOWN_TIMEOUT_MS = 5_000;
 const TREE_TERMINATION_TIMEOUT_MS = 10_000;
 const LISTENER_CHECK_TIMEOUT_MS = 2_000;
 const MAX_DIAGNOSTIC_CHARS = 400;
-const MAX_READINESS_LINE_CHARS = 8 * 1024;
+const MAX_READINESS_LINE_BYTES = 8 * 1024;
 
 /** The one record the sidecar accepts on its private control channel. */
 const SHUTDOWN_RECORD = JSON.stringify({
@@ -176,16 +176,22 @@ function firstLine(
     };
     stderrStream?.on("data", onStderr);
 
+    const cleanup = () => {
+      stdout.off("data", onData);
+      if (stderrStream) {
+        stderrStream.off("data", onStderr);
+      }
+      child.off("exit", onExit);
+      child.off("error", onError);
+    };
+
     const finish = (error: Error | null, line?: string) => {
       if (settled) {
         return;
       }
       settled = true;
       clearTimeout(timer);
-      stdout.off("data", onData);
-      stderrStream?.off("data", onStderr);
-      child.off("exit", onExit);
-      child.off("error", onError);
+      cleanup();
       if (error !== null) {
         reject(error);
         return;
@@ -196,24 +202,19 @@ function firstLine(
     const onData = (chunk: Buffer) => {
       buffer += chunk.toString("utf8");
       const newline = buffer.indexOf("\n");
-      if (newline !== -1) {
-        if (newline > MAX_READINESS_LINE_CHARS) {
-          finish(
-            new Error(
-              `the sidecar's readiness line exceeded ${MAX_READINESS_LINE_CHARS} characters`,
-            ),
-          );
-          return;
-        }
-        finish(null, buffer.slice(0, newline));
-        return;
-      }
-      if (buffer.length > MAX_READINESS_LINE_CHARS) {
+      // Bound the first line only. A valid short line must not be rejected because a later
+      // chunk carried more output after its newline.
+      const line = newline === -1 ? buffer : buffer.slice(0, newline);
+      if (Buffer.byteLength(line, "utf8") > MAX_READINESS_LINE_BYTES) {
         finish(
           new Error(
-            `the sidecar's readiness line exceeded ${MAX_READINESS_LINE_CHARS} characters before a newline`,
+            `the sidecar's readiness line exceeded ${MAX_READINESS_LINE_BYTES} bytes: ${boundedDiagnostic(stderr, [credential])}`,
           ),
         );
+        return;
+      }
+      if (newline !== -1) {
+        finish(null, line);
       }
     };
     const onExit = (code: number | null) => {
