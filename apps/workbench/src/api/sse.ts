@@ -9,7 +9,9 @@
  * What it handles, because a chunk boundary is not a line boundary:
  *
  * * CRLF, bare CR and LF line endings, including a CR at the end of one chunk followed by the
- *   LF at the start of the next;
+ *   LF at the start of the next. A trailing CR is held open rather than terminated immediately,
+ *   so the LF that completes it is counted as the second character of one terminator and
+ *   attributed to the frame the CR ends, never skipped or charged to the next frame;
  * * `data:` fields split across lines and chunks, joined with `\n` as the format requires;
  * * comment lines (`: heartbeat`) and fields this client does not use (`event`, `id`,
  *   `retry`), which are ignored rather than treated as data;
@@ -55,7 +57,7 @@ export class SseParser {
   /** Every character counted since the last dispatched frame, including its line endings. */
   private frameChars = 0;
   private dataLines: string[] = [];
-  /** A CR ended the previous line; an LF at the next chunk's start belongs to it. */
+  /** A CR ended the previous chunk; an LF at this chunk's start belongs to it. */
   private pendingCarriageReturn = false;
   private atStreamStart = true;
 
@@ -77,8 +79,17 @@ export class SseParser {
     const frames: SseFrame[] = [];
 
     if (this.pendingCarriageReturn) {
+      // The previous chunk ended in CR, and its line was left open for exactly this reason:
+      // a following LF is the second character of a two-character terminator. Terminating at
+      // the CR would charge one character now and then skip the LF, so identical bytes would
+      // be accounted differently depending on where the chunk boundary fell.
       this.pendingCarriageReturn = false;
-      if (chunk.charCodeAt(offset) === 0x0a) {
+      const completesCarriageReturn = chunk.charCodeAt(offset) === 0x0a;
+      const terminated = this.terminateLine(completesCarriageReturn ? 2 : 1);
+      if (terminated !== null) {
+        frames.push(terminated);
+      }
+      if (completesCarriageReturn) {
         offset += 1;
       }
     }
@@ -92,23 +103,22 @@ export class SseParser {
 
       this.appendSegment(chunk, segmentStart, index);
 
+      if (character === 0x0d && index + 1 === chunk.length) {
+        // Whether this CR terminates a line alone or with an LF is only knowable from the
+        // next character or end-of-stream, so the line stays open until then.
+        this.pendingCarriageReturn = true;
+        segmentStart = chunk.length;
+        break;
+      }
+
       const hasFollowingLf = character === 0x0d && chunk.charCodeAt(index + 1) === 0x0a;
       const terminated = this.terminateLine(hasFollowingLf ? 2 : 1);
       if (terminated !== null) {
         frames.push(terminated);
       }
-
-      if (character === 0x0d) {
-        if (index + 1 < chunk.length) {
-          if (hasFollowingLf) {
-            index += 1;
-          }
-        } else {
-          // The LF that may complete this CRLF pair can only arrive in the next chunk.
-          this.pendingCarriageReturn = true;
-        }
+      if (hasFollowingLf) {
+        index += 1;
       }
-
       segmentStart = index + 1;
     }
 
@@ -125,7 +135,16 @@ export class SseParser {
    */
   end(): SseFrame[] {
     const frames: SseFrame[] = [];
-    this.pendingCarriageReturn = false;
+
+    if (this.pendingCarriageReturn) {
+      // End-of-stream settles a held CR: it is a one-character terminator. A blank line it
+      // terminates still dispatches the frame it closes, so the final event is not lost.
+      this.pendingCarriageReturn = false;
+      const terminated = this.terminateLine(1);
+      if (terminated !== null) {
+        frames.push(terminated);
+      }
+    }
 
     if (this.lineBuffer.length > 0) {
       if (this.frameChars + this.lineBuffer.length > MAX_SSE_FRAME_CHARS) {
