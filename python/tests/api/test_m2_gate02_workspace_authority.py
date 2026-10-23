@@ -331,7 +331,10 @@ def test_a_linked_escape_is_never_read_or_disclosed(
 
         assert_clean_shutdown(sidecar)
 
-    os.rmdir(link)
+    if link.is_symlink():
+        link.unlink()
+    else:
+        os.rmdir(link)
 
 
 def test_a_restarted_live_api_invalidates_identifiers_and_preserves_authority(
