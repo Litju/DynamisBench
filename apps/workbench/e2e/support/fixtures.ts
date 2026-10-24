@@ -17,7 +17,10 @@ import { expect, test as base, type Page } from "@playwright/test";
 
 import type { PlaywrightBootstrap } from "../app/bridge";
 import {
+  assertSidecarNotServing,
+  containedError,
   createWorkspaceFixture,
+  diagnosticMessage,
   startSidecar,
   type SidecarSession,
   type WorkspaceFixture,
@@ -89,20 +92,151 @@ async function confineNetwork(page: Page): Promise<{ readonly offenses: readonly
   return { offenses };
 }
 
+/** Test-only failure-injection seam around the same ordered lifecycle the fixture uses. */
+export interface HarnessLifecycle {
+  readonly startSidecar: () => Promise<SidecarSession>;
+  readonly createWorkspace: () => Promise<WorkspaceFixture>;
+  readonly installBridge: (
+    page: Page,
+    initial: PlaywrightBootstrap | null,
+  ) => Promise<void>;
+  readonly navigate: (page: Page) => Promise<void>;
+  readonly awaitReady: (page: Page) => Promise<void>;
+  readonly closePage: (page: Page) => Promise<void>;
+  readonly stopSidecar: (sidecar: SidecarSession) => Promise<void>;
+  readonly killSidecar: (sidecar: SidecarSession) => Promise<void>;
+  readonly verifySidecar: (sidecar: SidecarSession) => Promise<void>;
+  readonly disposeWorkspace: (workspace: WorkspaceFixture) => Promise<void>;
+}
+
+const NO_PRIMARY_FAILURE = Symbol("no primary failure");
+
+/** Run acquisition, the test body and independent cleanup with one fail-closed outcome. */
+export async function runHarness(
+  page: Page,
+  use: (harness: Harness) => Promise<void>,
+  overrides: Partial<HarnessLifecycle> = {},
+): Promise<void> {
+  const lifecycle: HarnessLifecycle = {
+    startSidecar,
+    createWorkspace: createWorkspaceFixture,
+    installBridge,
+    navigate: async (current) => {
+      await current.goto("/");
+    },
+    awaitReady: async (current) => {
+      await expect(current.locator('[data-runtime-state="ready"]').first()).toBeVisible();
+    },
+    closePage: async (current) => {
+      if (!current.isClosed()) {
+        await current.close();
+      }
+    },
+    stopSidecar: async (sidecar) => {
+      await sidecar.stop();
+    },
+    killSidecar: async (sidecar) => {
+      await sidecar.kill();
+    },
+    verifySidecar: assertSidecarNotServing,
+    disposeWorkspace: async (workspace) => {
+      await workspace.dispose();
+    },
+    ...overrides,
+  };
+
+  let sidecar: SidecarSession | undefined;
+  let workspace: WorkspaceFixture | undefined;
+  let primary: unknown = NO_PRIMARY_FAILURE;
+  const cleanupFailures: Error[] = [];
+  const credentials = () => (sidecar === undefined ? [] : [sidecar.credential]);
+  const attempt = async (stage: string, operation: () => Promise<void>) => {
+    try {
+      await operation();
+    } catch (error) {
+      cleanupFailures.push(
+        new Error(`${stage}: ${diagnosticMessage(error, credentials())}`),
+      );
+    }
+  };
+
+  try {
+    sidecar = await lifecycle.startSidecar();
+    workspace = await lifecycle.createWorkspace();
+    await lifecycle.installBridge(page, sidecar.bootstrap());
+    await lifecycle.navigate(page);
+    await lifecycle.awaitReady(page);
+    await use({ sidecar, workspace });
+  } catch (error) {
+    primary = error;
+  } finally {
+    let closeFailed = false;
+    await attempt("page close", async () => {
+      try {
+        await lifecycle.closePage(page);
+      } catch (error) {
+        closeFailed = true;
+        throw error;
+      }
+    });
+    if (closeFailed && !page.isClosed()) {
+      await attempt("browser context close", () => page.context().close());
+    }
+
+    if (sidecar !== undefined) {
+      const session = sidecar;
+      let stopFailed = false;
+      await attempt("sidecar stop", async () => {
+        try {
+          await lifecycle.stopSidecar(session);
+        } catch (error) {
+          stopFailed = true;
+          throw error;
+        }
+      });
+      if (stopFailed) {
+        await attempt("forced sidecar containment", () => lifecycle.killSidecar(session));
+      }
+      let verificationFailed = false;
+      await attempt("sidecar listener verification", async () => {
+        try {
+          await lifecycle.verifySidecar(session);
+        } catch (error) {
+          verificationFailed = true;
+          throw error;
+        }
+      });
+      if (verificationFailed) {
+        // A listener outlived graceful stop: force the tree down and prove it again rather
+        // than trusting the first, failed observation.
+        await attempt("forced sidecar containment after listener verification", () =>
+          lifecycle.killSidecar(session),
+        );
+        await attempt("sidecar listener reverification", () =>
+          lifecycle.verifySidecar(session),
+        );
+      }
+    }
+
+    if (workspace !== undefined) {
+      const roots = workspace;
+      await attempt("workspace cleanup", () => lifecycle.disposeWorkspace(roots));
+    }
+  }
+
+  if (primary !== NO_PRIMARY_FAILURE) {
+    throw containedError(primary, cleanupFailures, credentials());
+  }
+  if (cleanupFailures.length > 0) {
+    const [first, ...remaining] = cleanupFailures;
+    throw containedError(first, remaining, credentials());
+  }
+}
+
 export const test = base.extend<{ harness: Harness; network: { readonly offenses: readonly string[] } }>({
   harness: async ({ page, network }, use) => {
     void network;
-    const sidecar = await startSidecar();
-    const workspace = await createWorkspaceFixture();
-    await installBridge(page, sidecar.bootstrap());
-    await page.goto("/");
-    await expect(page.locator('[data-runtime-state="ready"]').first()).toBeVisible();
-    await use({ sidecar, workspace });
-    // Closing the page aborts the browser's authenticated event stream, which is what lets
-    // Uvicorn complete its own graceful shutdown instead of waiting on a live connection.
-    await page.close();
-    await sidecar.stop();
-    await workspace.dispose();
+    await runHarness(page, use);
   },
 
   network: async ({ page }, use) => {
