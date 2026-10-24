@@ -7,6 +7,7 @@
 
 import { spawnSync, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { createServer, type AddressInfo, type Socket } from "node:net";
 
 import { expect, test } from "@playwright/test";
@@ -44,21 +45,74 @@ async function rejectionOf(promise: Promise<unknown>): Promise<Error> {
   throw new Error("the operation was expected to reject");
 }
 
-function processExists(pid: number | undefined): boolean {
+const PROCESS_GONE_TIMEOUT_MS = 5_000;
+const LIVENESS_PROBE_INTERVAL_MS = 25;
+
+/**
+ * The `/proc/<pid>/stat` state, or undefined when there is no such task.
+ *
+ * The command field may contain spaces and parentheses, so the state follows the last `)`.
+ */
+function linuxProcessState(pid: number): string | undefined {
+  let stat: string;
+  try {
+    stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+  } catch {
+    return undefined;
+  }
+  const commandEnd = stat.lastIndexOf(")");
+  if (commandEnd === -1) {
+    return undefined;
+  }
+  return stat.slice(commandEnd + 2, commandEnd + 3) || undefined;
+}
+
+/**
+ * Whether the PID still names a task that can run.
+ *
+ * A killed Linux orphan stays visible to `kill(pid, 0)` as a `Z`/`X` task until it is reaped.
+ * It has already released the listener and can never run again, so it is not a live descendant.
+ */
+function processIsAlive(pid: number | undefined): boolean {
   if (pid === undefined) {
     return false;
+  }
+  if (process.platform === "linux") {
+    const state = linuxProcessState(pid);
+    if (state !== undefined) {
+      return state !== "Z" && state !== "X" && state !== "x";
+    }
   }
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+/** Allow Linux signal delivery and reparenting to settle, but fail if the task can still run. */
+async function expectProcessGone(pid: number | undefined): Promise<void> {
+  expect(pid).toBeDefined();
+  if (pid === undefined) {
+    return;
+  }
+  if (process.platform !== "linux") {
+    expect(processIsAlive(pid)).toBe(false);
+    return;
+  }
+  await expect
+    .poll(() => processIsAlive(pid), {
+      message: `PID ${pid} is still a live process`,
+      timeout: PROCESS_GONE_TIMEOUT_MS,
+      intervals: [LIVENESS_PROBE_INTERVAL_MS],
+    })
+    .toBe(false);
 }
 
 function expectReaped(child: ChildProcess | undefined): void {
   expect(child).toBeDefined();
-  expect(processExists(child?.pid)).toBe(false);
+  expect(processIsAlive(child?.pid)).toBe(false);
   expect(child?.stdin?.destroyed ?? true).toBe(true);
   expect(child?.stdout?.destroyed ?? true).toBe(true);
   expect(child?.stderr?.destroyed ?? true).toBe(true);
@@ -80,7 +134,7 @@ function forceCleanup(child: ChildProcess | undefined): void {
     return;
   }
   if (process.platform === "win32") {
-    if (processExists(child.pid)) {
+    if (processIsAlive(child.pid)) {
       taskkillTree(child.pid);
     }
   } else {
@@ -211,12 +265,12 @@ test("harness: early root exit cannot strand a descendant listener", async () =>
 
     expect(error.message).toContain("exited before readiness (code 24)");
     expectReaped(child);
-    expect(processExists(descendantPid)).toBe(false);
+    await expectProcessGone(descendantPid);
     expect(port).toBeDefined();
     expect(await apiIsServing(port ?? 0)).toBe(false);
   } finally {
     forceCleanup(child);
-    if (descendantPid !== undefined && processExists(descendantPid)) {
+    if (descendantPid !== undefined && processIsAlive(descendantPid)) {
       if (process.platform === "win32") {
         taskkillTree(descendantPid);
       } else {
@@ -278,11 +332,11 @@ test("harness: invalid readiness contains the spawned tree and its real listener
     };
     descendantPid = record.descendant;
     expectReaped(child);
-    expect(processExists(descendantPid)).toBe(false);
+    await expectProcessGone(descendantPid);
     expect(await apiIsServing(record.port)).toBe(false);
   } finally {
     forceCleanup(child);
-    if (descendantPid !== undefined && processExists(descendantPid)) {
+    if (descendantPid !== undefined && processIsAlive(descendantPid)) {
       if (process.platform === "win32") {
         taskkillTree(descendantPid);
       } else {
@@ -336,11 +390,11 @@ test("harness: malformed Python readiness recovers its port and contains the chi
     const port = Number(match[1]);
     descendantPid = Number(match[2]);
     expectReaped(child);
-    expect(processExists(descendantPid)).toBe(false);
+    await expectProcessGone(descendantPid);
     expect(await apiIsServing(port)).toBe(false);
   } finally {
     forceCleanup(child);
-    if (descendantPid !== undefined && processExists(descendantPid)) {
+    if (descendantPid !== undefined && processIsAlive(descendantPid)) {
       if (process.platform === "win32") {
         taskkillTree(descendantPid);
       } else {
