@@ -23,8 +23,8 @@ import { e2eOrigin, e2eWorkspaceTool, pythonExecutable, repositoryRoot } from ".
 
 const READINESS_TIMEOUT_MS = 60_000;
 const SHUTDOWN_TIMEOUT_MS = 30_000;
-const FORCED_SHUTDOWN_TIMEOUT_MS = 5_000;
 const TREE_TERMINATION_TIMEOUT_MS = 10_000;
+const TREE_LIVENESS_POLL_INTERVAL_MS = 25;
 const LISTENER_CHECK_TIMEOUT_MS = 2_000;
 const MAX_DIAGNOSTIC_CHARS = 400;
 const MAX_READINESS_LINE_BYTES = 8 * 1024;
@@ -273,12 +273,26 @@ function waitForExit(child: ChildProcess, timeoutMs: number): Promise<number> {
   });
 }
 
-function processExists(pid: number): boolean {
+/** Narrow injection seam for deterministic liveness-failure coverage in the E2E gates. */
+export type ProcessProbe = (pid: number) => void;
+
+const signalZeroProbe: ProcessProbe = (pid) => {
+  process.kill(pid, 0);
+};
+
+/**
+ * Whether the PID must be treated as present.
+ *
+ * Only `ESRCH` proves that no such process exists. `EPERM` — and every other probe failure —
+ * leaves existence uncertain, so it counts as present and containment fails closed. A negative
+ * PID probes the whole POSIX process group.
+ */
+export function processExists(pid: number, probe: ProcessProbe = signalZeroProbe): boolean {
   try {
-    process.kill(pid, 0);
+    probe(pid);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
   }
 }
 
@@ -289,6 +303,28 @@ function remainingTreeTimeout(deadline: number): number {
     throw new Error("the sidecar process tree termination exceeded its deadline");
   }
   return remaining;
+}
+
+function delay(timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, timeoutMs));
+}
+
+/** Wait for a liveness probe to report absence, but never past the shared tree deadline. */
+async function pollUntilGone(
+  isGone: () => boolean,
+  deadline: number,
+  failure: string,
+): Promise<void> {
+  for (;;) {
+    if (isGone()) {
+      return;
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new Error(failure);
+    }
+    await delay(Math.min(TREE_LIVENESS_POLL_INTERVAL_MS, remaining));
+  }
 }
 
 function taskkillTree(pid: number, timeoutMs: number): void {
@@ -335,43 +371,106 @@ function windowsDescendants(rootPid: number, timeoutMs: number): number[] {
     .map((value) => Number(value));
 }
 
-/** Force the whole spawned tree, not only a Windows venv launcher or POSIX direct child. */
-function terminateProcessTree(child: ChildProcess): void {
-  if (child.pid === undefined) {
-    return;
-  }
-  const pid = child.pid;
-  if (process.platform === "win32") {
-    // The whole recursive termination shares one budget: a tree full of descendants cannot
-    // multiply the per-command timeout into an unbounded teardown.
-    const deadline = Date.now() + TREE_TERMINATION_TIMEOUT_MS;
-    if (processExists(pid)) {
-      taskkillTree(pid, remainingTreeTimeout(deadline));
-    } else {
-      // taskkill /T needs a living root. ParentProcessId still names the exited launcher, so
-      // an early root exit cannot strand the real Python server (or a test's grandchild).
-      for (const descendant of windowsDescendants(pid, remainingTreeTimeout(deadline))) {
-        taskkillTree(descendant, remainingTreeTimeout(deadline));
-      }
-    }
-    return;
-  }
-
+/**
+ * Signal and then await exit of the whole POSIX process group.
+ *
+ * SIGKILL is asynchronous. Reporting containment as soon as the signal is sent would accept a
+ * group whose members are still shutting down — or still scheduled to run — so the group is
+ * probed until `ESRCH`, always within the shared tree deadline.
+ */
+async function terminatePosixTree(child: ChildProcess, pid: number, deadline: number): Promise<void> {
   try {
     // Non-Windows children are spawned as process-group leaders, so descendants are contained
     // even when the direct child has already exited but its group still has members.
     process.kill(-pid, "SIGKILL");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") {
-      return;
-    }
-    if (!hasExited(child)) {
-      child.kill("SIGKILL");
-    }
-    if (processExists(pid)) {
-      throw new Error("the sidecar process group could not be terminated");
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+      // The group could not be signalled. Try the direct child, but the group probe below still
+      // has to prove absence; an unverified group is a containment failure, not a success.
+      if (!hasExited(child)) {
+        child.kill("SIGKILL");
+      }
     }
   }
+  await pollUntilGone(
+    () => !processExists(-pid),
+    deadline,
+    "the sidecar process group was still present after SIGKILL",
+  );
+}
+
+/**
+ * Terminate the known Windows descendants and await each recorded PID's exit.
+ *
+ * `taskkill /T` returns before its targets have necessarily exited, so every PID recorded from
+ * before the kill is polled until `ESRCH`. A still-running descendant is never accepted.
+ */
+async function terminateWindowsTree(pid: number, deadline: number): Promise<void> {
+  const recorded = new Set<number>();
+  const failures: unknown[] = [];
+
+  if (processExists(pid)) {
+    // Record descendants before /T: a descendant the kill races with must still be verified.
+    try {
+      for (const descendant of windowsDescendants(pid, remainingTreeTimeout(deadline))) {
+        recorded.add(descendant);
+      }
+    } catch (error) {
+      failures.push(error);
+    }
+    recorded.add(pid);
+    try {
+      taskkillTree(pid, remainingTreeTimeout(deadline));
+    } catch (error) {
+      failures.push(error);
+    }
+  } else {
+    // taskkill /T needs a living root. ParentProcessId still names the exited launcher, so an
+    // early root exit cannot strand the real Python server (or a test's grandchild).
+    try {
+      for (const descendant of windowsDescendants(pid, remainingTreeTimeout(deadline))) {
+        recorded.add(descendant);
+      }
+    } catch (error) {
+      failures.push(error);
+    }
+    for (const descendant of recorded) {
+      try {
+        taskkillTree(descendant, remainingTreeTimeout(deadline));
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+  }
+
+  try {
+    await pollUntilGone(
+      () => [...recorded].every((recordedPid) => !processExists(recordedPid)),
+      deadline,
+      "the Windows sidecar process tree was still running after taskkill",
+    );
+  } catch (error) {
+    failures.push(error);
+  }
+  if (failures.length > 0) {
+    throw containedError(
+      new Error("the Windows sidecar process tree could not be terminated"),
+      failures,
+    );
+  }
+}
+
+/** Force and verify the whole spawned tree, not only a Windows launcher or POSIX direct child. */
+async function terminateProcessTree(child: ChildProcess, deadline: number): Promise<void> {
+  if (child.pid === undefined) {
+    return;
+  }
+  const pid = child.pid;
+  if (process.platform === "win32") {
+    await terminateWindowsTree(pid, deadline);
+    return;
+  }
+  await terminatePosixTree(child, pid, deadline);
 }
 
 /** Terminate and boundedly reap, always closing every stdio handle. */
@@ -381,15 +480,18 @@ async function terminateAndReap(child: ChildProcess): Promise<number> {
     return -1;
   }
 
+  // One deadline covers the signal, liveness polling and direct-child reaping. A tree cannot
+  // multiply the budget by its descendant count.
+  const deadline = Date.now() + TREE_TERMINATION_TIMEOUT_MS;
   const failures: unknown[] = [];
   let code = -1;
   try {
-    terminateProcessTree(child);
+    await terminateProcessTree(child, deadline);
   } catch (error) {
     failures.push(error);
   }
   try {
-    code = await waitForExit(child, FORCED_SHUTDOWN_TIMEOUT_MS);
+    code = await waitForExit(child, Math.max(0, deadline - Date.now()));
   } catch (error) {
     failures.push(error);
   } finally {

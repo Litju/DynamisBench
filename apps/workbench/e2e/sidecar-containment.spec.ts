@@ -13,7 +13,12 @@ import { createServer, type AddressInfo, type Socket } from "node:net";
 import { expect, test } from "@playwright/test";
 
 import { pythonExecutable, repositoryRoot } from "./support/paths";
-import { apiIsServing, startSidecar, type SidecarStartOptions } from "./support/sidecar";
+import {
+  apiIsServing,
+  processExists,
+  startSidecar,
+  type SidecarStartOptions,
+} from "./support/sidecar";
 
 function startScript(
   script: string,
@@ -72,6 +77,7 @@ function linuxProcessState(pid: number): string | undefined {
  *
  * A killed Linux orphan stays visible to `kill(pid, 0)` as a `Z`/`X` task until it is reaped.
  * It has already released the listener and can never run again, so it is not a live descendant.
+ * Everything else delegates to the fail-closed probe: only `ESRCH` proves absence.
  */
 function processIsAlive(pid: number | undefined): boolean {
   if (pid === undefined) {
@@ -83,12 +89,7 @@ function processIsAlive(pid: number | undefined): boolean {
       return state !== "Z" && state !== "X" && state !== "x";
     }
   }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
+  return processExists(pid);
 }
 
 /** Allow Linux signal delivery and reparenting to settle, but fail if the task can still run. */
@@ -109,6 +110,29 @@ async function expectProcessGone(pid: number | undefined): Promise<void> {
     })
     .toBe(false);
 }
+
+function probeError(code: string): NodeJS.ErrnoException {
+  const error = new Error(`injected ${code}`) as NodeJS.ErrnoException;
+  error.code = code;
+  return error;
+}
+
+test("harness: only an ESRCH probe proves that a PID is gone", () => {
+  const pid = 424_242;
+  const probed: number[] = [];
+
+  // A successful probe, including a negative PID that names a POSIX process group, is present.
+  expect(processExists(pid, (candidate) => { probed.push(candidate); })).toBe(true);
+  expect(processExists(-pid, (candidate) => { probed.push(candidate); })).toBe(true);
+  expect(probed).toEqual([pid, -pid]);
+
+  // ESRCH is the only error that proves absence.
+  expect(processExists(pid, () => { throw probeError("ESRCH"); })).toBe(false);
+
+  // An uncertain probe must never be mistaken for a dead process.
+  expect(processExists(pid, () => { throw probeError("EPERM"); })).toBe(true);
+  expect(processExists(pid, () => { throw probeError("EINVAL"); })).toBe(true);
+});
 
 function expectReaped(child: ChildProcess | undefined): void {
   expect(child).toBeDefined();
@@ -270,6 +294,58 @@ test("harness: early root exit cannot strand a descendant listener", async () =>
     expect(await apiIsServing(port ?? 0)).toBe(false);
   } finally {
     forceCleanup(child);
+    if (descendantPid !== undefined && processIsAlive(descendantPid)) {
+      if (process.platform === "win32") {
+        taskkillTree(descendantPid);
+      } else {
+        try { process.kill(descendantPid, "SIGKILL"); } catch { /* already gone */ }
+      }
+    }
+  }
+});
+
+test("harness: forced kill contains the whole tree and waits for it to exit", async () => {
+  const grandchildScript = [
+    `const server = require("node:http").createServer((request, response) => {`,
+    `  response.writeHead(200); response.end("serving");`,
+    `});`,
+    `server.listen(0, "127.0.0.1", () => process.send({ port: server.address().port, pid: process.pid }));`,
+  ].join("\n");
+  const parentScript = [
+    `const { spawn } = require("node:child_process");`,
+    `const descendant = spawn(process.execPath, ["-e", ${JSON.stringify(grandchildScript)}], { stdio: ["ignore", "ignore", "ignore", "ipc"] });`,
+    `descendant.once("message", ({ port, pid }) => {`,
+    `  console.log(JSON.stringify({ kind: "dynamisbench.api.ready", protocol_version: 1, api_version: "v1", host: "127.0.0.1", port, descendant: pid }));`,
+    `});`,
+    `setInterval(() => {}, 1000);`,
+  ].join("\n");
+
+  let descendantPid: number | undefined;
+  let announced = "";
+  const session = await startScript(parentScript, {
+    onSpawn: (spawned) => {
+      spawned.stdout?.on("data", (chunk: Buffer) => { announced += chunk.toString("utf8"); });
+    },
+  });
+  try {
+    const record = JSON.parse(announced.split("\n")[0] ?? "") as {
+      port: number;
+      descendant: number;
+    };
+    descendantPid = record.descendant;
+    expect(await apiIsServing(record.port)).toBe(true);
+    expect(processIsAlive(descendantPid)).toBe(true);
+
+    // kill resolves only after the tree is verified gone; a descendant the signal had not
+    // reached yet would make this a containment failure, not a silent success.
+    await session.kill();
+
+    expectReaped(session.process);
+    await expectProcessGone(descendantPid);
+    expect(await apiIsServing(record.port)).toBe(false);
+  } finally {
+    await session.kill().catch(() => undefined);
+    forceCleanup(session.process);
     if (descendantPid !== undefined && processIsAlive(descendantPid)) {
       if (process.platform === "win32") {
         taskkillTree(descendantPid);

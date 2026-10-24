@@ -61,6 +61,7 @@ function capturedLifecycle(capture: Capture): Partial<HarnessLifecycle> {
   };
 }
 
+/** Only `ESRCH` proves absence; `EPERM` and every other probe failure count as present. */
 function processExists(pid: number | undefined): boolean {
   if (pid === undefined) {
     return false;
@@ -68,8 +69,8 @@ function processExists(pid: number | undefined): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
   }
 }
 
