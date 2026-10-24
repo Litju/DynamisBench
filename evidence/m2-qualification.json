@@ -44,6 +44,65 @@
       "url": "https://github.com/Litju/DynamisBench/actions/runs/39895843594"
     }
   },
+  "acceptance_repair": {
+    "purpose": "Record the merged RES-380 E2E qualification-harness acceptance repair; the M2 baseline, gate claims and claim ceiling above are unchanged.",
+    "scope": "E2E qualification harness failure containment; no new native or scientific evidence and no new product claim.",
+    "new_native_evidence": false,
+    "new_scientific_evidence": false,
+    "final_acceptance_declared": false,
+    "baseline_protected_main_commit": "41a0c5712c37ec01fe66e6fabe6b5c1459ffa5e7",
+    "pull_request": {
+      "number": 17,
+      "url": "https://github.com/Litju/DynamisBench/pull/17",
+      "branch": "julitocrztuga/res-380-fail-closed-e2e-cleanup",
+      "implementation_head_commit": "072bb2e12f2491b77bd5c5e40448da759a3759ea",
+      "merge_commit": "5484103369474a6d3e253b7a20d8c70d520ad785",
+      "merge_method": "merge commit"
+    },
+    "implementation_commits": [
+      "be9258e3012e4d6d317f8524322a0eb6e8f04a0d",
+      "2dbf1e4b83dd256dd298511b91ab39096e0b2ef7",
+      "1fb83c9ab6df82efc0040556fb0d97a4e7ea261c",
+      "48a04ac739ac8293d7e153127ee13bc9da1d2830",
+      "b84540cf6d1ec0ab9c2cb573682da607c01ff98d",
+      "072bb2e12f2491b77bd5c5e40448da759a3759ea"
+    ],
+    "ci": {
+      "pr_run": {
+        "id": 40044521690,
+        "head_sha": "072bb2e12f2491b77bd5c5e40448da759a3759ea",
+        "conclusion": "success",
+        "required_statuses_passed": 8,
+        "required_statuses_total": 8,
+        "url": "https://github.com/Litju/DynamisBench/actions/runs/40044521690"
+      },
+      "post_merge_main_run": {
+        "id": 40045179427,
+        "head_sha": "5484103369474a6d3e253b7a20d8c70d520ad785",
+        "conclusion": "success",
+        "jobs_passed": 8,
+        "jobs_total": 8,
+        "url": "https://github.com/Litju/DynamisBench/actions/runs/40045179427"
+      }
+    },
+    "local_windows_incremental_verification": {
+      "head_sha": "072bb2e12f2491b77bd5c5e40448da759a3759ea",
+      "typecheck": "pass",
+      "sidecar_containment": "11/11",
+      "playwright_full_suite": "33/33"
+    },
+    "playwright_composition": {
+      "original_qualification_tests": 10,
+      "failure_injection_tests": 23,
+      "failure_injection_breakdown": {
+        "fixture_containment": 12,
+        "sidecar_containment": 11
+      },
+      "note": "The original Gate 3 (5) and Gate 4 (5) cases and their product claims are unchanged; the added cases exercise qualification-harness failure containment only."
+    },
+    "unchanged_test_totals": "This repair is TypeScript test-harness only, so Python, Vitest and Rust totals are not adjusted; the final-head CI matrix validates them.",
+    "historical_run_refs_preserved": "The original PR #15 and post-merge main run references in `ci` above are preserved unchanged."
+  },
   "gates": [
     {
       "id": "gate-1-real-sidecar",
@@ -195,7 +254,14 @@
       "pyright": "0 errors"
     },
     "vitest": { "test_files": 25, "tests": 355 },
-    "playwright": { "browser": "Chromium 156.0.8078.4 (Playwright 1.64.1)", "tests": 10 },
+    "playwright": {
+      "browser": "Chromium 156.0.8078.4 (Playwright 1.64.1)",
+      "tests": 33,
+      "original_qualification_tests": 10,
+      "failure_injection_tests": 23,
+      "failure_injection_breakdown": { "fixture_containment": 12, "sidecar_containment": 11 },
+      "note": "10 original Gate 3/Gate 4 cases plus 23 harness failure-injection cases added by the merged RES-380 repair (PR #17)."
+    },
     "rust": {
       "unit": 72,
       "real_sidecar_integration": 6,
