@@ -1,7 +1,121 @@
 """Run preflight, isolated worker supervision, and run finalization.
 
-Owns worker spawning, bounded concurrency, cancellation, timeout and failure
-handling, staging, outcome capture, and finalization. Native simulations execute
-only in worker subprocesses, never in the API process (ADR-017), and scientific
-execution environments stay separate from the application runtime (ADR-018).
-Boundary only in DB-1.1."""
+This package is the first implemented M3 execution boundary. It is engine-independent by
+construction: nothing here imports MuJoCo, OpenSim or any other simulator, and no
+simulator-native object can cross into it. A future MuJoCo adapter lives in its own
+execution environment and is launched through the same fixed worker contract.
+
+What the boundary owns:
+
+* :mod:`dynamisbench.execution.contracts` — the versioned worker request/response, the
+  closed refusal vocabulary, the operator-visible lifecycle, and the bounded diagnostic
+  payload. It carries meaning and identities, never an absolute path or a shell command.
+* :mod:`dynamisbench.execution.environment` — the explicitly selected, versioned worker
+  environment: adapter identity, supported capabilities, fixed program/arguments, timeout,
+  log bound and a rebuilt minimal process environment.
+* :mod:`dynamisbench.execution.preflight` — fail-closed admission: fingerprint, resolved
+  realization and environment identities, capability agreement, present and content-
+  addressed assets, duplicate-run refusal, and worker-program resolution, all before any
+  process starts.
+* :mod:`dynamisbench.execution.supervisor` — one isolated subprocess, one bounded request,
+  one bounded response, a deadline, a cancellation path, process-tree termination and
+  reaping, and a bounded diagnostic written into mutable staging.
+
+What it deliberately does not own: sealing (ADR-008 / :mod:`dynamisbench.evidence`),
+native or canonical scientific evidence, numerical validity, a queue or scheduler, a
+persistent run store, a remote control plane, or any product UI. ``COMPLETED`` means the
+worker returned a valid response and exited zero; it is not a scientific claim and not a
+sealed artifact.
+"""
+
+from dynamisbench.execution.contracts import (
+    MAX_WORKER_LOG_BYTES,
+    MAX_WORKER_MESSAGE_BYTES,
+    MAX_WORKER_TIMEOUT_SECONDS,
+    MIN_WORKER_TIMEOUT_SECONDS,
+    WORKER_PROTOCOL_VERSION,
+    WORKER_REQUEST_SCHEMA_VERSION,
+    ExecutionDiagnostic,
+    ExecutionError,
+    ExecutionResult,
+    PreflightDecision,
+    PreflightReport,
+    Refusal,
+    RefusalCode,
+    RunLifecycleState,
+    WorkerAdapterIdentity,
+    WorkerProtocolError,
+    WorkerRequest,
+    WorkerResponse,
+    WorkerStatus,
+    canonical_preflight_bytes,
+    canonical_worker_request_bytes,
+    parse_worker_request,
+    parse_worker_response,
+    preflight_digest,
+    refusal,
+    staging_locator_for,
+    worker_request_digest,
+)
+from dynamisbench.execution.environment import (
+    FORBIDDEN_WORKER_ENVIRONMENT_VARIABLES,
+    WorkerCommand,
+    WorkerEnvironmentError,
+    WorkerEnvironmentManifest,
+    WorkerEnvironmentVariable,
+    resolved_worker_program,
+    worker_environment,
+)
+from dynamisbench.execution.preflight import (
+    PreflightedRun,
+    PreflightRefusedError,
+    preflight_run,
+)
+from dynamisbench.execution.supervisor import (
+    LifecycleObserver,
+    SupervisedExecution,
+    execute_preflighted,
+)
+
+__all__ = [
+    "FORBIDDEN_WORKER_ENVIRONMENT_VARIABLES",
+    "MAX_WORKER_LOG_BYTES",
+    "MAX_WORKER_MESSAGE_BYTES",
+    "MAX_WORKER_TIMEOUT_SECONDS",
+    "MIN_WORKER_TIMEOUT_SECONDS",
+    "WORKER_PROTOCOL_VERSION",
+    "WORKER_REQUEST_SCHEMA_VERSION",
+    "ExecutionDiagnostic",
+    "ExecutionError",
+    "ExecutionResult",
+    "LifecycleObserver",
+    "PreflightDecision",
+    "PreflightRefusedError",
+    "PreflightReport",
+    "PreflightedRun",
+    "Refusal",
+    "RefusalCode",
+    "RunLifecycleState",
+    "SupervisedExecution",
+    "WorkerAdapterIdentity",
+    "WorkerCommand",
+    "WorkerEnvironmentError",
+    "WorkerEnvironmentManifest",
+    "WorkerEnvironmentVariable",
+    "WorkerProtocolError",
+    "WorkerRequest",
+    "WorkerResponse",
+    "WorkerStatus",
+    "canonical_preflight_bytes",
+    "canonical_worker_request_bytes",
+    "execute_preflighted",
+    "parse_worker_request",
+    "parse_worker_response",
+    "preflight_digest",
+    "preflight_run",
+    "refusal",
+    "resolved_worker_program",
+    "staging_locator_for",
+    "worker_environment",
+    "worker_request_digest",
+]

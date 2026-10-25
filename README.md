@@ -110,10 +110,13 @@ says so in its own issue; an unavailable one blocks only that claim.
 ## Scope of the current baseline
 
 The scientific core — canonical identity, validated domain specs, deterministic
-`StudyPlan`/`RunSpec` compilation, workspace, and sealed evidence — and the local
-application boundary (`/api/v1` plus the session-secured loopback sidecar) exist and
-are qualified, as does the workbench foundation that consumes them (volatile desktop
-session boundary, typed `/api/v1` client, TanStack Query server state, code-based
-routes). Explicitly not present yet: simulator libraries, numerical simulation,
-execution environments, database or control-plane services, the scientific workbench
-surfaces (explorer, artifact inspector, charts, 3D playback), and packaging.
+`StudyPlan`/`RunSpec` compilation, workspace, and sealed evidence — plus the
+engine-independent execution boundary (versioned worker protocol, fail-closed capability
+preflight, isolated subprocess supervision with bounded IPC/logging, timeout, cancellation
+and reaping) and the local application boundary (`/api/v1` plus the session-secured
+loopback sidecar) exist and are qualified, as does the workbench foundation that consumes
+them (volatile desktop session boundary, typed `/api/v1` client, TanStack Query server
+state, code-based routes). Explicitly not present yet: simulator libraries, numerical
+simulation, qualified simulator execution environments, the MuJoCo capability adapter, the
+scientific workbench surfaces (explorer, artifact inspector, charts, 3D playback), and
+packaging.
