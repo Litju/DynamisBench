@@ -1,9 +1,9 @@
 """Supervise one isolated worker subprocess with bounded I/O, time and cancellation.
 
 This is the only module in the project that starts a scientific worker. It is deliberately
-engine-independent: it knows how to launch a fixed vector, write one protocol request, read
-one bounded response, enforce a deadline, cancel, terminate a process tree and reap it. It
-does not import or construct a simulator, and it never decides what a worker's output
+engine-independent: it knows how to launch a fixed vector, deliver one protocol request,
+read one bounded response, enforce a deadline, cancel, terminate a process tree and reap it.
+It does not import or construct a simulator, and it never decides what a worker's output
 means scientifically.
 
 The guarantees, in the order they matter:
@@ -12,23 +12,32 @@ The guarantees, in the order they matter:
 absolute program. A run input cannot add an argument, change the program, choose a working
 directory, or influence the environment beyond what the selected manifest declared.
 
+**Admission is re-derived at launch.** The supervisor does not trust the mutable object that
+carries a preflight decision. It recomputes the request digest, the RunSpec fingerprint, the
+accepted plan, the realization and environment identities, the adapter, the capability sets
+and the asset content identities immediately before creating staging and again immediately
+before starting the program.
+
 **Bounded in both directions.** The request is canonical JSON at most
 :data:`~dynamisbench.execution.contracts.MAX_WORKER_MESSAGE_BYTES`; stdout is read into at
 most that many bytes and an overflow kills the process; stderr is retained up to the
 environment's ``max_log_bytes`` and every further byte is discarded rather than buffered.
-The supervisor can therefore not be made to allocate a worker's entire output.
+The request is delivered by a bounded writer thread, so a worker that never reads stdin
+cannot block the supervisor past its deadline or ignore cancellation.
 
 **One deadline, one cancellation path.** Timeout and cancellation both end in the same
-process-tree termination and reaping path. A worker cannot ignore either, and neither can
-leave an orphan process. A cancellation that arrives before launch is honoured without
-starting anything.
+process-tree termination path. Windows owns the worker in a Job Object; POSIX owns it by
+session/process group. Cleanup is verified against the tree primitive, not inferred from
+reaping the direct child, and it also runs when the direct child exits early.
 
 **Completion is a process fact, not a scientific one.** A run is ``COMPLETED`` only when
 the worker wrote a valid response for this exact request and exited zero. Every other
 outcome — abnormal exit, protocol violation, timeout, cancellation, oversized output — is
-a failure state. A failed or partial run never becomes sealed evidence here: the
-supervisor writes ``diagnostics.json`` into the mutable staging bundle, closes it for
-payload and returns. Sealing remains the evidence layer's transaction (ADR-008).
+a failure state. A failed or partial run never becomes sealed evidence here: the supervisor
+writes ``diagnostics.json`` into the mutable staging bundle, closes it for payload and
+returns. Sealing remains the evidence layer's transaction (ADR-008), but the returned
+:class:`SupervisedExecution` derives the only admissible outcome from the terminal result,
+so a failed or cancelled run cannot be handed to the finalizer as a success.
 
 The only payload the supervisor writes is that diagnostic record and a bounded stderr log.
 It never writes ``native/``, ``canonical/`` or ``assessment.json``; producing those is a
@@ -40,7 +49,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import signal
 import subprocess
 import tempfile
 import threading
@@ -54,11 +62,25 @@ from dynamisbench.evidence.bundle import (
     BundleConflictError,
     EvidenceError,
     RunId,
+    RunOutcome,
 )
-from dynamisbench.evidence.staging import StagingBundle, create_staging_bundle
+from dynamisbench.evidence.staging import (
+    SealResult,
+    StagingBundle,
+    create_staging_bundle,
+    finalize_bundle,
+)
+from dynamisbench.execution._process_tree import (
+    PosixProcessTree,
+    ProcessTree,
+    attach_windows_job,
+    create_windows_job,
+    windows_creation_flags,
+)
 from dynamisbench.execution.contracts import (
     MAX_WORKER_MESSAGE_BYTES,
     ExecutionDiagnostic,
+    ExecutionError,
     ExecutionResult,
     Refusal,
     RefusalCode,
@@ -78,11 +100,16 @@ from dynamisbench.execution.environment import (
     resolved_worker_program,
     worker_environment,
 )
-from dynamisbench.execution.preflight import PreflightedRun, PreflightRefusedError
+from dynamisbench.execution.preflight import (
+    PreflightedRun,
+    PreflightRefusedError,
+    admission_refusals,
+)
 from dynamisbench.identity import canonical_semantic_bytes
 from dynamisbench.workspace import PersistenceClass, Workspace
 
 __all__ = [
+    "ExecutionSealError",
     "LifecycleObserver",
     "SupervisedExecution",
     "execute_preflighted",
@@ -99,19 +126,56 @@ _READ_CHUNK_BYTES: Final = 64 * 1024
 _POLL_INTERVAL_SECONDS: Final = 0.02
 _TERMINATION_GRACE_SECONDS: Final = 5.0
 _JOIN_SECONDS: Final = 5.0
+_DIAGNOSTIC_PAYLOAD: Final = "diagnostics.json"
+_WORKER_LOG_PAYLOAD: Final = "logs/worker.stderr.txt"
+
+
+class ExecutionSealError(ExecutionError):
+    """A supervised execution may not be sealed with the requested outcome.
+
+    The execution boundary does not seal. It hands the evidence layer a bundle together
+    with the only outcome the supervisor observed, and refuses before delegating when a
+    caller asks for a different one. The sealed-bundle transaction itself remains ADR-008's.
+    """
 
 
 @dataclass(frozen=True, slots=True)
 class SupervisedExecution:
-    """An execution result together with the staging bundle the caller may now seal.
+    """An execution result together with the staging bundle the caller may seal.
 
-    ``bundle`` is mutable and still in ``.staging/``. It is not authoritative and is not
-    sealed; the caller decides whether to finalize it as succeeded or failed evidence, and
-    the evidence layer performs that transaction.
+    The raw mutable staging directory is intentionally not public. ``finalize`` is the only
+    way from this object to sealed evidence: it derives the admissible outcome from the
+    terminal result and delegates that exact outcome to the evidence layer. This is what
+    closes the path where a cancelled or failed run could be passed to
+    :func:`~dynamisbench.evidence.staging.finalize_bundle` as ``RunOutcome.SUCCEEDED``.
     """
 
     result: ExecutionResult
-    bundle: StagingBundle | None
+    _bundle: StagingBundle | None
+
+    @property
+    def has_staging_bundle(self) -> bool:
+        """Whether the supervisor created a staging bundle for this execution."""
+        return self._bundle is not None
+
+    def finalize(self, outcome: RunOutcome | None = None) -> SealResult:
+        """Seal the staging bundle as the outcome the supervisor actually observed.
+
+        :param outcome: optional caller assertion. It must equal the derived outcome;
+            otherwise this refuses before the evidence layer is called.
+        :raises ExecutionSealError: if no staging bundle exists, or an explicit outcome
+            contradicts the terminal result. A failed, cancelled, timed-out or refused run
+            can only ever be sealed as ``FAILED``.
+        """
+        if self._bundle is None:
+            raise ExecutionSealError(f"run {self.result.run_id!r} has no staging bundle to seal")
+        admissible = self.result.seal_outcome
+        if outcome is not None and outcome is not admissible:
+            raise ExecutionSealError(
+                f"run {self.result.run_id!r} ended as {self.result.state.value} and can only "
+                f"be sealed as {admissible.value}, not {outcome.value}"
+            )
+        return finalize_bundle(self._bundle, admissible)
 
 
 class _BoundedStreamReader(threading.Thread):
@@ -154,6 +218,41 @@ class _BoundedStreamReader(threading.Thread):
                 self.truncated = True
 
 
+class _StdinWriter(threading.Thread):
+    """Deliver one request from a thread so the deadline can interrupt a blocked pipe.
+
+    A synchronous write is unbounded: a worker that never reads stdin eventually fills the
+    pipe buffer and the supervisor blocks inside ``write`` before its deadline or
+    cancellation check ever runs. The write is therefore always performed here, while the
+    supervisor's main loop continues to own the deadline, cancellation and tree cleanup.
+    """
+
+    def __init__(self, stream: IO[bytes], payload: bytes) -> None:
+        super().__init__(daemon=True)
+        self._stream = stream
+        self._payload = payload
+        self.delivered = False
+        self.failure: str | None = None
+
+    def run(self) -> None:
+        view = memoryview(self._payload)
+        try:
+            while view:
+                written = self._stream.write(view)
+                if written <= 0:
+                    raise BrokenPipeError("the worker closed its stdin")
+                view = view[written:]
+            self._stream.flush()
+            self.delivered = True
+        except (BrokenPipeError, OSError, ValueError) as error:
+            self.failure = f"{type(error).__name__}: {error}"
+        finally:
+            try:
+                self._stream.close()
+            except OSError:
+                return
+
+
 def _notify(observer: LifecycleObserver | None, state: RunLifecycleState) -> None:
     if observer is None:
         return
@@ -165,55 +264,18 @@ def _notify(observer: LifecycleObserver | None, state: RunLifecycleState) -> Non
         return
 
 
-def _terminate_tree(process: subprocess.Popen[bytes]) -> bool:
-    """Terminate a worker and its descendants, then reap it.
+def _terminate_and_reap(process: subprocess.Popen[bytes], tree: ProcessTree) -> tuple[bool, bool]:
+    """Terminate the whole tree, reap the direct child, and verify the tree is empty.
 
-    Windows uses the operating system's tree-aware ``taskkill`` from an absolute system
-    path, because ``Popen.kill`` terminates one process and a worker is allowed to have
-    descendants. POSIX kills the process group created by ``start_new_session``. Both
-    paths fall back to killing the process itself if the tree mechanism is unavailable,
-    and both end by waiting for the process so the supervisor never returns while a
-    worker is still unreaped.
+    The two returned facts are deliberately separate. ``worker_reaped`` is about the direct
+    child only; ``process_tree_cleaned`` is about every process the tree primitive owns,
+    including descendants that outlived an early parent exit. A caller must not read the
+    first as the second.
     """
-    if process.poll() is None:
-        if os.name == "nt":
-            taskkill = (
-                Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "taskkill.exe"
-            )
-            terminated = False
-            if taskkill.is_file():
-                flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                try:
-                    subprocess.run(
-                        [
-                            str(taskkill),
-                            "/PID",
-                            str(process.pid),
-                            "/T",
-                            "/F",
-                        ],
-                        shell=False,
-                        capture_output=True,
-                        timeout=_TERMINATION_GRACE_SECONDS,
-                        creationflags=flags,
-                        check=False,
-                    )
-                    terminated = True
-                except (OSError, subprocess.TimeoutExpired):
-                    terminated = False
-            if not terminated:
-                try:
-                    process.kill()
-                except OSError:
-                    pass
-        else:
-            try:
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-            except (OSError, ProcessLookupError):
-                try:
-                    process.kill()
-                except OSError:
-                    pass
+    try:
+        tree.terminate()
+    except OSError:
+        pass
     try:
         process.wait(timeout=_TERMINATION_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
@@ -224,27 +286,13 @@ def _terminate_tree(process: subprocess.Popen[bytes]) -> bool:
         try:
             process.wait(timeout=_TERMINATION_GRACE_SECONDS)
         except subprocess.TimeoutExpired:
-            return False
-    return True
-
-
-def _write_request(process: subprocess.Popen[bytes], payload: bytes) -> None:
-    """Write the one request and close stdin, treating a broken pipe as a worker failure."""
-    try:
-        if process.stdin is None:  # pragma: no cover - PIPE is always requested
-            return
-        process.stdin.write(payload)
-        process.stdin.flush()
-    except (BrokenPipeError, OSError):
-        # The process died before reading its request. The exit code and stderr are the
-        # authoritative account; the supervisor does not invent a second one here.
-        return
-    finally:
-        try:
-            if process.stdin is not None:
-                process.stdin.close()
-        except OSError:
             pass
+    worker_reaped = process.poll() is not None
+    try:
+        process_tree_cleaned = tree.wait_empty(_TERMINATION_GRACE_SECONDS)
+    except OSError:
+        process_tree_cleaned = False
+    return worker_reaped, process_tree_cleaned
 
 
 def _response_refusals(response: WorkerResponse, request: WorkerRequest) -> list[Refusal]:
@@ -275,8 +323,9 @@ def _launch(
     *,
     working_directory: Path,
     environment: dict[str, str],
-) -> subprocess.Popen[bytes]:
-    """Start one worker with an explicit vector, no shell and no inherited descriptors."""
+) -> tuple[subprocess.Popen[bytes], ProcessTree]:
+    """Start one worker suspended, attach it to its tree primitive, then resume it."""
+    job = create_windows_job()
     options: dict[str, object] = {
         "stdin": subprocess.PIPE,
         "stdout": subprocess.PIPE,
@@ -288,12 +337,31 @@ def _launch(
         "close_fds": True,
     }
     if os.name == "nt":
-        options["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
-            subprocess, "CREATE_NEW_PROCESS_GROUP", 0
-        )
+        options["creationflags"] = windows_creation_flags()
     else:
         options["start_new_session"] = True
-    return subprocess.Popen(command, **options)  # type: ignore[arg-type]
+
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        process = subprocess.Popen(command, **options)  # type: ignore[arg-type]
+        if job is not None:
+            attach_windows_job(job, process)
+            return process, job
+        return process, PosixProcessTree(process.pid)
+    except BaseException:
+        if job is not None:
+            job.terminate()
+            job.close()
+        if process is not None:
+            try:
+                process.kill()
+            except OSError:
+                pass
+            try:
+                process.wait(timeout=_TERMINATION_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
+        raise
 
 
 def _working_directory(workspace: Workspace, run: RunId) -> Path:
@@ -312,6 +380,8 @@ def _finish(
     worker_exit_code: int | None,
     worker_pid: int | None,
     worker_reaped: bool,
+    stdin_delivered: bool,
+    process_tree_cleaned: bool,
     stdout_truncated: bool,
     stderr_truncated: bool,
     stderr_bytes: bytes,
@@ -319,52 +389,77 @@ def _finish(
 ) -> ExecutionResult:
     """Write the bounded diagnostic payload, close staging, and describe the outcome.
 
-    A failure to write the diagnostic is itself a refusal. A worker that reported success
-    but whose supervisor could not record what happened is not reported as completed,
-    because the operator would then have a success with no trace of it.
+    The diagnostic is written only after every evidence-write failure that can still be
+    observed has been folded into the state and refusal list. A log write that fails turns
+    a ``COMPLETED`` run into ``FAILED`` *before* ``diagnostics.json`` is written, so the
+    persisted state and the returned terminal state cannot disagree. If the diagnostic
+    write itself fails, no diagnostic reference is returned and the run becomes ``FAILED``.
     """
     diagnostic_reference: str | None = None
     log_reference: str | None = None
 
+    final_state = state
+    final_refusals = list(refusals)
+    if final_state is RunLifecycleState.COMPLETED and final_refusals:
+        final_state = RunLifecycleState.FAILED
+
     if bundle is not None:
         if stderr_bytes:
             try:
-                bundle.write_payload("logs/worker.stderr.txt", stderr_bytes)
-                log_reference = "logs/worker.stderr.txt"
+                bundle.write_payload(_WORKER_LOG_PAYLOAD, stderr_bytes)
+                log_reference = _WORKER_LOG_PAYLOAD
             except EvidenceError:
-                refusals.append(
+                final_refusals.append(
                     refusal(
                         RefusalCode.EVIDENCE_WRITE_FAILED,
                         "the bounded worker log could not be written into staging",
                     )
                 )
+                if final_state is RunLifecycleState.COMPLETED:
+                    final_state = RunLifecycleState.FAILED
+
         diagnostic = ExecutionDiagnostic(
             run_id=request.run_id,
             execution_fingerprint=request.execution_fingerprint,
             environment=request.environment,
             adapter=request.adapter,
-            state=state,
-            refusals=tuple(refusals),
+            state=final_state,
+            refusals=tuple(final_refusals),
             worker_exit_code=worker_exit_code,
+            stdin_delivered=stdin_delivered,
+            process_tree_cleaned=process_tree_cleaned,
             stdout_truncated=stdout_truncated,
             stderr_truncated=stderr_truncated,
             log_reference=log_reference,
         )
         try:
-            bundle.write_payload("diagnostics.json", canonical_semantic_bytes(diagnostic))
-            diagnostic_reference = "diagnostics.json"
+            bundle.write_payload(_DIAGNOSTIC_PAYLOAD, canonical_semantic_bytes(diagnostic))
+            diagnostic_reference = _DIAGNOSTIC_PAYLOAD
         except EvidenceError:
-            refusals.append(
+            # No complete diagnostic exists, so a completed process cannot be reported as
+            # completed: the operator would have a success with no trace of it. A failed
+            # write can leave a partial file behind on some filesystems; remove it so a
+            # later reader cannot mistake a truncated record for a persisted terminal state.
+            try:
+                partial = bundle.workspace.resolve(
+                    PersistenceClass.STAGING,
+                    f"{bundle.run_id}/{_DIAGNOSTIC_PAYLOAD}",
+                )
+                partial.unlink(missing_ok=True)
+            except OSError:
+                pass
+            final_refusals.append(
                 refusal(
                     RefusalCode.EVIDENCE_WRITE_FAILED,
                     "the execution diagnostic could not be written into staging",
                 )
             )
+            final_state = RunLifecycleState.FAILED
         bundle.close_for_payload()
 
-    if state is RunLifecycleState.COMPLETED and refusals:
-        state = RunLifecycleState.FAILED
-    _notify(observer, state)
+    if final_state is RunLifecycleState.COMPLETED and final_refusals:
+        final_state = RunLifecycleState.FAILED
+    _notify(observer, final_state)
 
     staging = bundle.reference.text if bundle is not None else staging_locator_for(request.run_id)
     return ExecutionResult(
@@ -372,16 +467,46 @@ def _finish(
         execution_fingerprint=request.execution_fingerprint,
         environment=request.environment,
         adapter=request.adapter,
-        state=state,
+        state=final_state,
         staging=staging,
-        refusals=tuple(refusals),
+        refusals=tuple(final_refusals),
         diagnostic_reference=diagnostic_reference,
         log_reference=log_reference,
         worker_exit_code=worker_exit_code,
         worker_pid=worker_pid,
         worker_reaped=worker_reaped,
+        stdin_delivered=stdin_delivered,
+        process_tree_cleaned=process_tree_cleaned,
         stdout_truncated=stdout_truncated,
         stderr_truncated=stderr_truncated,
+    )
+
+
+def _refused_without_process(
+    *,
+    request: WorkerRequest,
+    state: RunLifecycleState,
+    refusals: list[Refusal],
+    observer: LifecycleObserver | None,
+) -> SupervisedExecution:
+    """Describe a run refused before a process existed, with no staging side effects."""
+    return SupervisedExecution(
+        result=_finish(
+            bundle=None,
+            request=request,
+            state=state,
+            refusals=refusals,
+            worker_exit_code=None,
+            worker_pid=None,
+            worker_reaped=False,
+            stdin_delivered=False,
+            process_tree_cleaned=False,
+            stdout_truncated=False,
+            stderr_truncated=False,
+            stderr_bytes=b"",
+            observer=observer,
+        ),
+        _bundle=None,
     )
 
 
@@ -393,12 +518,13 @@ def execute_preflighted(
 ) -> SupervisedExecution:
     """Launch, supervise and describe one preflight-admitted run.
 
-    The caller receives both the operator-visible result and the staging bundle, which is
-    closed for payload and *not* sealed. The caller's next action is an evidence decision,
-    not an execution decision.
+    The caller receives both the operator-visible result and a ``finalize`` operation,
+    which is closed for payload and *not* sealed. The caller's next action is an evidence
+    decision, not an execution decision.
 
-    :raises PreflightRefusedError: if ``preflighted`` was refused. Executing a refused run
-        is a programming error, and silently starting one would defeat the admission gate.
+    :raises PreflightRefusedError: if ``preflighted`` was refused or carries no request.
+        Executing a refused run is a programming error, and silently starting one would
+        defeat the admission gate.
     """
     report = preflighted.report
     request = preflighted.request
@@ -408,8 +534,24 @@ def execute_preflighted(
     workspace = preflighted.workspace
     manifest = preflighted.manifest
     run = request.run_id
+
+    initial_refusals = admission_refusals(
+        preflighted,
+        check_assets=True,
+        check_duplicates=True,
+    )
+    if initial_refusals:
+        return _refused_without_process(
+            request=request,
+            state=RunLifecycleState.REFUSED,
+            refusals=initial_refusals,
+            observer=observer,
+        )
+
     bundle: StagingBundle | None = None
     process: subprocess.Popen[bytes] | None = None
+    tree: ProcessTree | None = None
+    stdin_writer: _StdinWriter | None = None
     stdout_reader: _BoundedStreamReader | None = None
     stderr_reader: _BoundedStreamReader | None = None
     working_directory: Path | None = None
@@ -418,6 +560,8 @@ def execute_preflighted(
     exit_code: int | None = None
     worker_pid: int | None = None
     worker_reaped = False
+    stdin_delivered = False
+    process_tree_cleaned = False
     stdout_truncated = False
     stderr_truncated = False
     stderr_bytes = b""
@@ -445,12 +589,14 @@ def execute_preflighted(
                     worker_exit_code=None,
                     worker_pid=None,
                     worker_reaped=False,
+                    stdin_delivered=False,
+                    process_tree_cleaned=False,
                     stdout_truncated=False,
                     stderr_truncated=False,
                     stderr_bytes=b"",
                     observer=observer,
                 ),
-                bundle=None,
+                _bundle=None,
             )
         except EvidenceError:
             refusals.append(
@@ -469,12 +615,14 @@ def execute_preflighted(
                     worker_exit_code=None,
                     worker_pid=None,
                     worker_reaped=False,
+                    stdin_delivered=False,
+                    process_tree_cleaned=False,
                     stdout_truncated=False,
                     stderr_truncated=False,
                     stderr_bytes=b"",
                     observer=observer,
                 ),
-                bundle=None,
+                _bundle=None,
             )
 
         if cancel_event is not None and cancel_event.is_set():
@@ -494,12 +642,14 @@ def execute_preflighted(
                     worker_exit_code=None,
                     worker_pid=None,
                     worker_reaped=False,
+                    stdin_delivered=False,
+                    process_tree_cleaned=False,
                     stdout_truncated=False,
                     stderr_truncated=False,
                     stderr_bytes=b"",
                     observer=observer,
                 ),
-                bundle=bundle,
+                _bundle=bundle,
             )
 
         try:
@@ -521,12 +671,14 @@ def execute_preflighted(
                     worker_exit_code=None,
                     worker_pid=None,
                     worker_reaped=False,
+                    stdin_delivered=False,
+                    process_tree_cleaned=False,
                     stdout_truncated=False,
                     stderr_truncated=False,
                     stderr_bytes=b"",
                     observer=observer,
                 ),
-                bundle=bundle,
+                _bundle=bundle,
             )
 
         working_directory = _working_directory(workspace, run)
@@ -548,18 +700,43 @@ def execute_preflighted(
                     worker_exit_code=None,
                     worker_pid=None,
                     worker_reaped=False,
+                    stdin_delivered=False,
+                    process_tree_cleaned=False,
                     stdout_truncated=False,
                     stderr_truncated=False,
                     stderr_bytes=b"",
                     observer=observer,
                 ),
-                bundle=bundle,
+                _bundle=bundle,
+            )
+
+        # Re-derive the admission tuple immediately before the fixed program starts. This
+        # catches a manifest, plan, definition or asset that changed after preflight.
+        launch_refusals = admission_refusals(preflighted, check_assets=True)
+        if launch_refusals:
+            return SupervisedExecution(
+                result=_finish(
+                    bundle=bundle,
+                    request=request,
+                    state=RunLifecycleState.REFUSED,
+                    refusals=launch_refusals,
+                    worker_exit_code=None,
+                    worker_pid=None,
+                    worker_reaped=False,
+                    stdin_delivered=False,
+                    process_tree_cleaned=False,
+                    stdout_truncated=False,
+                    stderr_truncated=False,
+                    stderr_bytes=b"",
+                    observer=observer,
+                ),
+                _bundle=bundle,
             )
 
         launch_environment = worker_environment(manifest, temporary_directory=working_directory)
         command = _launch_command(program, manifest)
         try:
-            process = _launch(
+            process, tree = _launch(
                 command,
                 working_directory=working_directory,
                 environment=launch_environment,
@@ -581,29 +758,33 @@ def execute_preflighted(
                     worker_exit_code=None,
                     worker_pid=None,
                     worker_reaped=False,
+                    stdin_delivered=False,
+                    process_tree_cleaned=False,
                     stdout_truncated=False,
                     stderr_truncated=False,
                     stderr_bytes=b"",
                     observer=observer,
                 ),
-                bundle=bundle,
+                _bundle=bundle,
             )
 
         worker_pid = process.pid
+        deadline = time.monotonic() + manifest.timeout_seconds
         _notify(observer, RunLifecycleState.RUNNING)
         assert process.stdout is not None
         assert process.stderr is not None
+        assert process.stdin is not None
         stdout_reader = _BoundedStreamReader(
             process.stdout, limit=MAX_WORKER_MESSAGE_BYTES, fail_on_overflow=True
         )
         stderr_reader = _BoundedStreamReader(
             process.stderr, limit=manifest.max_log_bytes, fail_on_overflow=False
         )
+        stdin_writer = _StdinWriter(process.stdin, request_bytes)
         stdout_reader.start()
         stderr_reader.start()
-        _write_request(process, request_bytes)
+        stdin_writer.start()
 
-        deadline = time.monotonic() + manifest.timeout_seconds
         stop_reason: RefusalCode | None = None
         while process.poll() is None:
             if cancel_event is not None and cancel_event.is_set():
@@ -618,27 +799,28 @@ def execute_preflighted(
                 break
             time.sleep(_POLL_INTERVAL_SECONDS)
 
-        if stop_reason is not None:
-            worker_reaped = _terminate_tree(process)
-        else:
-            try:
-                process.wait(timeout=_TERMINATION_GRACE_SECONDS)
-                worker_reaped = True
-            except subprocess.TimeoutExpired:
-                worker_reaped = _terminate_tree(process)
+        # Even a direct child that exited on its own is not proof that its descendants are
+        # gone. The tree is terminated and verified empty on every path.
+        worker_reaped, process_tree_cleaned = _terminate_and_reap(process, tree)
+        try:
+            process.stdin.close()
+        except OSError:
+            pass
+        stdin_writer.join(_JOIN_SECONDS)
+        if stdin_writer.is_alive():
+            stdin_writer.join(_JOIN_SECONDS)
+        stdin_delivered = stdin_writer.delivered
 
         stdout_reader.join(_JOIN_SECONDS)
         stderr_reader.join(_JOIN_SECONDS)
         if stdout_reader.is_alive():
             try:
-                assert process.stdout is not None
                 process.stdout.close()
             except OSError:
                 pass
             stdout_reader.join(_JOIN_SECONDS)
         if stderr_reader.is_alive():
             try:
-                assert process.stderr is not None
                 process.stderr.close()
             except OSError:
                 pass
@@ -691,6 +873,14 @@ def execute_preflighted(
                 )
             )
             state = RunLifecycleState.FAILED
+        elif not stdin_delivered:
+            refusals.append(
+                refusal(
+                    RefusalCode.WORKER_PROTOCOL_VIOLATION,
+                    "the worker exited before the complete request was delivered to its stdin",
+                )
+            )
+            state = RunLifecycleState.FAILED
         else:
             try:
                 response = parse_worker_response(stdout_bytes)
@@ -717,13 +907,40 @@ def execute_preflighted(
                     state = RunLifecycleState.FAILED
                 else:
                     state = RunLifecycleState.COMPLETED
+
+        if not process_tree_cleaned:
+            refusals.append(
+                refusal(
+                    RefusalCode.WORKER_FAILED,
+                    "the worker process tree could not be verified empty after termination",
+                )
+            )
+            if state is RunLifecycleState.COMPLETED:
+                state = RunLifecycleState.FAILED
     except BaseException:
         if bundle is not None:
             bundle.close_for_payload()
         raise
     finally:
         if process is not None and process.poll() is None:
-            _terminate_tree(process)
+            if tree is not None:
+                worker_reaped, process_tree_cleaned = _terminate_and_reap(process, tree)
+            else:  # pragma: no cover - a launched process always has a tree primitive
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+        if tree is not None:
+            try:
+                process_tree_cleaned = tree.wait_empty(_TERMINATION_GRACE_SECONDS) and (
+                    process_tree_cleaned or process is None
+                )
+            except OSError:
+                process_tree_cleaned = False
+            tree.close()
+        if stdin_writer is not None:
+            stdin_writer.join(_JOIN_SECONDS)
+            stdin_delivered = stdin_delivered or stdin_writer.delivered
         if stderr_reader is not None:
             stderr_reader.join(_JOIN_SECONDS)
         if stdout_reader is not None:
@@ -739,6 +956,8 @@ def execute_preflighted(
         stderr_truncated = stderr_reader.truncated
     if stdout_reader is not None:
         stdout_truncated = stdout_reader.truncated
+    if stdin_writer is not None:
+        stdin_delivered = stdin_writer.delivered
     if process is not None:
         exit_code = process.returncode
         worker_reaped = worker_reaped or process.poll() is not None
@@ -752,10 +971,12 @@ def execute_preflighted(
             worker_exit_code=exit_code,
             worker_pid=worker_pid,
             worker_reaped=worker_reaped,
+            stdin_delivered=stdin_delivered,
+            process_tree_cleaned=process_tree_cleaned,
             stdout_truncated=stdout_truncated,
             stderr_truncated=stderr_truncated,
             stderr_bytes=stderr_bytes,
             observer=observer,
         ),
-        bundle=bundle,
+        _bundle=bundle,
     )

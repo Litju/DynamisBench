@@ -39,6 +39,7 @@ from dynamisbench.execution import (
     WorkerEnvironmentManifest,
     execute_preflighted,
     preflight_run,
+    required_capabilities_of,
 )
 from dynamisbench.execution.contracts import staging_locator_for
 from dynamisbench.planning import FactorCase, PlannedRun, PlanningContext, plan_study
@@ -72,7 +73,7 @@ class ExecutionFixture:
 
     @property
     def required_capabilities(self) -> tuple[Capability, ...]:
-        return tuple(requirement.capability for requirement in self.run.capabilities.requirements)
+        return required_capabilities_of(self.run)
 
     @property
     def fingerprint(self) -> ExecutionFingerprint:
@@ -239,23 +240,15 @@ def worker_manifest(
 def preflight(
     fixture: ExecutionFixture,
     manifest: WorkerEnvironmentManifest | None = None,
-    *,
-    required_capabilities: tuple[Capability, ...] | None = None,
 ) -> PreflightedRun:
     chosen_manifest = manifest or worker_manifest(fixture)
     return preflight_run(
         fixture.run_id,
-        fixture.run.spec,
-        fixture.fingerprint,
+        fixture.run,
         realization=fixture.realization,
         environment=fixture.environment,
         manifest=chosen_manifest,
         workspace=fixture.workspace,
-        required_capabilities=(
-            fixture.required_capabilities
-            if required_capabilities is None
-            else required_capabilities
-        ),
     )
 
 
@@ -263,15 +256,10 @@ def execute(
     fixture: ExecutionFixture,
     manifest: WorkerEnvironmentManifest | None = None,
     *,
-    required_capabilities: tuple[Capability, ...] | None = None,
     cancel_event=None,
     observer=None,
 ) -> SupervisedExecution:
-    admission = preflight(
-        fixture,
-        manifest,
-        required_capabilities=required_capabilities,
-    )
+    admission = preflight(fixture, manifest)
     return execute_preflighted(admission, cancel_event=cancel_event, observer=observer)
 
 

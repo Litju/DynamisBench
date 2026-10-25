@@ -49,6 +49,7 @@ from dynamisbench.evidence.bundle import (
     BundleNamingError,
     BundleRelativePath,
     RunId,
+    RunOutcome,
     parse_run_id,
 )
 from dynamisbench.identity import SemanticDigest, canonical_semantic_bytes, semantic_sha256
@@ -458,6 +459,8 @@ class ExecutionDiagnostic(DomainModel):
     state: RunLifecycleState
     refusals: tuple[Refusal, ...] = ()
     worker_exit_code: int | None = None
+    stdin_delivered: bool = False
+    process_tree_cleaned: bool = False
     stdout_truncated: bool = False
     stderr_truncated: bool = False
     log_reference: BundleRelativePath | None = None
@@ -484,11 +487,13 @@ class ExecutionResult:
         "environment",
         "execution_fingerprint",
         "log_reference",
+        "process_tree_cleaned",
         "refusals",
         "run_id",
         "staging",
         "state",
         "stderr_truncated",
+        "stdin_delivered",
         "stdout_truncated",
         "worker_exit_code",
         "worker_pid",
@@ -510,6 +515,8 @@ class ExecutionResult:
         worker_exit_code: int | None = None,
         worker_pid: int | None = None,
         worker_reaped: bool = False,
+        stdin_delivered: bool = False,
+        process_tree_cleaned: bool = False,
         stdout_truncated: bool = False,
         stderr_truncated: bool = False,
     ) -> None:
@@ -527,6 +534,8 @@ class ExecutionResult:
         self.worker_exit_code = worker_exit_code
         self.worker_pid = worker_pid
         self.worker_reaped = worker_reaped
+        self.stdin_delivered = stdin_delivered
+        self.process_tree_cleaned = process_tree_cleaned
         self.stdout_truncated = stdout_truncated
         self.stderr_truncated = stderr_truncated
 
@@ -538,6 +547,20 @@ class ExecutionResult:
         scientific result and not a sealed artifact.
         """
         return self.state is RunLifecycleState.COMPLETED
+
+    @property
+    def seal_outcome(self) -> RunOutcome:
+        """The only evidence outcome this execution may be sealed as.
+
+        The supervisor knows whether it observed a completed process; a caller does not
+        get to reinterpret a cancelled, timed-out or failed run as a success because the
+        staging directory is still mutable. ``SUCCEEDED`` is therefore derived from the
+        terminal state and refusals, never supplied by the caller (ADR-008 still owns the
+        sealing transaction itself).
+        """
+        if self.state is RunLifecycleState.COMPLETED and not self.refusals:
+            return RunOutcome.SUCCEEDED
+        return RunOutcome.FAILED
 
     @property
     def evidence_locator(self) -> str:

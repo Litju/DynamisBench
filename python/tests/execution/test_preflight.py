@@ -77,15 +77,16 @@ def test_a_refused_report_contains_no_absolute_path(
 def test_a_fingerprint_that_is_not_the_run_spec_identity_is_refused(
     execution_fixture: ExecutionFixture,
 ) -> None:
+    tampered = execution_fixture.run.model_copy(
+        update={"fingerprint": ExecutionFingerprint(hex="0" * 64)}
+    )
     admission = preflight_run(
         execution_fixture.run_id,
-        execution_fixture.run.spec,
-        ExecutionFingerprint(hex="0" * 64),
+        tampered,
         realization=execution_fixture.realization,
         environment=execution_fixture.environment,
         manifest=worker_manifest(execution_fixture),
         workspace=execution_fixture.workspace,
-        required_capabilities=execution_fixture.required_capabilities,
     )
 
     assert admission.report.decision is PreflightDecision.REFUSED
@@ -98,13 +99,11 @@ def test_a_substituted_realization_is_refused(execution_fixture: ExecutionFixtur
     substituted = control_realization(description="A different control realization.")
     admission = preflight_run(
         execution_fixture.run_id,
-        execution_fixture.run.spec,
-        execution_fixture.fingerprint,
+        execution_fixture.run,
         realization=substituted,
         environment=execution_fixture.environment,
         manifest=worker_manifest(execution_fixture),
         workspace=execution_fixture.workspace,
-        required_capabilities=execution_fixture.required_capabilities,
     )
 
     assert RefusalCode.REALIZATION_IDENTITY_MISMATCH in _codes(admission)
@@ -116,13 +115,11 @@ def test_a_substituted_environment_definition_is_refused(
     substituted = control_environment(description="A different control environment.")
     admission = preflight_run(
         execution_fixture.run_id,
-        execution_fixture.run.spec,
-        execution_fixture.fingerprint,
+        execution_fixture.run,
         realization=execution_fixture.realization,
         environment=substituted,
         manifest=worker_manifest(execution_fixture),
         workspace=execution_fixture.workspace,
-        required_capabilities=execution_fixture.required_capabilities,
     )
 
     assert RefusalCode.ENVIRONMENT_IDENTITY_MISMATCH in _codes(admission)
@@ -161,10 +158,28 @@ def test_an_unsupported_capability_is_refused(execution_fixture: ExecutionFixtur
     assert RefusalCode.UNSUPPORTED_CAPABILITY in _codes(admission)
 
 
-def test_an_unknown_capability_is_refused(execution_fixture: ExecutionFixture) -> None:
-    admission = preflight(
-        execution_fixture,
-        required_capabilities=("quantum-teleport",),  # type: ignore[arg-type]
+def test_an_unknown_capability_in_the_accepted_plan_is_refused(
+    execution_fixture: ExecutionFixture,
+) -> None:
+    from dynamisbench.planning.compatibility import EffectiveCapabilityRequirement
+
+    unrepresentable = EffectiveCapabilityRequirement.model_construct(
+        capability="quantum-teleport",
+        essential=True,
+        demands=(),
+    )
+    compatibility = execution_fixture.run.capabilities.model_copy(
+        update={"requirements": (unrepresentable,)}
+    )
+    tampered = execution_fixture.run.model_copy(update={"capabilities": compatibility})
+
+    admission = preflight_run(
+        execution_fixture.run_id,
+        tampered,
+        realization=execution_fixture.realization,
+        environment=execution_fixture.environment,
+        manifest=worker_manifest(execution_fixture),
+        workspace=execution_fixture.workspace,
     )
 
     assert RefusalCode.UNKNOWN_CAPABILITY in _codes(admission)
@@ -188,6 +203,17 @@ def test_an_asset_digest_mismatch_is_refused(tmp_path: Path) -> None:
     assert RefusalCode.ASSET_DIGEST_MISMATCH in _codes(admission)
 
 
+def test_a_present_asset_without_a_content_identity_is_refused(tmp_path: Path) -> None:
+    realization = asset_realization(path="models/control.xml", sha256=None)
+    fixture = build_fixture(tmp_path, realization=realization)
+    write_source_asset(fixture.workspace, "models/control.xml", b"unidentified-model")
+
+    admission = preflight(fixture)
+
+    assert RefusalCode.UNSTAGED_ASSET in _codes(admission)
+    assert admission.request is None
+
+
 def test_a_present_content_addressed_asset_is_ready(tmp_path: Path) -> None:
     placeholder = build_fixture(tmp_path)
     digest = write_source_asset(placeholder.workspace, "models/control.xml", b"control-model")
@@ -206,7 +232,7 @@ def test_an_asset_path_that_escapes_the_source_root_is_refused(tmp_path: Path) -
         asset_id="escape",
         path="../outside.xml",
         description="A path that must never reach the filesystem resolver.",
-        sha256=None,
+        sha256="0" * 64,
     )
     realization = control_realization(assets=(escape,))
     fixture = build_fixture(tmp_path, realization=realization)
@@ -244,13 +270,11 @@ def test_an_invalid_run_id_is_a_naming_error_not_an_execution(
     with pytest.raises(BundleNamingError):
         preflight_run(
             "..",
-            execution_fixture.run.spec,
-            execution_fixture.fingerprint,
+            execution_fixture.run,
             realization=execution_fixture.realization,
             environment=execution_fixture.environment,
             manifest=worker_manifest(execution_fixture),
             workspace=execution_fixture.workspace,
-            required_capabilities=execution_fixture.required_capabilities,
         )
 
 
@@ -268,15 +292,16 @@ def test_every_other_well_formed_fingerprint_is_refused(
 ) -> None:
     if hex_digest == execution_fixture.fingerprint.hex:
         return
+    tampered = execution_fixture.run.model_copy(
+        update={"fingerprint": ExecutionFingerprint(hex=hex_digest)}
+    )
     admission = preflight_run(
         execution_fixture.run_id,
-        execution_fixture.run.spec,
-        ExecutionFingerprint(hex=hex_digest),
+        tampered,
         realization=execution_fixture.realization,
         environment=execution_fixture.environment,
         manifest=worker_manifest(execution_fixture),
         workspace=execution_fixture.workspace,
-        required_capabilities=execution_fixture.required_capabilities,
     )
 
     assert RefusalCode.FINGERPRINT_MISMATCH in _codes(admission)

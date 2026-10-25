@@ -54,8 +54,14 @@ from dynamisbench.execution.environment import (
     WorkerEnvironmentManifest,
     resolved_worker_program,
 )
-from dynamisbench.identity import AssetAccessError, asset_sha256_of_file, semantic_sha256
-from dynamisbench.planning.runspec import ExecutionFingerprint, RunSpec, run_spec_fingerprint
+from dynamisbench.identity import (
+    AssetAccessError,
+    SemanticDigest,
+    asset_sha256_of_file,
+    semantic_sha256,
+)
+from dynamisbench.planning.plan import PlannedRun
+from dynamisbench.planning.runspec import RunSpec, run_spec_fingerprint
 from dynamisbench.workspace.authority import PathScopeError, PersistenceClass
 from dynamisbench.workspace.paths import resolve_within
 from dynamisbench.workspace.workspace import Workspace
@@ -63,7 +69,9 @@ from dynamisbench.workspace.workspace import Workspace
 __all__ = [
     "PreflightRefusedError",
     "PreflightedRun",
+    "admission_refusals",
     "preflight_run",
+    "required_capabilities_of",
 ]
 
 
@@ -84,22 +92,48 @@ class PreflightRefusedError(ExecutionError):
 
 @dataclass(frozen=True, slots=True)
 class PreflightedRun:
-    """A ready admission together with the exact request it would write.
+    """A ready admission together with every input the supervisor must revalidate.
 
     The request is ``None`` for a refused admission, and the supervisor refuses to execute
-    one. Keeping the report and the request together means the bytes that will be written
-    are the bytes whose digest the report published.
+    one. Keeping the report, request, accepted plan, selected definitions and operational
+    manifest together means the supervisor can re-derive the admission tuple instead of
+    trusting that the object it received still describes the run that was admitted.
     """
 
     report: PreflightReport
     request: WorkerRequest | None
     manifest: WorkerEnvironmentManifest
+    manifest_digest: SemanticDigest
     workspace: Workspace
+    planned_run: PlannedRun
+    realization: RealizationDefinition
+    environment: EnvironmentDefinition
 
     @property
     def ready(self) -> bool:
-        """Whether this admission may be handed to the supervisor."""
+        """Whether the report claims this admission may be handed to the supervisor.
+
+        This is deliberately only the preflight decision. The supervisor re-derives the
+        full admission tuple with :func:`admission_refusals` before it creates staging or
+        starts a process, because a mutable object can outlive the decision it carries.
+        """
         return self.report.decision is PreflightDecision.READY and self.request is not None
+
+
+def required_capabilities_of(planned_run: PlannedRun) -> tuple[Capability, ...]:
+    """The essential capabilities the accepted ``PlannedRun`` requires.
+
+    Preflight does not accept a caller-supplied capability list. Planning already merged
+    the study, scenario and system-under-test requirements with essential-OR semantics, so
+    the plan's own compatibility record is the only authority for what this run needs.
+    Optional capabilities are not admission requirements; :attr:`unmet_optional` remains
+    visible on the plan instead.
+    """
+    return tuple(
+        requirement.capability
+        for requirement in planned_run.capabilities.requirements
+        if requirement.essential
+    )
 
 
 def _identity_refusals(
@@ -222,6 +256,16 @@ def _asset_refusals(workspace: Workspace, realization: RealizationDefinition) ->
     """
     refusals: list[Refusal] = []
     for asset in realization.assets:
+        expected_digest = asset.sha256
+        if expected_digest is None:
+            refusals.append(
+                refusal(
+                    RefusalCode.UNSTAGED_ASSET,
+                    f"asset {asset.asset_id!r} declares no SHA-256 content identity, so its "
+                    "bytes cannot be admitted as the asset the realization names",
+                )
+            )
+            continue
         try:
             path = resolve_within(
                 workspace.source_root,
@@ -245,8 +289,6 @@ def _asset_refusals(workspace: Workspace, realization: RealizationDefinition) ->
                 )
             )
             continue
-        if asset.sha256 is None:
-            continue
         try:
             digest = asset_sha256_of_file(path)
         except AssetAccessError:
@@ -257,7 +299,7 @@ def _asset_refusals(workspace: Workspace, realization: RealizationDefinition) ->
                 )
             )
             continue
-        if digest.hex != asset.sha256:
+        if digest.hex != expected_digest:
             refusals.append(
                 refusal(
                     RefusalCode.ASSET_DIGEST_MISMATCH,
@@ -290,23 +332,163 @@ def _duplicate_refusals(workspace: Workspace, run: RunId) -> list[Refusal]:
     return []
 
 
+def admission_refusals(
+    preflighted: PreflightedRun,
+    *,
+    check_assets: bool = True,
+    check_duplicates: bool = False,
+) -> list[Refusal]:
+    """Re-derive the full admission tuple from the object about to be executed.
+
+    Preflight's decision is a value, not a capability. Between the decision and launch the
+    caller still holds mutable Python objects, assets can change on disk, and a manifest
+    can be replaced with one that advertises a different adapter. The supervisor calls this
+    immediately before it creates staging and again immediately before it launches the
+    fixed program. Every comparison is an equality between independently derived
+    identities, not a trust in the report.
+
+    The refusal vocabulary is not extended: a tuple that no longer expresses the admitted
+    run is ``INVALID_RUN_SPEC``, while a changed realization, environment, adapter or
+    capability set keeps its specific preflight code.
+    """
+    report = preflighted.report
+    request = preflighted.request
+    planned_run = preflighted.planned_run
+    refusals: list[Refusal] = []
+
+    if request is None:
+        return [
+            refusal(
+                RefusalCode.INVALID_RUN_SPEC,
+                "the admission carries no worker request, so there is nothing to revalidate",
+            )
+        ]
+
+    if report.decision is not PreflightDecision.READY:
+        refusals.append(
+            refusal(
+                RefusalCode.INVALID_RUN_SPEC,
+                "the admission is not ready and may not be launched",
+            )
+        )
+
+    if (
+        report.run_id != request.run_id
+        or report.execution_fingerprint != request.execution_fingerprint
+        or request.execution_fingerprint != planned_run.fingerprint
+        or request.execution_fingerprint != run_spec_fingerprint(request.run_spec)
+        or request.run_spec != planned_run.spec
+    ):
+        refusals.append(
+            refusal(
+                RefusalCode.INVALID_RUN_SPEC,
+                "the request, report and accepted PlannedRun no longer describe one execution",
+            )
+        )
+
+    if report.request_digest is None or worker_request_digest(request) != report.request_digest:
+        refusals.append(
+            refusal(
+                RefusalCode.INVALID_RUN_SPEC,
+                "the worker request no longer has the digest the preflight report published",
+            )
+        )
+
+    if preflighted.manifest_digest != semantic_sha256(preflighted.manifest):
+        refusals.append(
+            refusal(
+                RefusalCode.INVALID_RUN_SPEC,
+                "the selected worker environment manifest changed after preflight admitted it",
+            )
+        )
+
+    if (
+        report.staging_locator != request.staging_locator
+        or request.staging_locator != staging_locator_for(request.run_id)
+    ):
+        refusals.append(
+            refusal(
+                RefusalCode.INVALID_RUN_SPEC,
+                "the admission's staging locator is not the canonical locator of this run",
+            )
+        )
+
+    if (
+        report.environment != request.environment
+        or preflighted.manifest.environment != request.environment
+        or request.run_spec.environment != request.environment
+    ):
+        refusals.append(
+            refusal(
+                RefusalCode.ENVIRONMENT_IDENTITY_MISMATCH,
+                "the admission's environment is not the environment the request and RunSpec "
+                "resolved",
+            )
+        )
+
+    if (
+        report.adapter != request.adapter
+        or preflighted.manifest.adapter != request.adapter
+        or preflighted.manifest.adapter.capabilities != request.supported_capabilities
+    ):
+        refusals.append(
+            refusal(
+                RefusalCode.ADAPTER_ENGINE_MISMATCH,
+                "the admission's adapter is not the adapter the request advertised",
+            )
+        )
+
+    required, capability_refusals = _normalise_required_capabilities(
+        required_capabilities_of(planned_run)
+    )
+    refusals.extend(capability_refusals)
+    if (
+        report.required_capabilities != required
+        or request.required_capabilities != required
+        or report.supported_capabilities != request.supported_capabilities
+        or request.supported_capabilities != preflighted.manifest.adapter.capabilities
+        or request.supported_capabilities != request.adapter.capabilities
+    ):
+        refusals.append(
+            refusal(
+                RefusalCode.UNSUPPORTED_CAPABILITY,
+                "the admission's required or supported capability set no longer matches the "
+                "request, adapter and accepted PlannedRun",
+            )
+        )
+    refusals.extend(_capability_refusals(required, preflighted.manifest, preflighted.realization))
+    refusals.extend(
+        _identity_refusals(
+            planned_run.spec,
+            preflighted.realization,
+            preflighted.environment,
+            preflighted.manifest,
+        )
+    )
+
+    if check_assets:
+        refusals.extend(_asset_refusals(preflighted.workspace, preflighted.realization))
+    if check_duplicates:
+        refusals.extend(_duplicate_refusals(preflighted.workspace, request.run_id))
+    return refusals
+
+
 def preflight_run(
     run_id: RunId,
-    run_spec: RunSpec,
-    fingerprint: ExecutionFingerprint,
+    planned_run: PlannedRun,
     *,
     realization: RealizationDefinition,
     environment: EnvironmentDefinition,
     manifest: WorkerEnvironmentManifest,
     workspace: Workspace,
-    required_capabilities: Iterable[Capability | str],
 ) -> PreflightedRun:
-    """Decide whether one exact run may be handed to one exact worker environment.
+    """Decide whether one accepted ``PlannedRun`` may be handed to one worker environment.
 
     :param run_id: the human/logical identity of this execution. It must not already name
         a staging or sealed directory.
-    :param run_spec: the exact planned inputs.
-    :param fingerprint: the execution identity the plan published for ``run_spec``.
+    :param planned_run: the accepted plan instance. Its ``RunSpec``, fingerprint and
+        essential capability requirements are the admission tuple; a caller cannot supply
+        a weaker or different capability list alongside it.
     :param realization: the validated realization the RunSpec resolved. Its semantic
         digest must equal the RunSpec's.
     :param environment: the validated environment the RunSpec resolved.
@@ -314,20 +496,35 @@ def preflight_run(
         fixed command, timeout, log bound and explicit environment variables.
     :param workspace: the workspace whose source root holds the realization's assets and
         whose staging and sealed locations decide duplicate-run refusal.
-    :param required_capabilities: the effective essential capabilities planning derived
-        for this candidate. Preflight re-checks them against both the adapter and the
-        realization.
 
     :raises BundleNamingError: if ``run_id`` is not a run id.
     """
     run = parse_run_id(run_id)
-    required, refusals = _normalise_required_capabilities(required_capabilities)
+    run_spec = planned_run.spec
+    fingerprint = planned_run.fingerprint
+    required, refusals = _normalise_required_capabilities(required_capabilities_of(planned_run))
 
     if fingerprint != run_spec_fingerprint(run_spec):
         refusals.append(
             refusal(
                 RefusalCode.FINGERPRINT_MISMATCH,
-                "the supplied execution fingerprint is not the SHA-256 of the RunSpec meaning",
+                "the PlannedRun fingerprint is not the SHA-256 of the RunSpec meaning",
+            )
+        )
+    if planned_run.capabilities.unmet_essential:
+        refusals.append(
+            refusal(
+                RefusalCode.UNSUPPORTED_CAPABILITY,
+                "the accepted PlannedRun already records unmet essential capabilities",
+            )
+        )
+    advertised = {declaration.capability for declaration in realization.capabilities}
+    planned_provisions = {provision.capability for provision in planned_run.capabilities.provisions}
+    if planned_provisions != advertised:
+        refusals.append(
+            refusal(
+                RefusalCode.UNSUPPORTED_CAPABILITY,
+                "the PlannedRun capability provisions are not the realization's advertisements",
             )
         )
     refusals.extend(_identity_refusals(run_spec, realization, environment, manifest))
@@ -384,5 +581,9 @@ def preflight_run(
         report=report,
         request=request,
         manifest=manifest,
+        manifest_digest=semantic_sha256(manifest),
         workspace=workspace,
+        planned_run=planned_run,
+        realization=realization,
+        environment=environment,
     )

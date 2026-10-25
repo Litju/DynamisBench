@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Annotated, Final, Literal
 
 from pydantic import Field, StringConstraints, model_validator
+from pydantic import ValidationError as PydanticValidationError
 
 from dynamisbench.domain.spec.base import DomainModel, keyed_by
 from dynamisbench.execution.contracts import (
@@ -66,36 +67,105 @@ _ENVIRONMENT_NAME_PATTERN: Final = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 FORBIDDEN_WORKER_ENVIRONMENT_VARIABLES: Final = frozenset(
     {
         "ALL_PROXY",
+        "ALLUSERSPROFILE",
+        "APPDATA",
+        "APPINIT_DLLS",
         "BASH_ENV",
+        "BASHOPTS",
+        "CDPATH",
+        "CLASSPATH",
+        "COMMONPROGRAMFILES",
         "COMSPEC",
+        "CORECLR_ENABLE_PROFILING",
+        "CORECLR_PROFILER",
+        "CORECLR_PROFILER_PATH",
+        "COR_ENABLE_PROFILING",
+        "COR_PROFILER",
+        "COR_PROFILER_PATH",
+        "DOTNET_ADDITIONAL_DEPS",
+        "DOTNET_ROOT",
+        "DOTNET_SHARED_STORE",
+        "DOTNET_STARTUP_HOOKS",
         "DYLD_INSERT_LIBRARIES",
         "DYLD_LIBRARY_PATH",
         "ENV",
+        "GCONV_PATH",
+        "GDK_PIXBUF_MODULE_FILE",
+        "GLIBC_TUNABLES",
+        "GLOBIGNORE",
+        "GTK_MODULES",
+        "GTK_PATH",
         "HOME",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "HOSTALIASES",
         "HTTP_PROXY",
         "HTTPS_PROXY",
+        "IFS",
+        "JAVA_TOOL_OPTIONS",
+        "JDK_JAVA_OPTIONS",
         "LANG",
         "LC_ALL",
+        "LD_AUDIT",
+        "LD_DEBUG",
+        "LD_DEBUG_OUTPUT",
+        "LD_DYNAMIC_WEAK",
         "LD_LIBRARY_PATH",
+        "LD_ORIGIN_PATH",
         "LD_PRELOAD",
+        "LD_PROFILE",
+        "LD_SHOW_AUXV",
+        "LD_USE_LOAD_BIAS",
+        "LD_VERBOSE",
+        "LOCALAPPDATA",
+        "LOCPATH",
+        "MALLOC_CHECK_",
+        "MALLOC_PERTURB_",
+        "MALLOC_TRACE",
+        "NODE_EXTRA_CA_CERTS",
+        "NODE_OPTIONS",
+        "NODE_PATH",
         "NO_PROXY",
+        "NLSPATH",
         "PATH",
+        "PATHEXT",
+        "PERL5LIB",
+        "PERL5OPT",
+        "PERLLIB",
+        "PROGRAMDATA",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
         "PROMPT_COMMAND",
+        "PS4",
+        "PSMODULEPATH",
         "PYTHONEXECUTABLE",
         "PYTHONHOME",
         "PYTHONPATH",
         "PYTHONSTARTUP",
         "PYTHONUSERBASE",
+        "QT_PLUGIN_PATH",
+        "QT_QPA_PLATFORM_PLUGIN_PATH",
         "REQUESTS_CA_BUNDLE",
+        "RES_OPTIONS",
+        "RUBYLIB",
+        "RUBYOPT",
         "SHELL",
+        "SHELLOPTS",
         "SSL_CERT_DIR",
         "SSL_CERT_FILE",
+        "SYSTEMDRIVE",
         "SYSTEMROOT",
         "TEMP",
+        "TERM",
+        "TERMCAP",
+        "TERMINFO",
+        "TERMINFO_DIRS",
         "TMP",
         "TMPDIR",
         "TZ",
+        "USERPROFILE",
         "WINDIR",
+        "_JAVA_OPTIONS",
     }
 )
 """Variable names a worker environment may never declare.
@@ -106,10 +176,54 @@ the locale and time-zone names would make a worker's behaviour depend on an over
 temporary-directory and Windows-platform names would move a worker's scratch space or its
 system DLL search outside the supervised environment. A control name beginning with
 ``DYNAMISBENCH_`` is reserved separately.
+
+Names are compared case-insensitively because Windows environment blocks are
+case-insensitive: ``Path`` and ``PATH`` name the same slot, so an exact-case set would let
+one spelling of a loader-sensitive variable through on the authoritative platform.
 """
 
 _RESERVED_PREFIX: Final = "DYNAMISBENCH_"
 _PYTHON_PREFIX: Final = "PYTHON"
+
+_FORBIDDEN_PREFIXES: Final = (
+    _RESERVED_PREFIX,
+    _PYTHON_PREFIX,
+    "__",
+    "BASH_",
+    "BASH_FUNC_",
+    "COMPLUS_",
+    "CORECLR_",
+    "COR_",
+    "DOTNET_",
+    "DYLD_",
+    "GCONV_",
+    "GLIBC_",
+    "JAVA_",
+    "LD_",
+    "MALLOC_",
+    "NODE_",
+    "PERL",
+    "RUBY",
+    "_JAVA_",
+)
+"""Name families that are never a benign per-run declaration.
+
+Each family has at least one member that changes which shared library, interpreter hook,
+profiler, certificate or script is loaded. Blocking the whole family rather than an
+incomplete list is deliberate: a denylist of individual loader names is always one
+release behind the loader, while these prefixes are loader-owned namespaces in practice.
+"""
+
+
+def _normalise_environment_name(name: str) -> str:
+    """The case-insensitive key the operating system uses for a variable name.
+
+    The worker environment is admitted for Windows, where the environment block is
+    case-insensitive, and for POSIX, where it is not. One rule covers both: admission and
+    collision checks use the ASCII upper-case spelling, so ``Path`` cannot alias ``PATH``
+    merely because one platform would have treated it as a different name.
+    """
+    return name.upper()
 
 
 class WorkerEnvironmentError(ExecutionError, ValueError):
@@ -157,21 +271,18 @@ class WorkerEnvironmentVariable(DomainModel):
         if _ENVIRONMENT_NAME_PATTERN.fullmatch(self.name) is None:
             raise ValueError("a worker environment variable name is not a portable name")
         _reject_control_characters(self.value, "environment value")
-        if self.name in FORBIDDEN_WORKER_ENVIRONMENT_VARIABLES:
+        normalised = _normalise_environment_name(self.name)
+        if normalised in FORBIDDEN_WORKER_ENVIRONMENT_VARIABLES:
             raise ValueError(
                 f"the worker environment variable {self.name!r} is reserved by the supervisor "
                 "and may not be declared by an environment"
             )
-        if self.name.upper().startswith(_RESERVED_PREFIX):
-            raise ValueError(
-                f"the worker environment variable {self.name!r} uses the reserved "
-                f"{_RESERVED_PREFIX} prefix"
-            )
-        if self.name.upper().startswith(_PYTHON_PREFIX):
-            raise ValueError(
-                f"the worker environment variable {self.name!r} uses the reserved "
-                f"{_PYTHON_PREFIX} interpreter prefix"
-            )
+        for prefix in _FORBIDDEN_PREFIXES:
+            if normalised.startswith(prefix):
+                raise ValueError(
+                    f"the worker environment variable {self.name!r} uses the loader-sensitive "
+                    f"{prefix!r} name family and may not be declared by an environment"
+                )
         return self
 
 
@@ -194,6 +305,27 @@ class WorkerEnvironmentManifest(DomainModel):
     ]
     max_log_bytes: Annotated[int, Field(gt=0, le=MAX_WORKER_LOG_BYTES)] = MAX_WORKER_LOG_BYTES
     environment_variables: Annotated[tuple[WorkerEnvironmentVariable, ...], keyed_by("name")] = ()
+
+    @model_validator(mode="after")
+    def _declared_names_are_case_distinct(self) -> WorkerEnvironmentManifest:
+        """Reject two declarations that one platform would treat as one variable.
+
+        ``keyed_by`` compares exact spellings. That is sufficient on POSIX, but Windows
+        environment blocks are case-insensitive, so ``FOO`` and ``foo`` would become one
+        slot and which value the worker observed would depend on the process launcher.
+        The manifest therefore refuses the ambiguity rather than resolving it silently.
+        """
+        seen: dict[str, str] = {}
+        for variable in self.environment_variables:
+            normalised = _normalise_environment_name(variable.name)
+            previous = seen.get(normalised)
+            if previous is not None:
+                raise ValueError(
+                    f"worker environment variables {previous!r} and {variable.name!r} differ "
+                    "only by case and would alias on Windows"
+                )
+            seen[normalised] = variable.name
+        return self
 
 
 def resolved_worker_program(manifest: WorkerEnvironmentManifest) -> Path:
@@ -253,8 +385,8 @@ def worker_environment(
         "TZ": "UTC",
     }
     if os.name == "nt":
-        system_root = source.get("SYSTEMROOT")
-        windows_directory = source.get("WINDIR")
+        system_root = _case_insensitive_platform_value(source, "SYSTEMROOT")
+        windows_directory = _case_insensitive_platform_value(source, "WINDIR")
         if system_root:
             values["SYSTEMROOT"] = system_root
         if windows_directory:
@@ -266,5 +398,50 @@ def worker_environment(
         values["LANG"] = "C.UTF-8"
         values["LC_ALL"] = "C.UTF-8"
         values["TMPDIR"] = str(temporary_directory)
-    values.update({variable.name: variable.value for variable in manifest.environment_variables})
+
+    reserved = {_normalise_environment_name(name) for name in values}
+    declarations: list[WorkerEnvironmentVariable] = []
+    declared: set[str] = set()
+    for variable in manifest.environment_variables:
+        try:
+            # Re-run admission at the launch boundary. A caller can produce a manifest with
+            # ``model_copy``/``model_construct``, which does not re-run validators; the map
+            # that actually reaches the child must never contain a loader-sensitive name.
+            checked = WorkerEnvironmentVariable(name=variable.name, value=variable.value)
+        except PydanticValidationError as error:
+            raise WorkerEnvironmentError(
+                f"the declared worker environment variable {variable.name!r} is not admissible"
+            ) from error
+        normalised = _normalise_environment_name(checked.name)
+        if normalised in reserved:
+            raise WorkerEnvironmentError(
+                f"the declared worker environment variable {checked.name!r} would overwrite a "
+                "supervisor-owned variable"
+            )
+        if normalised in declared:
+            raise WorkerEnvironmentError(
+                f"the declared worker environment variable {checked.name!r} aliases another "
+                "declaration by case"
+            )
+        declared.add(normalised)
+        declarations.append(checked)
+    values.update({variable.name: variable.value for variable in declarations})
     return values
+
+
+def _case_insensitive_platform_value(source: Mapping[str, str], name: str) -> str | None:
+    """Read one inherited Windows platform variable, refusing conflicting case aliases.
+
+    ``os.environ`` already collapses case on Windows, but a caller may supply a plain
+    mapping in a test or an embedding host. If two spellings of ``SYSTEMROOT`` disagree,
+    choosing one would make the DLL search depend on mapping order, so the ambiguity is a
+    refusal rather than a guess.
+    """
+    matches = {value for key, value in source.items() if key.upper() == name}
+    if not matches:
+        return None
+    if len(matches) > 1:
+        raise WorkerEnvironmentError(
+            f"the inherited platform variable {name} has conflicting case aliases"
+        )
+    return next(iter(matches))

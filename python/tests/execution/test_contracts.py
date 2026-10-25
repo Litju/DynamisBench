@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -11,6 +12,8 @@ from dynamisbench.execution import (
     MAX_WORKER_MESSAGE_BYTES,
     RefusalCode,
     RunLifecycleState,
+    WorkerEnvironmentError,
+    WorkerEnvironmentManifest,
     WorkerEnvironmentVariable,
     WorkerProtocolError,
     WorkerRequest,
@@ -157,14 +160,34 @@ def test_a_refusal_message_is_bounded_without_changing_its_code() -> None:
     "name",
     [
         "PATH",
+        "Path",
+        "pAtH",
         "PYTHONPATH",
+        "PythonPath",
         "PYTHONHOME",
         "PYTHONWARNINGS",
         "LANG",
         "LC_ALL",
         "TZ",
+        "tz",
         "SYSTEMROOT",
         "DYNAMISBENCH_MODE",
+        "dynamisbench_mode",
+        "LD_PRELOAD",
+        "Ld_Preload",
+        "ld_audit",
+        "DYLD_INSERT_LIBRARIES",
+        "dYlD_iNsErT_lIbRaRiEs",
+        "DOTNET_STARTUP_HOOKS",
+        "dotnet_startup_hooks",
+        "NODE_OPTIONS",
+        "Node_Options",
+        "JAVA_TOOL_OPTIONS",
+        "__COMPAT_LAYER",
+        "__PYVENV_LAUNCHER__",
+        "GCONV_PATH",
+        "GLIBC_TUNABLES",
+        "BASH_FUNC_echo",
     ],
 )
 def test_the_worker_environment_refuses_a_reserved_variable(name: str) -> None:
@@ -198,3 +221,97 @@ def test_the_worker_environment_is_rebuilt_not_inherited(
         assert environment["TMP"] == str(tmp_path)
     else:
         assert environment["TMPDIR"] == str(tmp_path)
+
+
+def test_the_manifest_refuses_case_alias_environment_variables(
+    execution_fixture: ExecutionFixture,
+) -> None:
+    base = worker_manifest(execution_fixture)
+    with pytest.raises(ValidationError, match="differ only by case"):
+        WorkerEnvironmentManifest(
+            environment=base.environment,
+            adapter=base.adapter,
+            command=base.command,
+            timeout_seconds=base.timeout_seconds,
+            environment_variables=(
+                WorkerEnvironmentVariable(name="CONTROL_MODE", value="one"),
+                WorkerEnvironmentVariable(name="control_mode", value="two"),
+            ),
+        )
+
+
+def test_worker_environment_refuses_a_case_alias_of_a_supervisor_value(
+    execution_fixture: ExecutionFixture, tmp_path: Path
+) -> None:
+    manifest = worker_manifest(execution_fixture)
+    tampered = manifest.model_copy(
+        update={
+            "environment_variables": (
+                WorkerEnvironmentVariable.model_construct(name="tz", value="hostile"),
+            )
+        }
+    )
+
+    with pytest.raises(WorkerEnvironmentError):
+        worker_environment(tampered, temporary_directory=tmp_path)
+
+
+def test_worker_environment_refuses_a_loader_name_that_skipped_validation(
+    execution_fixture: ExecutionFixture, tmp_path: Path
+) -> None:
+    manifest = worker_manifest(execution_fixture)
+    tampered = manifest.model_copy(
+        update={
+            "environment_variables": (
+                WorkerEnvironmentVariable.model_construct(name="Ld_Preload", value="hostile.so"),
+            )
+        }
+    )
+
+    with pytest.raises(WorkerEnvironmentError, match="not admissible"):
+        worker_environment(tampered, temporary_directory=tmp_path)
+
+
+def test_worker_environment_refuses_case_aliases_that_skipped_validation(
+    execution_fixture: ExecutionFixture, tmp_path: Path
+) -> None:
+    manifest = worker_manifest(execution_fixture)
+    tampered = manifest.model_copy(
+        update={
+            "environment_variables": (
+                WorkerEnvironmentVariable.model_construct(name="CONTROL_MODE", value="one"),
+                WorkerEnvironmentVariable.model_construct(name="control_mode", value="two"),
+            )
+        }
+    )
+
+    with pytest.raises(WorkerEnvironmentError, match="aliases another declaration"):
+        worker_environment(tampered, temporary_directory=tmp_path)
+
+
+def test_windows_platform_variables_are_read_case_insensitively(
+    execution_fixture: ExecutionFixture, tmp_path: Path
+) -> None:
+    manifest = worker_manifest(execution_fixture)
+    environment = worker_environment(
+        manifest,
+        temporary_directory=tmp_path,
+        inherited={"systemroot": r"C:\Windows", "WiNdIr": r"C:\Windows"},
+    )
+    if os.name == "nt":
+        assert environment["SYSTEMROOT"] == r"C:\Windows"
+        assert environment["WINDIR"] == r"C:\Windows"
+
+
+def test_conflicting_case_aliases_of_a_platform_variable_are_refused(
+    execution_fixture: ExecutionFixture, tmp_path: Path
+) -> None:
+    if os.name != "nt":
+        pytest.skip("Windows environment-block case aliases only exist on Windows")
+    manifest = worker_manifest(execution_fixture)
+    with pytest.raises(WorkerEnvironmentError, match="conflicting case aliases"):
+        worker_environment(
+            manifest,
+            temporary_directory=tmp_path,
+            inherited={"SYSTEMROOT": r"C:\Windows", "systemroot": r"C:\Elsewhere"},
+        )

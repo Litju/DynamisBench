@@ -6,19 +6,49 @@ of the request. That keeps the misbehaviour out of the production protocol: a ru
 cannot ask a worker to sleep, crash or flood.
 
 Modes: ``sleep``, ``crash``, ``flood``, ``invalid``, ``wrong-identity``, ``failed``,
-``stderr``. Every mode still reads and validates the request first, so a failure is a
-failure of the declared behaviour rather than of request parsing.
+``stderr``. Every ordinary mode still reads and validates the request first, so a failure
+is a failure of the declared behaviour rather than of request parsing.
+
+Three process-tree modes exist for the supervision regressions: ``no-read-sleep`` never
+reads stdin at all, ``early-exit-child`` starts a long-lived child and exits without a
+response, and ``response-with-child`` starts a long-lived child and then answers normally.
+The child pid is written to a fixed path supplied as the next command argument so the test
+can verify that the supervisor, not the test, removed it.
 """
 
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import NoReturn
 
 MAX_MESSAGE_BYTES = 1024 * 1024
-MODES = ("sleep", "crash", "flood", "invalid", "wrong-identity", "failed", "stderr")
+MODES = (
+    "sleep",
+    "crash",
+    "flood",
+    "invalid",
+    "wrong-identity",
+    "failed",
+    "stderr",
+    "no-read-sleep",
+    "early-exit-child",
+    "response-with-child",
+)
+
+
+def _spawn_child(pid_file: str) -> None:
+    """Start one descendant that would outlive this worker, and record its pid."""
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    Path(pid_file).write_text(str(child.pid), encoding="ascii")
 
 
 def _refuse(message: str) -> NoReturn:
@@ -61,6 +91,16 @@ def main() -> int:
     mode = sys.argv[1] if len(sys.argv) > 1 else "completed"
     if mode not in MODES and mode != "completed":
         _refuse(f"unknown mode {mode!r}")
+
+    if mode == "no-read-sleep":
+        # Deliberately never touches stdin; the supervisor's delivery writer must still be
+        # bounded by the environment deadline and cancellable.
+        time.sleep(60)
+        return 0
+    if mode == "early-exit-child":
+        _spawn_child(sys.argv[2])
+        return 0
+
     request = _request()
 
     if mode == "sleep":
@@ -89,6 +129,10 @@ def main() -> int:
     if mode == "stderr":
         sys.stderr.write("e" * 4096)
         sys.stderr.flush()
+        _write(_response(request))
+        return 0
+    if mode == "response-with-child":
+        _spawn_child(sys.argv[2])
         _write(_response(request))
         return 0
 

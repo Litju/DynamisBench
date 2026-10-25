@@ -9,33 +9,44 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from dynamisbench.api import create_app
+from dynamisbench.domain.spec.capability import Capability
 from dynamisbench.evidence import (
     RunOutcome,
     StagingState,
     create_staging_bundle,
     discover_staging,
-    finalize_bundle,
     verify_sealed_bundle,
 )
+from dynamisbench.evidence.bundle import BundleOperationError
+from dynamisbench.evidence.staging import StagingBundle
 from dynamisbench.execution import (
     ExecutionDiagnostic,
+    ExecutionSealError,
     RefusalCode,
     RunLifecycleState,
+    canonical_worker_request_bytes,
     execute_preflighted,
 )
 from dynamisbench.workspace import PersistenceClass
 from tests.execution.support import (
     MISBEHAVING_WORKER,
     ExecutionFixture,
+    adapter_identity,
+    asset_realization,
+    build_fixture,
+    control_study,
     execute,
     preflight,
     seal_control_bundle,
     worker_manifest,
+    write_source_asset,
 )
 
 
@@ -74,6 +85,31 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
+def _wait_until(predicate, *, timeout: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
+
+
+def _wait_until_dead(pid: int) -> None:
+    assert _wait_until(lambda: not _pid_is_alive(pid)), f"process {pid} is still alive"
+
+
+def _large_request_fixture(tmp_path: Path) -> ExecutionFixture:
+    """A control run whose canonical request is larger than a pipe buffer.
+
+    The exact size is not part of the contract; the assertion in the regression proves it
+    exceeds 64 KiB, which is the largest common pipe capacity on the qualification
+    platforms. Without this the non-reading-worker test could pass merely because the
+    request fit in the kernel buffer.
+    """
+    outcomes = tuple(f"q.outcome.{index:04d}" for index in range(4000))
+    return build_fixture(tmp_path, study=control_study(outcomes=outcomes))
+
+
 def test_control_worker_completes_and_writes_only_a_diagnostic(
     execution_fixture: ExecutionFixture,
 ) -> None:
@@ -107,8 +143,8 @@ def test_control_worker_completes_and_writes_only_a_diagnostic(
     assert report.candidates[0].payload_files == 1
     assert not verify_sealed_bundle(execution_fixture.workspace, execution_fixture.run_id).is_valid
 
-    assert supervised.bundle is not None
-    sealed = finalize_bundle(supervised.bundle, RunOutcome.SUCCEEDED)
+    assert supervised.has_staging_bundle
+    sealed = supervised.finalize()
     verification = verify_sealed_bundle(execution_fixture.workspace, execution_fixture.run_id)
     assert verification.is_valid
     assert verification.bundle is not None
@@ -135,8 +171,10 @@ def test_abnormal_exit_is_failed_and_can_only_be_sealed_as_failed(
     assert not _sealed_root(execution_fixture).exists()
     assert _diagnostic(execution_fixture).state is RunLifecycleState.FAILED
 
-    assert supervised.bundle is not None
-    sealed = finalize_bundle(supervised.bundle, RunOutcome.FAILED)
+    assert supervised.has_staging_bundle
+    with pytest.raises(ExecutionSealError):
+        supervised.finalize(RunOutcome.SUCCEEDED)
+    sealed = supervised.finalize()
     verification = verify_sealed_bundle(execution_fixture.workspace, execution_fixture.run_id)
     assert verification.is_valid
     assert verification.bundle is not None
@@ -265,6 +303,11 @@ def test_cancellation_before_launch_starts_no_process(
     assert {item.code for item in result.refusals} == {RefusalCode.WORKER_CANCELED}
     assert _diagnostic(execution_fixture).state is RunLifecycleState.CANCELED
 
+    with pytest.raises(ExecutionSealError):
+        supervised.finalize(RunOutcome.SUCCEEDED)
+    sealed = supervised.finalize()
+    assert sealed.manifest.outcome is RunOutcome.FAILED
+
 
 def test_oversized_stdout_is_a_failure_not_a_large_allocation(
     execution_fixture: ExecutionFixture,
@@ -331,7 +374,7 @@ def test_a_duplicate_execution_after_preflight_is_refused(
 
     assert supervised.result.state is RunLifecycleState.REFUSED
     assert {item.code for item in supervised.result.refusals} == {RefusalCode.DUPLICATE_EXECUTION}
-    assert supervised.bundle is None
+    assert not supervised.has_staging_bundle
 
 
 def test_a_failed_run_does_not_mutate_sealed_authority(
@@ -395,6 +438,243 @@ def test_the_application_api_stays_responsive_while_a_worker_runs(
     thread.join(15.0)
     assert not thread.is_alive()
     assert results[0].state is RunLifecycleState.CANCELED
+
+
+def test_a_non_reading_worker_cannot_block_stdin_past_the_deadline(
+    tmp_path: Path,
+) -> None:
+    fixture = _large_request_fixture(tmp_path)
+    manifest = worker_manifest(
+        fixture,
+        script=MISBEHAVING_WORKER,
+        arguments=("no-read-sleep",),
+        timeout_seconds=0.4,
+    )
+    admission = preflight(fixture, manifest)
+    assert admission.ready
+    assert admission.request is not None
+    assert len(canonical_worker_request_bytes(admission.request)) > 64 * 1024
+
+    started = time.monotonic()
+    result = execute_preflighted(admission).result
+    elapsed = time.monotonic() - started
+
+    assert result.state is RunLifecycleState.TIMED_OUT
+    assert {item.code for item in result.refusals} == {RefusalCode.WORKER_TIMEOUT}
+    assert not result.stdin_delivered
+    assert result.worker_reaped
+    assert result.process_tree_cleaned
+    assert result.worker_pid is not None
+    assert not _pid_is_alive(result.worker_pid)
+    assert elapsed < 15.0
+
+
+def test_a_blocked_stdin_delivery_is_cancellable(tmp_path: Path) -> None:
+    fixture = _large_request_fixture(tmp_path)
+    manifest = worker_manifest(
+        fixture,
+        script=MISBEHAVING_WORKER,
+        arguments=("no-read-sleep",),
+        timeout_seconds=30.0,
+    )
+    admission = preflight(fixture, manifest)
+    assert admission.ready
+    assert admission.request is not None
+    assert len(canonical_worker_request_bytes(admission.request)) > 64 * 1024
+
+    cancel_event = threading.Event()
+    started = time.monotonic()
+    result = execute_preflighted(
+        admission,
+        cancel_event=cancel_event,
+        observer=lambda state: cancel_event.set() if state is RunLifecycleState.RUNNING else None,
+    ).result
+    elapsed = time.monotonic() - started
+
+    assert result.state is RunLifecycleState.CANCELED
+    assert {item.code for item in result.refusals} == {RefusalCode.WORKER_CANCELED}
+    assert result.worker_reaped
+    assert result.process_tree_cleaned
+    assert result.worker_pid is not None
+    assert not _pid_is_alive(result.worker_pid)
+    assert elapsed < 15.0
+
+
+def test_an_early_exiting_parent_does_not_orphan_its_child(tmp_path: Path) -> None:
+    pid_file = tmp_path / "descendant.pid"
+    fixture_root = tmp_path / "fixture"
+    fixture_root.mkdir()
+    fixture = build_fixture(fixture_root)
+    manifest = worker_manifest(
+        fixture,
+        script=MISBEHAVING_WORKER,
+        arguments=("early-exit-child", str(pid_file)),
+    )
+    result = execute(fixture, manifest).result
+
+    assert result.state is RunLifecycleState.FAILED
+    assert {item.code for item in result.refusals} == {RefusalCode.WORKER_PROTOCOL_VIOLATION}
+    assert result.worker_reaped
+    assert result.process_tree_cleaned
+    assert _wait_until(pid_file.is_file)
+    child_pid = int(pid_file.read_text(encoding="ascii"))
+    assert child_pid != result.worker_pid
+    _wait_until_dead(child_pid)
+
+
+def test_a_completed_worker_cannot_leave_a_descendant(tmp_path: Path) -> None:
+    pid_file = tmp_path / "descendant.pid"
+    fixture_root = tmp_path / "fixture"
+    fixture_root.mkdir()
+    fixture = build_fixture(fixture_root)
+    manifest = worker_manifest(
+        fixture,
+        script=MISBEHAVING_WORKER,
+        arguments=("response-with-child", str(pid_file)),
+    )
+    result = execute(fixture, manifest).result
+
+    assert result.state is RunLifecycleState.COMPLETED
+    assert result.worker_reaped
+    assert result.process_tree_cleaned
+    assert _wait_until(pid_file.is_file)
+    child_pid = int(pid_file.read_text(encoding="ascii"))
+    assert child_pid != result.worker_pid
+    _wait_until_dead(child_pid)
+
+
+def test_a_post_preflight_asset_mutation_is_refused_before_launch(
+    tmp_path: Path,
+) -> None:
+    placeholder = build_fixture(tmp_path)
+    digest = write_source_asset(placeholder.workspace, "models/control.xml", b"control-model")
+    realization = asset_realization(path="models/control.xml", sha256=digest)
+    fixture = build_fixture(
+        tmp_path,
+        realization=realization,
+        workspace=placeholder.workspace,
+    )
+    admission = preflight(fixture)
+    assert admission.ready
+
+    write_source_asset(placeholder.workspace, "models/control.xml", b"mutated-model")
+
+    supervised = execute_preflighted(admission)
+
+    assert supervised.result.state is RunLifecycleState.REFUSED
+    assert {item.code for item in supervised.result.refusals} == {RefusalCode.ASSET_DIGEST_MISMATCH}
+    assert not supervised.has_staging_bundle
+    assert not _staging_root(fixture).exists()
+
+
+def test_a_tampered_request_digest_is_refused_at_launch(
+    execution_fixture: ExecutionFixture,
+) -> None:
+    admission = preflight(execution_fixture)
+    assert admission.ready
+    assert admission.request is not None
+    tampered_request = admission.request.model_copy(update={"required_capabilities": ()})
+    tampered = replace(admission, request=tampered_request)
+
+    supervised = execute_preflighted(tampered)
+
+    assert supervised.result.state is RunLifecycleState.REFUSED
+    assert RefusalCode.INVALID_RUN_SPEC in {item.code for item in supervised.result.refusals}
+    assert not supervised.has_staging_bundle
+    assert not _staging_root(execution_fixture).exists()
+
+
+def test_a_tampered_manifest_command_is_refused_at_launch(
+    execution_fixture: ExecutionFixture,
+) -> None:
+    admission = preflight(execution_fixture)
+    assert admission.ready
+    tampered_manifest = admission.manifest.model_copy(
+        update={"timeout_seconds": admission.manifest.timeout_seconds + 1.0}
+    )
+    tampered = replace(admission, manifest=tampered_manifest)
+
+    supervised = execute_preflighted(tampered)
+
+    assert supervised.result.state is RunLifecycleState.REFUSED
+    assert RefusalCode.INVALID_RUN_SPEC in {item.code for item in supervised.result.refusals}
+    assert not supervised.has_staging_bundle
+    assert not _staging_root(execution_fixture).exists()
+
+
+def test_a_tampered_manifest_adapter_is_refused_at_launch(
+    execution_fixture: ExecutionFixture,
+) -> None:
+    admission = preflight(execution_fixture)
+    assert admission.ready
+    tampered_manifest = worker_manifest(
+        execution_fixture,
+        adapter=adapter_identity((Capability.STATE_SNAPSHOT,)),
+    )
+    tampered = replace(admission, manifest=tampered_manifest)
+
+    supervised = execute_preflighted(tampered)
+
+    assert supervised.result.state is RunLifecycleState.REFUSED
+    codes = {item.code for item in supervised.result.refusals}
+    assert RefusalCode.UNSUPPORTED_CAPABILITY in codes or (
+        RefusalCode.ADAPTER_ENGINE_MISMATCH in codes
+    )
+    assert not supervised.has_staging_bundle
+    assert not _staging_root(execution_fixture).exists()
+
+
+def test_a_log_write_failure_persists_the_same_failed_state(
+    execution_fixture: ExecutionFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = StagingBundle.write_payload
+
+    def fail_log_write(self: StagingBundle, relative_path: str, data: bytes):
+        if relative_path == "logs/worker.stderr.txt":
+            raise BundleOperationError("injected log write failure")
+        return original(self, relative_path, data)
+
+    monkeypatch.setattr(StagingBundle, "write_payload", fail_log_write)
+    manifest = worker_manifest(
+        execution_fixture,
+        script=MISBEHAVING_WORKER,
+        arguments=("stderr",),
+    )
+    result = execute(execution_fixture, manifest).result
+
+    assert result.state is RunLifecycleState.FAILED
+    assert RefusalCode.EVIDENCE_WRITE_FAILED in {item.code for item in result.refusals}
+    assert result.log_reference is None
+    assert result.diagnostic_reference == "diagnostics.json"
+    diagnostic = _diagnostic(execution_fixture)
+    assert diagnostic.state is result.state
+    assert {item.code for item in diagnostic.refusals} == {item.code for item in result.refusals}
+
+
+def test_a_diagnostic_write_failure_returns_failed_and_persists_no_state(
+    execution_fixture: ExecutionFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = StagingBundle.write_payload
+
+    def fail_diagnostic_write(self: StagingBundle, relative_path: str, data: bytes):
+        if relative_path == "diagnostics.json":
+            raise BundleOperationError("injected diagnostic write failure")
+        return original(self, relative_path, data)
+
+    monkeypatch.setattr(StagingBundle, "write_payload", fail_diagnostic_write)
+    manifest = worker_manifest(execution_fixture)
+    supervised = execute(execution_fixture, manifest)
+    result = supervised.result
+
+    assert result.state is RunLifecycleState.FAILED
+    assert RefusalCode.EVIDENCE_WRITE_FAILED in {item.code for item in result.refusals}
+    assert result.diagnostic_reference is None
+    assert not (_staging_root(execution_fixture) / "diagnostics.json").exists()
+    assert supervised.result.seal_outcome is RunOutcome.FAILED
+    with pytest.raises(ExecutionSealError):
+        supervised.finalize(RunOutcome.SUCCEEDED)
 
 
 def test_the_execution_source_has_no_shell_or_network_surface() -> None:
