@@ -339,9 +339,12 @@ def _terminate_and_reap(process: subprocess.Popen[bytes], tree: ProcessTree) -> 
     first as the second.
     """
     try:
-        tree.terminate()
+        tree.request_termination()
     except OSError:
         pass
+    # Reap the direct child before waiting for the tree. On POSIX the group leader remains
+    # visible to ``killpg`` until it is reaped, so asking the tree to drain first would spend
+    # the entire grace period observing the supervisor's own zombie instead of descendants.
     try:
         process.wait(timeout=_TERMINATION_GRACE_SECONDS)
     except subprocess.TimeoutExpired:

@@ -643,6 +643,34 @@ def test_an_early_exiting_parent_does_not_orphan_its_child(tmp_path: Path) -> No
     _wait_until_dead(child_pid)
 
 
+def test_cleanup_reaps_the_leader_before_waiting_for_the_tree(tmp_path: Path) -> None:
+    pid_file = tmp_path / "descendant.pid"
+    fixture_root = tmp_path / "fixture"
+    fixture_root.mkdir()
+    fixture = build_fixture(fixture_root)
+    manifest = worker_manifest(
+        fixture,
+        script=MISBEHAVING_WORKER,
+        arguments=("early-exit-child", str(pid_file)),
+    )
+
+    started = time.monotonic()
+    result = execute(fixture, manifest).result
+    elapsed = time.monotonic() - started
+
+    assert result.state is RunLifecycleState.FAILED
+    assert result.worker_reaped
+    assert result.process_tree_cleaned
+    assert _wait_until(pid_file.is_file)
+    child_pid = int(pid_file.read_text(encoding="ascii"))
+    _wait_until_dead(child_pid)
+    if os.name != "nt":
+        # Before the repair, POSIX spent the full five-second grace period on the unreaped
+        # zombie leader and only then reaped it. Four seconds leaves scheduling margin while
+        # still failing the old ordering; the descendant check above preserves containment.
+        assert elapsed < 4.0
+
+
 def test_a_completed_worker_cannot_leave_a_descendant(tmp_path: Path) -> None:
     pid_file = tmp_path / "descendant.pid"
     fixture_root = tmp_path / "fixture"

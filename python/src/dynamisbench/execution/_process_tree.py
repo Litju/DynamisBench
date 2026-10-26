@@ -37,6 +37,7 @@ __all__ = [
 ]
 
 _POLL_SECONDS: Final = 0.01
+_TERMINATION_GRACE_SECONDS: Final = 5.0
 
 
 class ProcessTree(Protocol):
@@ -44,6 +45,15 @@ class ProcessTree(Protocol):
 
     def has_live_members(self) -> bool:
         """Whether any process in the owned tree is still live."""
+        ...
+
+    def request_termination(self) -> bool:
+        """Signal the whole tree to terminate, without waiting for it to become empty.
+
+        Separate from :meth:`wait_empty` so the supervisor can reap the direct child first.
+        On POSIX an unreaped leader is still visible to ``killpg``, so waiting before reaping
+        would spend the grace period observing the supervisor's own zombie.
+        """
         ...
 
     def terminate(self) -> bool:
@@ -78,14 +88,19 @@ class PosixProcessTree:
             return True
         return True
 
-    def terminate(self) -> bool:
+    def request_termination(self) -> bool:
         try:
             os.killpg(self._pgid, signal.SIGKILL)  # type: ignore[attr-defined]
         except ProcessLookupError:
             return True
         except PermissionError:
             return False
-        return self.wait_empty(5.0)
+        return True
+
+    def terminate(self) -> bool:
+        if not self.request_termination():
+            return False
+        return self.wait_empty(_TERMINATION_GRACE_SECONDS)
 
     def wait_empty(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
@@ -247,14 +262,19 @@ class WindowsJob:
     def has_live_members(self) -> bool:
         return self._active_processes() > 0
 
-    def terminate(self) -> bool:
+    def request_termination(self) -> bool:
         if self._handle is None:
             return True
         if not self._terminate(self._handle, 1):
             error = _last_error()
             if error:
                 return False
-        return self.wait_empty(5.0)
+        return True
+
+    def terminate(self) -> bool:
+        if not self.request_termination():
+            return False
+        return self.wait_empty(_TERMINATION_GRACE_SECONDS)
 
     def wait_empty(self, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
