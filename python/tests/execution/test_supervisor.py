@@ -429,6 +429,99 @@ def test_a_failed_run_does_not_mutate_sealed_authority(
     assert not _sealed_root(execution_fixture).exists()
 
 
+def test_a_blocking_observer_cannot_delay_timeout_or_cleanup(
+    execution_fixture: ExecutionFixture,
+) -> None:
+    manifest = worker_manifest(
+        execution_fixture,
+        script=MISBEHAVING_WORKER,
+        arguments=("sleep",),
+        timeout_seconds=0.4,
+    )
+    entered = threading.Event()
+    release = threading.Event()
+
+    def block(state: RunLifecycleState) -> None:
+        entered.set()
+        release.wait(60.0)
+
+    outcomes: list = []
+    runner = threading.Thread(
+        target=lambda: outcomes.append(execute(execution_fixture, manifest, observer=block))
+    )
+    started = time.monotonic()
+    runner.start()
+    try:
+        assert entered.wait(10.0)
+        runner.join(10.0)
+        elapsed = time.monotonic() - started
+        assert not runner.is_alive()
+        result = outcomes[0].result
+        assert result.state is RunLifecycleState.TIMED_OUT
+        assert {item.code for item in result.refusals} == {RefusalCode.WORKER_TIMEOUT}
+        assert result.worker_reaped
+        assert result.process_tree_cleaned
+        assert result.worker_pid is not None
+        assert not _pid_is_alive(result.worker_pid)
+        assert elapsed < 10.0
+    finally:
+        release.set()
+        runner.join(10.0)
+
+
+def test_a_blocking_observer_cannot_delay_cancellation_or_cleanup(
+    execution_fixture: ExecutionFixture, tmp_path: Path
+) -> None:
+    pid_file = tmp_path / "blocked-observer-worker.pid"
+    manifest = worker_manifest(
+        execution_fixture,
+        script=MISBEHAVING_WORKER,
+        arguments=("pid-sleep", str(pid_file)),
+        timeout_seconds=30.0,
+    )
+    entered = threading.Event()
+    release = threading.Event()
+
+    def block(state: RunLifecycleState) -> None:
+        entered.set()
+        release.wait(60.0)
+
+    cancel_event = threading.Event()
+    outcomes: list = []
+    runner = threading.Thread(
+        target=lambda: outcomes.append(
+            execute(
+                execution_fixture,
+                manifest,
+                cancel_event=cancel_event,
+                observer=block,
+            )
+        )
+    )
+    started = time.monotonic()
+    runner.start()
+    try:
+        assert entered.wait(10.0)
+        assert _wait_until(pid_file.is_file)
+        worker_pid = int(pid_file.read_text(encoding="ascii"))
+        cancel_event.set()
+        runner.join(10.0)
+        elapsed = time.monotonic() - started
+        assert not runner.is_alive()
+        result = outcomes[0].result
+        assert result.state is RunLifecycleState.CANCELED
+        assert {item.code for item in result.refusals} == {RefusalCode.WORKER_CANCELED}
+        assert result.worker_pid is not None
+        assert result.worker_reaped
+        assert result.process_tree_cleaned
+        assert not _pid_is_alive(result.worker_pid)
+        assert not _pid_is_alive(worker_pid)
+        assert elapsed < 10.0
+    finally:
+        release.set()
+        runner.join(10.0)
+
+
 def test_the_application_api_stays_responsive_while_a_worker_runs(
     execution_fixture: ExecutionFixture,
 ) -> None:

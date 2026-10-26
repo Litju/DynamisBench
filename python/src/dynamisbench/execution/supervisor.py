@@ -48,6 +48,7 @@ a false scientific claim.
 from __future__ import annotations
 
 import os
+import queue
 import shutil
 import subprocess
 import tempfile
@@ -119,15 +120,73 @@ LifecycleObserver = Callable[[RunLifecycleState], None]
 """A caller's view of the lifecycle transitions the supervisor observed.
 
 The observer is diagnostic. It cannot change the outcome, and an exception it raises is
-swallowed rather than allowed to strand a running worker.
+swallowed rather than allowed to strand a running worker. It is delivered on a dedicated
+daemon thread, so a callback that blocks or never returns cannot delay the deadline,
+cancellation, process-tree termination, reaping or cleanup.
 """
 
 _READ_CHUNK_BYTES: Final = 64 * 1024
 _POLL_INTERVAL_SECONDS: Final = 0.02
 _TERMINATION_GRACE_SECONDS: Final = 5.0
 _JOIN_SECONDS: Final = 5.0
+_OBSERVER_CLOSE_SECONDS: Final = 1.0
+_OBSERVER_STOP: Final = object()
 _DIAGNOSTIC_PAYLOAD: Final = "diagnostics.json"
 _WORKER_LOG_PAYLOAD: Final = "logs/worker.stderr.txt"
+
+
+class _LifecycleObserverDispatcher:
+    """Deliver lifecycle transitions off the supervisor thread, in observed order.
+
+    One queue and one daemon consumer are enough because every transition is produced by the
+    supervisor alone. The dispatcher closes with a bounded join: if a callback is still
+    blocked, only this daemon thread remains, never a running worker, an unreaped child or an
+    unfinished cleanup. Queueing also preserves ordering, so an observer sees the same
+    sequence it would have seen synchronously.
+    """
+
+    __slots__ = ("_observer", "_queue", "_thread")
+
+    def __init__(self, observer: LifecycleObserver | None) -> None:
+        self._observer = observer
+        self._queue: queue.SimpleQueue[RunLifecycleState | object] = queue.SimpleQueue()
+        self._thread: threading.Thread | None = None
+        if observer is not None:
+            self._thread = threading.Thread(
+                target=self._deliver,
+                name="dynamisbench-lifecycle-observer",
+                daemon=True,
+            )
+            self._thread.start()
+
+    def notify(self, state: RunLifecycleState) -> None:
+        """Queue one transition without waiting for the observer to accept it."""
+        if self._thread is None:
+            return
+        self._queue.put(state)
+
+    def close(self, timeout: float) -> None:
+        """Ask the consumer to finish, waiting at most ``timeout`` seconds."""
+        thread, self._thread = self._thread, None
+        if thread is None:
+            return
+        self._queue.put(_OBSERVER_STOP)
+        thread.join(timeout)
+
+    def _deliver(self) -> None:
+        observer = self._observer
+        if observer is None:
+            return
+        while True:
+            state = self._queue.get()
+            if state is _OBSERVER_STOP:
+                return
+            assert isinstance(state, RunLifecycleState)
+            try:
+                observer(state)
+            except Exception:
+                # A view of the lifecycle is not allowed to break the lifecycle.
+                continue
 
 
 class ExecutionSealError(ExecutionError):
@@ -265,15 +324,10 @@ class _StdinWriter(threading.Thread):
                 return
 
 
-def _notify(observer: LifecycleObserver | None, state: RunLifecycleState) -> None:
+def _notify(observer: _LifecycleObserverDispatcher | None, state: RunLifecycleState) -> None:
     if observer is None:
         return
-    try:
-        observer(state)
-    except Exception:
-        # A view of the lifecycle is not allowed to break the lifecycle. The worker is
-        # still running, and the supervisor still owes it a deadline and a reap.
-        return
+    observer.notify(state)
 
 
 def _terminate_and_reap(process: subprocess.Popen[bytes], tree: ProcessTree) -> tuple[bool, bool]:
@@ -397,7 +451,7 @@ def _finish(
     stdout_truncated: bool,
     stderr_truncated: bool,
     stderr_bytes: bytes,
-    observer: LifecycleObserver | None,
+    observer: _LifecycleObserverDispatcher | None,
 ) -> ExecutionResult:
     """Write the bounded diagnostic payload, close staging, and describe the outcome.
 
@@ -499,7 +553,7 @@ def _refused_without_process(
     request: WorkerRequest,
     state: RunLifecycleState,
     refusals: list[Refusal],
-    observer: LifecycleObserver | None,
+    observer: _LifecycleObserverDispatcher | None,
 ) -> SupervisedExecution:
     """Describe a run refused before a process existed, with no staging side effects."""
     return SupervisedExecution(
@@ -534,10 +588,32 @@ def execute_preflighted(
     which is closed for payload and *not* sealed. The caller's next action is an evidence
     decision, not an execution decision.
 
+    Lifecycle observations are queued to a daemon thread and the dispatcher is closed with
+    a bounded join, so no observer can extend the worker's deadline, cancellation, cleanup
+    or return path.
+
     :raises PreflightRefusedError: if ``preflighted`` was refused or carries no request.
         Executing a refused run is a programming error, and silently starting one would
         defeat the admission gate.
     """
+    dispatcher = _LifecycleObserverDispatcher(observer)
+    try:
+        return _execute_preflighted(
+            preflighted,
+            cancel_event=cancel_event,
+            observer=dispatcher,
+        )
+    finally:
+        dispatcher.close(_OBSERVER_CLOSE_SECONDS)
+
+
+def _execute_preflighted(
+    preflighted: PreflightedRun,
+    *,
+    cancel_event: threading.Event | None,
+    observer: _LifecycleObserverDispatcher | None,
+) -> SupervisedExecution:
+    """Supervise one admitted run on behalf of :func:`execute_preflighted`."""
     report = preflighted.report
     request = preflighted.request
     if not preflighted.ready or request is None:

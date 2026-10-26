@@ -13,12 +13,15 @@ Three process-tree modes exist for the supervision regressions: ``no-read-sleep`
 reads stdin at all, ``early-exit-child`` starts a long-lived child and exits without a
 response, and ``response-with-child`` starts a long-lived child and then answers normally.
 The child pid is written to a fixed path supplied as the next command argument so the test
-can verify that the supervisor, not the test, removed it.
+can verify that the supervisor, not the test, removed it. ``pid-sleep`` reads the request,
+records its own pid and then sleeps, so a cancellation test can prove it interrupted a
+live worker rather than a pre-launch gap.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -35,6 +38,7 @@ MODES = (
     "failed",
     "stderr",
     "no-read-sleep",
+    "pid-sleep",
     "early-exit-child",
     "response-with-child",
 )
@@ -104,6 +108,10 @@ def main() -> int:
     request = _request()
 
     if mode == "sleep":
+        time.sleep(60)
+        return 0
+    if mode == "pid-sleep":
+        Path(sys.argv[2]).write_text(str(os.getpid()), encoding="ascii")
         time.sleep(60)
         return 0
     if mode == "crash":
