@@ -475,10 +475,16 @@ class ExecutionDiagnostic(DomainModel):
 class ExecutionResult:
     """What one supervised execution produced, in portable operator terms.
 
-    A plain frozen value, not a domain model: most of it is runtime observation. It carries
-    a staging locator and never a sealed evidence digest, because the supervisor does not
+    A frozen value, not a domain model: most of it is runtime observation. It carries a
+    staging locator and never a sealed evidence digest, because the supervisor does not
     seal. ``sealed`` is therefore absent rather than false, which is the stronger
     statement: this object cannot be mistaken for a claim that a run is authoritative.
+
+    Immutability is part of the seal boundary rather than a style choice. The terminal state
+    and the refusal list are the supervisor's observation, and :attr:`seal_outcome` derives
+    the only admissible evidence outcome from them. If a caller could assign
+    ``COMPLETED`` or erase a refusal after a failed run, a downstream finalizer would receive
+    an object claiming success. Both assignment and deletion are therefore refused.
     """
 
     __slots__ = (
@@ -522,22 +528,31 @@ class ExecutionResult:
     ) -> None:
         if not state.terminal:
             raise ValueError("an execution result records a terminal state only")
-        self.run_id = run_id
-        self.execution_fingerprint = execution_fingerprint
-        self.environment = environment
-        self.adapter = adapter
-        self.state = state
-        self.staging = staging
-        self.refusals = refusals
-        self.diagnostic_reference = diagnostic_reference
-        self.log_reference = log_reference
-        self.worker_exit_code = worker_exit_code
-        self.worker_pid = worker_pid
-        self.worker_reaped = worker_reaped
-        self.stdin_delivered = stdin_delivered
-        self.process_tree_cleaned = process_tree_cleaned
-        self.stdout_truncated = stdout_truncated
-        self.stderr_truncated = stderr_truncated
+        object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(self, "execution_fingerprint", execution_fingerprint)
+        object.__setattr__(self, "environment", environment)
+        object.__setattr__(self, "adapter", adapter)
+        object.__setattr__(self, "state", state)
+        object.__setattr__(self, "staging", staging)
+        object.__setattr__(self, "refusals", tuple(refusals))
+        object.__setattr__(self, "diagnostic_reference", diagnostic_reference)
+        object.__setattr__(self, "log_reference", log_reference)
+        object.__setattr__(self, "worker_exit_code", worker_exit_code)
+        object.__setattr__(self, "worker_pid", worker_pid)
+        object.__setattr__(self, "worker_reaped", worker_reaped)
+        object.__setattr__(self, "stdin_delivered", stdin_delivered)
+        object.__setattr__(self, "process_tree_cleaned", process_tree_cleaned)
+        object.__setattr__(self, "stdout_truncated", stdout_truncated)
+        object.__setattr__(self, "stderr_truncated", stderr_truncated)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(
+            "ExecutionResult is immutable: the terminal state and its refusals are the "
+            "supervisor's observation and cannot be rewritten"
+        )
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("ExecutionResult is immutable: its terminal facts cannot be deleted")
 
     @property
     def successful(self) -> bool:

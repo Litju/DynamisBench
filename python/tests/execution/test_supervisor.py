@@ -182,6 +182,34 @@ def test_abnormal_exit_is_failed_and_can_only_be_sealed_as_failed(
     assert verification.bundle.evidence_digest == sealed.evidence_digest
 
 
+def test_a_failed_result_cannot_be_mutated_into_a_successful_seal(
+    execution_fixture: ExecutionFixture,
+) -> None:
+    manifest = worker_manifest(
+        execution_fixture,
+        script=MISBEHAVING_WORKER,
+        arguments=("crash",),
+    )
+    supervised = execute(execution_fixture, manifest)
+    result = supervised.result
+
+    assert result.state is RunLifecycleState.FAILED
+    assert isinstance(result.refusals, tuple)
+    with pytest.raises(AttributeError, match="immutable"):
+        result.state = RunLifecycleState.COMPLETED
+    with pytest.raises(AttributeError, match="immutable"):
+        result.refusals = ()
+    with pytest.raises(AttributeError, match="immutable"):
+        del result.state
+    assert result.state is RunLifecycleState.FAILED
+    assert result.refusals
+    assert result.seal_outcome is RunOutcome.FAILED
+
+    with pytest.raises(ExecutionSealError):
+        supervised.finalize(RunOutcome.SUCCEEDED)
+    assert not _sealed_root(execution_fixture).exists()
+
+
 def test_a_malformed_response_is_a_protocol_violation(
     execution_fixture: ExecutionFixture,
 ) -> None:
