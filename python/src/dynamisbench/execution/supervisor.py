@@ -161,14 +161,26 @@ class SupervisedExecution:
     def finalize(self, outcome: RunOutcome | None = None) -> SealResult:
         """Seal the staging bundle as the outcome the supervisor actually observed.
 
+        A bundle is sealable only when the supervisor persisted the complete terminal record,
+        ``diagnostics.json``. A retained stderr log is not a substitute: it is bounded prose,
+        not the machine-comparable state and refusals. When the diagnostic write failed, this
+        refuses before the evidence layer is called so an incomplete failure record is never
+        promoted into authoritative evidence.
+
         :param outcome: optional caller assertion. It must equal the derived outcome;
             otherwise this refuses before the evidence layer is called.
-        :raises ExecutionSealError: if no staging bundle exists, or an explicit outcome
-            contradicts the terminal result. A failed, cancelled, timed-out or refused run
-            can only ever be sealed as ``FAILED``.
+        :raises ExecutionSealError: if no staging bundle exists, the terminal diagnostic was
+            not persisted, or an explicit outcome contradicts the terminal result. A failed,
+            cancelled, timed-out or refused run can only ever be sealed as ``FAILED``.
         """
         if self._bundle is None:
             raise ExecutionSealError(f"run {self.result.run_id!r} has no staging bundle to seal")
+        if self.result.diagnostic_reference != _DIAGNOSTIC_PAYLOAD:
+            raise ExecutionSealError(
+                f"run {self.result.run_id!r} has no persisted {_DIAGNOSTIC_PAYLOAD}; an "
+                "execution whose terminal record was not written cannot be sealed, even when "
+                "a worker log was retained"
+            )
         admissible = self.result.seal_outcome
         if outcome is not None and outcome is not admissible:
             raise ExecutionSealError(

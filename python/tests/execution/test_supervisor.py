@@ -703,6 +703,44 @@ def test_a_diagnostic_write_failure_returns_failed_and_persists_no_state(
     assert supervised.result.seal_outcome is RunOutcome.FAILED
     with pytest.raises(ExecutionSealError):
         supervised.finalize(RunOutcome.SUCCEEDED)
+    with pytest.raises(ExecutionSealError, match="diagnostics.json"):
+        supervised.finalize()
+    with pytest.raises(ExecutionSealError, match="diagnostics.json"):
+        supervised.finalize(RunOutcome.FAILED)
+    assert not _sealed_root(execution_fixture).exists()
+
+
+def test_a_persisted_log_does_not_make_an_incomplete_failure_record_sealable(
+    execution_fixture: ExecutionFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = StagingBundle.write_payload
+
+    def fail_diagnostic_write(self: StagingBundle, relative_path: str, data: bytes):
+        if relative_path == "diagnostics.json":
+            raise BundleOperationError("injected diagnostic write failure")
+        return original(self, relative_path, data)
+
+    monkeypatch.setattr(StagingBundle, "write_payload", fail_diagnostic_write)
+    manifest = worker_manifest(
+        execution_fixture,
+        script=MISBEHAVING_WORKER,
+        arguments=("stderr",),
+    )
+    supervised = execute(execution_fixture, manifest)
+    result = supervised.result
+
+    assert result.state is RunLifecycleState.FAILED
+    assert result.log_reference == "logs/worker.stderr.txt"
+    assert (_staging_root(execution_fixture) / "logs" / "worker.stderr.txt").is_file()
+    assert result.diagnostic_reference is None
+    assert not (_staging_root(execution_fixture) / "diagnostics.json").exists()
+
+    with pytest.raises(ExecutionSealError, match="diagnostics.json"):
+        supervised.finalize()
+    with pytest.raises(ExecutionSealError, match="diagnostics.json"):
+        supervised.finalize(RunOutcome.FAILED)
+    assert not _sealed_root(execution_fixture).exists()
 
 
 def test_the_execution_source_has_no_shell_or_network_surface() -> None:
