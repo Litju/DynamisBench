@@ -91,6 +91,7 @@ __all__ = [
     "parse_worker_request",
     "parse_worker_response",
     "preflight_digest",
+    "seal_outcome_for",
     "staging_locator_for",
     "worker_request_digest",
 ]
@@ -472,6 +473,21 @@ class ExecutionDiagnostic(DomainModel):
         return self
 
 
+def seal_outcome_for(state: RunLifecycleState, refusals: tuple[Refusal, ...]) -> RunOutcome:
+    """The only evidence outcome a terminal observation may be sealed as.
+
+    This is the single definition of the success rule for both an in-process
+    :class:`ExecutionResult` and the supervisor's persisted
+    :class:`ExecutionDiagnostic`. Keeping it in one place is what stops the returned value
+    and the durable record from developing two different notions of success. ``SUCCEEDED``
+    requires the narrow process fact — the worker returned a valid response and exited
+    zero — and no refusal at all; every other terminal state is evidence of failure.
+    """
+    if state is RunLifecycleState.COMPLETED and not refusals:
+        return RunOutcome.SUCCEEDED
+    return RunOutcome.FAILED
+
+
 class ExecutionResult:
     """What one supervised execution produced, in portable operator terms.
 
@@ -485,6 +501,13 @@ class ExecutionResult:
     the only admissible evidence outcome from them. If a caller could assign
     ``COMPLETED`` or erase a refusal after a failed run, a downstream finalizer would receive
     an object claiming success. Both assignment and deletion are therefore refused.
+
+    This class is a value, not a capability: a caller can construct another one, because
+    there is no secret here with which to authenticate it. The sealable authority is the
+    supervisor's handle, which privately binds one of these values to the staging bundle it
+    was written into and re-verifies the persisted diagnostic before sealing. That
+    in-process trust boundary is documented on
+    :class:`~dynamisbench.execution.supervisor.SupervisedExecution`.
     """
 
     __slots__ = (
@@ -573,9 +596,7 @@ class ExecutionResult:
         terminal state and refusals, never supplied by the caller (ADR-008 still owns the
         sealing transaction itself).
         """
-        if self.state is RunLifecycleState.COMPLETED and not self.refusals:
-            return RunOutcome.SUCCEEDED
-        return RunOutcome.FAILED
+        return seal_outcome_for(self.state, self.refusals)
 
     @property
     def evidence_locator(self) -> str:

@@ -36,8 +36,22 @@ outcome — abnormal exit, protocol violation, timeout, cancellation, oversized 
 a failure state. A failed or partial run never becomes sealed evidence here: the supervisor
 writes ``diagnostics.json`` into the mutable staging bundle, closes it for payload and
 returns. Sealing remains the evidence layer's transaction (ADR-008), but the returned
-:class:`SupervisedExecution` derives the only admissible outcome from the terminal result,
-so a failed or cancelled run cannot be handed to the finalizer as a success.
+:class:`SupervisedExecution` derives the only admissible outcome from the verified
+terminal observation, so a failed or cancelled run cannot be handed to the finalizer as a
+success.
+
+**The sealable handle is a capability, not a record.** The supervisor-authored terminal
+observation and the staging bundle it was written into are bound together when the handle
+is created, and neither can be rebound through ordinary attribute assignment, deletion or
+``dataclasses.replace``. ``finalize`` re-reads and validates the persisted
+``diagnostics.json`` against that exact observation — run id, execution fingerprint,
+environment, adapter, terminal state and refusals — before deriving the outcome and
+delegating to ADR-008. This is an in-process integrity boundary, not cryptographic
+authentication: a caller that deliberately uses ``object.__setattr__``, ``ctypes``, a
+debugger, or edits the mutable staging directory outside this object is outside the
+supported API. ADR-008's inventory and hashing record whatever payload is actually
+promoted at seal time, and only an externally trusted evidence digest can establish
+authenticity against an actor able to rewrite the whole bundle.
 
 The only payload the supervisor writes is that diagnostic record and a bounded stderr log.
 It never writes ``native/``, ``canonical/`` or ``assessment.json``; producing those is a
@@ -50,20 +64,21 @@ from __future__ import annotations
 import os
 import queue
 import shutil
+import stat
 import subprocess
 import tempfile
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Final
+from typing import IO, Final, final
 
 from dynamisbench.evidence.bundle import (
     BundleConflictError,
     EvidenceError,
     RunId,
     RunOutcome,
+    is_link_or_reparse_point,
 )
 from dynamisbench.evidence.staging import (
     SealResult,
@@ -93,6 +108,7 @@ from dynamisbench.execution.contracts import (
     canonical_worker_request_bytes,
     parse_worker_response,
     refusal,
+    seal_outcome_for,
     staging_locator_for,
 )
 from dynamisbench.execution.environment import (
@@ -198,55 +214,227 @@ class ExecutionSealError(ExecutionError):
     """
 
 
-@dataclass(frozen=True, slots=True)
-class SupervisedExecution:
-    """An execution result together with the staging bundle the caller may seal.
+def _read_persisted_diagnostic(bundle: StagingBundle) -> ExecutionDiagnostic:
+    """Read and validate the exact terminal record the supervisor persisted.
 
-    The raw mutable staging directory is intentionally not public. ``finalize`` is the only
-    way from this object to sealed evidence: it derives the admissible outcome from the
-    terminal result and delegates that exact outcome to the evidence layer. This is what
-    closes the path where a cancelled or failed run could be passed to
-    :func:`~dynamisbench.evidence.staging.finalize_bundle` as ``RunOutcome.SUCCEEDED``.
+    The record is read through the workspace resolver, refused unless it is one regular,
+    self-contained file, bounded in size, parsed with the same model the supervisor wrote,
+    and required to be in canonical form. Canonicality distinguishes the bytes this
+    supervisor writes from a same-looking record assembled by another writer: the
+    supervisor always stores ``canonical_semantic_bytes(diagnostic)``.
+
+    :raises ExecutionSealError: if the record is absent, unreadable, not a regular file, too
+        large, not a valid diagnostic, or not in canonical form.
+    """
+    run = bundle.run_id
+    path = bundle.workspace.resolve(PersistenceClass.STAGING, f"{run}/{_DIAGNOSTIC_PAYLOAD}")
+    try:
+        info = path.lstat()
+    except OSError as error:
+        raise ExecutionSealError(
+            f"run {run!r} has no readable persisted {_DIAGNOSTIC_PAYLOAD}; a run whose "
+            "terminal record was removed or never written cannot be sealed"
+        ) from error
+    if is_link_or_reparse_point(path) or not stat.S_ISREG(info.st_mode):
+        raise ExecutionSealError(
+            f"run {run!r} has a persisted {_DIAGNOSTIC_PAYLOAD} that is not one regular "
+            "self-contained file, so it cannot be trusted as this supervisor's terminal record"
+        )
+    if info.st_nlink > 1:
+        raise ExecutionSealError(
+            f"run {run!r} has a persisted {_DIAGNOSTIC_PAYLOAD} with more than one "
+            "filesystem link, so another pathname could rewrite the record behind this run"
+        )
+    if info.st_size > MAX_WORKER_MESSAGE_BYTES:
+        raise ExecutionSealError(
+            f"run {run!r} has a persisted {_DIAGNOSTIC_PAYLOAD} of {info.st_size} bytes, "
+            f"larger than the {MAX_WORKER_MESSAGE_BYTES}-byte protocol bound"
+        )
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_WORKER_MESSAGE_BYTES + 1)
+    except OSError as error:
+        raise ExecutionSealError(
+            f"run {run!r} has a persisted {_DIAGNOSTIC_PAYLOAD} that could not be read"
+        ) from error
+    if len(raw) > MAX_WORKER_MESSAGE_BYTES:
+        raise ExecutionSealError(
+            f"run {run!r} has a persisted {_DIAGNOSTIC_PAYLOAD} larger than the "
+            f"{MAX_WORKER_MESSAGE_BYTES}-byte protocol bound"
+        )
+    try:
+        diagnostic = ExecutionDiagnostic.model_validate_json(raw)
+    except ValueError as error:
+        raise ExecutionSealError(
+            f"run {run!r} has a malformed persisted {_DIAGNOSTIC_PAYLOAD}: {error}"
+        ) from error
+    if canonical_semantic_bytes(diagnostic) != raw:
+        raise ExecutionSealError(
+            f"run {run!r} has a substituted {_DIAGNOSTIC_PAYLOAD}: the stored bytes are not "
+            "the canonical record this supervisor writes"
+        )
+    return diagnostic
+
+
+def _diagnostic_disagreements(
+    diagnostic: ExecutionDiagnostic, result: ExecutionResult
+) -> tuple[str, ...]:
+    """Name every supervisor-owned fact the persisted record does not reproduce.
+
+    The identity fields are the minimum the seal decision depends on; the runtime facts are
+    included because they are written from the same observation and a record that disagreed
+    about them would not be that observation either. The returned names are field labels, not
+    values, so a refusal stays bounded and does not echo possibly hostile content.
+    """
+    comparisons: tuple[tuple[str, bool], ...] = (
+        ("run id", diagnostic.run_id == result.run_id),
+        (
+            "execution fingerprint",
+            diagnostic.execution_fingerprint == result.execution_fingerprint,
+        ),
+        ("environment", diagnostic.environment == result.environment),
+        ("adapter", diagnostic.adapter == result.adapter),
+        ("terminal state", diagnostic.state is result.state),
+        ("refusals", diagnostic.refusals == result.refusals),
+        ("worker exit code", diagnostic.worker_exit_code == result.worker_exit_code),
+        ("stdin delivery", diagnostic.stdin_delivered == result.stdin_delivered),
+        (
+            "process-tree cleanup",
+            diagnostic.process_tree_cleaned == result.process_tree_cleaned,
+        ),
+        ("stdout truncation", diagnostic.stdout_truncated == result.stdout_truncated),
+        ("stderr truncation", diagnostic.stderr_truncated == result.stderr_truncated),
+        ("worker log reference", diagnostic.log_reference == result.log_reference),
+    )
+    return tuple(name for name, agrees in comparisons if not agrees)
+
+
+@final
+class SupervisedExecution:
+    """One supervisor-authored execution result bound to the bundle it may seal.
+
+    This object is the only supported way from a supervised execution to sealed evidence.
+    It binds the supervisor's original terminal observation to the staging bundle that
+    observation was written into, and it re-verifies the persisted ``diagnostics.json``
+    against that observation before delegating to ADR-008. It is deliberately not a
+    dataclass, and it has no public constructor: ordinary attribute assignment, deletion,
+    ``dataclasses.replace`` and subclassing cannot produce another handle with a different
+    result or bundle. The evidence transaction itself remains entirely ADR-008's.
+
+    **In-process trust boundary.** This stops substitution through the supported Python API;
+    it is not cryptographic authentication. A caller able to use ``object.__setattr__``,
+    ``ctypes``, a debugger, or direct filesystem writes against the mutable staging
+    directory can step outside the boundary. ADR-008 still hashes and verifies whatever
+    payload is actually promoted, and only an externally trusted evidence digest can show
+    that the promoted bundle is the expected one. No signing key exists here, so no token or
+    in-memory secret could make a stronger claim honestly.
     """
 
-    result: ExecutionResult
-    _bundle: StagingBundle | None
+    __slots__ = ("_bundle", "_result")
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise TypeError(
+            "SupervisedExecution is created only by execute_preflighted; a caller cannot "
+            "assemble a sealable handle from a result and a bundle"
+        )
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        raise TypeError(
+            "SupervisedExecution cannot be subclassed: the terminal observation and its "
+            "sealing decision are supervisor-owned"
+        )
+
+    @property
+    def result(self) -> ExecutionResult:
+        """The supervisor's original terminal observation, never a replacement."""
+        return self._result
 
     @property
     def has_staging_bundle(self) -> bool:
         """Whether the supervisor created a staging bundle for this execution."""
         return self._bundle is not None
 
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(
+            "SupervisedExecution is immutable: its terminal observation and staging bundle "
+            "cannot be rebound"
+        )
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError(
+            "SupervisedExecution is immutable: its terminal observation and staging bundle "
+            "cannot be deleted"
+        )
+
+    def __repr__(self) -> str:
+        return f"<SupervisedExecution {self._result!r}>"
+
     def finalize(self, outcome: RunOutcome | None = None) -> SealResult:
         """Seal the staging bundle as the outcome the supervisor actually observed.
 
-        A bundle is sealable only when the supervisor persisted the complete terminal record,
-        ``diagnostics.json``. A retained stderr log is not a substitute: it is bounded prose,
-        not the machine-comparable state and refusals. When the diagnostic write failed, this
-        refuses before the evidence layer is called so an incomplete failure record is never
-        promoted into authoritative evidence.
+        The handle was created only by :func:`execute_preflighted`, so ``self._result`` is
+        the supervisor's original terminal observation rather than a caller-supplied value.
+        Before delegating, this re-reads the persisted ``diagnostics.json`` and requires it
+        to be the canonical record of that exact observation: the same run id, execution
+        fingerprint, environment, adapter, terminal state, refusal list, exit code,
+        delivery/cleanup/truncation facts and log reference. A missing, malformed,
+        substituted or inconsistent record is refused, so a fabricated ``COMPLETED`` result
+        cannot authorize a successful seal over a failed bundle.
+
+        The admissible outcome is then derived from the verified record, not from the
+        caller. ADR-008 remains the sole owner of hashing, manifest construction,
+        verification and atomic promotion; this method only refuses to hand it an outcome
+        the supervisor did not observe.
 
         :param outcome: optional caller assertion. It must equal the derived outcome;
             otherwise this refuses before the evidence layer is called.
         :raises ExecutionSealError: if no staging bundle exists, the terminal diagnostic was
-            not persisted, or an explicit outcome contradicts the terminal result. A failed,
+            not persisted or does not verify against the original observation, or an
+            explicit outcome contradicts the verified terminal observation. A failed,
             cancelled, timed-out or refused run can only ever be sealed as ``FAILED``.
         """
         if self._bundle is None:
-            raise ExecutionSealError(f"run {self.result.run_id!r} has no staging bundle to seal")
-        if self.result.diagnostic_reference != _DIAGNOSTIC_PAYLOAD:
+            raise ExecutionSealError(f"run {self._result.run_id!r} has no staging bundle to seal")
+        if self._result.diagnostic_reference != _DIAGNOSTIC_PAYLOAD:
             raise ExecutionSealError(
-                f"run {self.result.run_id!r} has no persisted {_DIAGNOSTIC_PAYLOAD}; an "
+                f"run {self._result.run_id!r} has no persisted {_DIAGNOSTIC_PAYLOAD}; an "
                 "execution whose terminal record was not written cannot be sealed, even when "
                 "a worker log was retained"
             )
-        admissible = self.result.seal_outcome
+        diagnostic = _read_persisted_diagnostic(self._bundle)
+        disagreements = _diagnostic_disagreements(diagnostic, self._result)
+        if disagreements:
+            raise ExecutionSealError(
+                f"run {self._result.run_id!r} has a persisted {_DIAGNOSTIC_PAYLOAD} that does "
+                "not agree with the supervisor's terminal observation: " + ", ".join(disagreements)
+            )
+        admissible = seal_outcome_for(diagnostic.state, diagnostic.refusals)
+        if admissible is not self._result.seal_outcome:
+            raise ExecutionSealError(
+                f"run {self._result.run_id!r} has inconsistent terminal authority: the "
+                "persisted diagnostic and the supervisor observation derive different outcomes"
+            )
         if outcome is not None and outcome is not admissible:
             raise ExecutionSealError(
-                f"run {self.result.run_id!r} ended as {self.result.state.value} and can only "
+                f"run {self._result.run_id!r} ended as {diagnostic.state.value} and can only "
                 f"be sealed as {admissible.value}, not {outcome.value}"
             )
         return finalize_bundle(self._bundle, admissible)
+
+
+def _supervised_execution(
+    result: ExecutionResult, bundle: StagingBundle | None
+) -> SupervisedExecution:
+    """Create the one sealable handle for a supervisor-authored observation.
+
+    ``SupervisedExecution.__init__`` refuses public assembly, so the factory allocates the
+    instance directly. The observation and the bundle are bound in the same object, from the
+    same :func:`_finish` call, and can be neither reassigned nor deleted afterwards.
+    """
+    handle = object.__new__(SupervisedExecution)
+    object.__setattr__(handle, "_result", result)
+    object.__setattr__(handle, "_bundle", bundle)
+    return handle
 
 
 class _BoundedStreamReader(threading.Thread):
@@ -455,14 +643,18 @@ def _finish(
     stderr_truncated: bool,
     stderr_bytes: bytes,
     observer: _LifecycleObserverDispatcher | None,
-) -> ExecutionResult:
-    """Write the bounded diagnostic payload, close staging, and describe the outcome.
+) -> SupervisedExecution:
+    """Write the bounded diagnostic payload, close staging, and bind the sealable handle.
 
     The diagnostic is written only after every evidence-write failure that can still be
     observed has been folded into the state and refusal list. A log write that fails turns
     a ``COMPLETED`` run into ``FAILED`` *before* ``diagnostics.json`` is written, so the
     persisted state and the returned terminal state cannot disagree. If the diagnostic
     write itself fails, no diagnostic reference is returned and the run becomes ``FAILED``.
+
+    The returned handle is the only object that can seal this run. It is constructed here,
+    with the result and the bundle from this one call, so a caller cannot pair an observation
+    with another bundle or replace the observation afterwards.
     """
     diagnostic_reference: str | None = None
     log_reference: str | None = None
@@ -531,7 +723,7 @@ def _finish(
     _notify(observer, final_state)
 
     staging = bundle.reference.text if bundle is not None else staging_locator_for(request.run_id)
-    return ExecutionResult(
+    result = ExecutionResult(
         run_id=request.run_id,
         execution_fingerprint=request.execution_fingerprint,
         environment=request.environment,
@@ -549,6 +741,7 @@ def _finish(
         stdout_truncated=stdout_truncated,
         stderr_truncated=stderr_truncated,
     )
+    return _supervised_execution(result, bundle)
 
 
 def _refused_without_process(
@@ -559,23 +752,20 @@ def _refused_without_process(
     observer: _LifecycleObserverDispatcher | None,
 ) -> SupervisedExecution:
     """Describe a run refused before a process existed, with no staging side effects."""
-    return SupervisedExecution(
-        result=_finish(
-            bundle=None,
-            request=request,
-            state=state,
-            refusals=refusals,
-            worker_exit_code=None,
-            worker_pid=None,
-            worker_reaped=False,
-            stdin_delivered=False,
-            process_tree_cleaned=False,
-            stdout_truncated=False,
-            stderr_truncated=False,
-            stderr_bytes=b"",
-            observer=observer,
-        ),
-        _bundle=None,
+    return _finish(
+        bundle=None,
+        request=request,
+        state=state,
+        refusals=refusals,
+        worker_exit_code=None,
+        worker_pid=None,
+        worker_reaped=False,
+        stdin_delivered=False,
+        process_tree_cleaned=False,
+        stdout_truncated=False,
+        stderr_truncated=False,
+        stderr_bytes=b"",
+        observer=observer,
     )
 
 
@@ -671,23 +861,20 @@ def _execute_preflighted(
                 )
             )
             state = RunLifecycleState.REFUSED
-            return SupervisedExecution(
-                result=_finish(
-                    bundle=None,
-                    request=request,
-                    state=state,
-                    refusals=refusals,
-                    worker_exit_code=None,
-                    worker_pid=None,
-                    worker_reaped=False,
-                    stdin_delivered=False,
-                    process_tree_cleaned=False,
-                    stdout_truncated=False,
-                    stderr_truncated=False,
-                    stderr_bytes=b"",
-                    observer=observer,
-                ),
-                _bundle=None,
+            return _finish(
+                bundle=None,
+                request=request,
+                state=state,
+                refusals=refusals,
+                worker_exit_code=None,
+                worker_pid=None,
+                worker_reaped=False,
+                stdin_delivered=False,
+                process_tree_cleaned=False,
+                stdout_truncated=False,
+                stderr_truncated=False,
+                stderr_bytes=b"",
+                observer=observer,
             )
         except EvidenceError:
             refusals.append(
@@ -697,23 +884,20 @@ def _execute_preflighted(
                 )
             )
             state = RunLifecycleState.FAILED
-            return SupervisedExecution(
-                result=_finish(
-                    bundle=None,
-                    request=request,
-                    state=state,
-                    refusals=refusals,
-                    worker_exit_code=None,
-                    worker_pid=None,
-                    worker_reaped=False,
-                    stdin_delivered=False,
-                    process_tree_cleaned=False,
-                    stdout_truncated=False,
-                    stderr_truncated=False,
-                    stderr_bytes=b"",
-                    observer=observer,
-                ),
-                _bundle=None,
+            return _finish(
+                bundle=None,
+                request=request,
+                state=state,
+                refusals=refusals,
+                worker_exit_code=None,
+                worker_pid=None,
+                worker_reaped=False,
+                stdin_delivered=False,
+                process_tree_cleaned=False,
+                stdout_truncated=False,
+                stderr_truncated=False,
+                stderr_bytes=b"",
+                observer=observer,
             )
 
         if cancel_event is not None and cancel_event.is_set():
@@ -724,23 +908,20 @@ def _execute_preflighted(
                 )
             )
             state = RunLifecycleState.CANCELED
-            return SupervisedExecution(
-                result=_finish(
-                    bundle=bundle,
-                    request=request,
-                    state=state,
-                    refusals=refusals,
-                    worker_exit_code=None,
-                    worker_pid=None,
-                    worker_reaped=False,
-                    stdin_delivered=False,
-                    process_tree_cleaned=False,
-                    stdout_truncated=False,
-                    stderr_truncated=False,
-                    stderr_bytes=b"",
-                    observer=observer,
-                ),
-                _bundle=bundle,
+            return _finish(
+                bundle=bundle,
+                request=request,
+                state=state,
+                refusals=refusals,
+                worker_exit_code=None,
+                worker_pid=None,
+                worker_reaped=False,
+                stdin_delivered=False,
+                process_tree_cleaned=False,
+                stdout_truncated=False,
+                stderr_truncated=False,
+                stderr_bytes=b"",
+                observer=observer,
             )
 
         try:
@@ -753,23 +934,20 @@ def _execute_preflighted(
                 )
             )
             state = RunLifecycleState.FAILED
-            return SupervisedExecution(
-                result=_finish(
-                    bundle=bundle,
-                    request=request,
-                    state=state,
-                    refusals=refusals,
-                    worker_exit_code=None,
-                    worker_pid=None,
-                    worker_reaped=False,
-                    stdin_delivered=False,
-                    process_tree_cleaned=False,
-                    stdout_truncated=False,
-                    stderr_truncated=False,
-                    stderr_bytes=b"",
-                    observer=observer,
-                ),
-                _bundle=bundle,
+            return _finish(
+                bundle=bundle,
+                request=request,
+                state=state,
+                refusals=refusals,
+                worker_exit_code=None,
+                worker_pid=None,
+                worker_reaped=False,
+                stdin_delivered=False,
+                process_tree_cleaned=False,
+                stdout_truncated=False,
+                stderr_truncated=False,
+                stderr_bytes=b"",
+                observer=observer,
             )
 
         working_directory = _working_directory(workspace, run)
@@ -782,46 +960,40 @@ def _execute_preflighted(
                 )
             )
             state = RunLifecycleState.FAILED
-            return SupervisedExecution(
-                result=_finish(
-                    bundle=bundle,
-                    request=request,
-                    state=state,
-                    refusals=refusals,
-                    worker_exit_code=None,
-                    worker_pid=None,
-                    worker_reaped=False,
-                    stdin_delivered=False,
-                    process_tree_cleaned=False,
-                    stdout_truncated=False,
-                    stderr_truncated=False,
-                    stderr_bytes=b"",
-                    observer=observer,
-                ),
-                _bundle=bundle,
+            return _finish(
+                bundle=bundle,
+                request=request,
+                state=state,
+                refusals=refusals,
+                worker_exit_code=None,
+                worker_pid=None,
+                worker_reaped=False,
+                stdin_delivered=False,
+                process_tree_cleaned=False,
+                stdout_truncated=False,
+                stderr_truncated=False,
+                stderr_bytes=b"",
+                observer=observer,
             )
 
         # Re-derive the admission tuple immediately before the fixed program starts. This
         # catches a manifest, plan, definition or asset that changed after preflight.
         launch_refusals = admission_refusals(preflighted, check_assets=True)
         if launch_refusals:
-            return SupervisedExecution(
-                result=_finish(
-                    bundle=bundle,
-                    request=request,
-                    state=RunLifecycleState.REFUSED,
-                    refusals=launch_refusals,
-                    worker_exit_code=None,
-                    worker_pid=None,
-                    worker_reaped=False,
-                    stdin_delivered=False,
-                    process_tree_cleaned=False,
-                    stdout_truncated=False,
-                    stderr_truncated=False,
-                    stderr_bytes=b"",
-                    observer=observer,
-                ),
-                _bundle=bundle,
+            return _finish(
+                bundle=bundle,
+                request=request,
+                state=RunLifecycleState.REFUSED,
+                refusals=launch_refusals,
+                worker_exit_code=None,
+                worker_pid=None,
+                worker_reaped=False,
+                stdin_delivered=False,
+                process_tree_cleaned=False,
+                stdout_truncated=False,
+                stderr_truncated=False,
+                stderr_bytes=b"",
+                observer=observer,
             )
 
         launch_environment = worker_environment(manifest, temporary_directory=working_directory)
@@ -840,23 +1012,20 @@ def _execute_preflighted(
                 )
             )
             state = RunLifecycleState.FAILED
-            return SupervisedExecution(
-                result=_finish(
-                    bundle=bundle,
-                    request=request,
-                    state=state,
-                    refusals=refusals,
-                    worker_exit_code=None,
-                    worker_pid=None,
-                    worker_reaped=False,
-                    stdin_delivered=False,
-                    process_tree_cleaned=False,
-                    stdout_truncated=False,
-                    stderr_truncated=False,
-                    stderr_bytes=b"",
-                    observer=observer,
-                ),
-                _bundle=bundle,
+            return _finish(
+                bundle=bundle,
+                request=request,
+                state=state,
+                refusals=refusals,
+                worker_exit_code=None,
+                worker_pid=None,
+                worker_reaped=False,
+                stdin_delivered=False,
+                process_tree_cleaned=False,
+                stdout_truncated=False,
+                stderr_truncated=False,
+                stderr_bytes=b"",
+                observer=observer,
             )
 
         worker_pid = process.pid
@@ -1053,21 +1222,18 @@ def _execute_preflighted(
         exit_code = process.returncode
         worker_reaped = worker_reaped or process.poll() is not None
 
-    return SupervisedExecution(
-        result=_finish(
-            bundle=bundle,
-            request=request,
-            state=state,
-            refusals=refusals,
-            worker_exit_code=exit_code,
-            worker_pid=worker_pid,
-            worker_reaped=worker_reaped,
-            stdin_delivered=stdin_delivered,
-            process_tree_cleaned=process_tree_cleaned,
-            stdout_truncated=stdout_truncated,
-            stderr_truncated=stderr_truncated,
-            stderr_bytes=stderr_bytes,
-            observer=observer,
-        ),
-        _bundle=bundle,
+    return _finish(
+        bundle=bundle,
+        request=request,
+        state=state,
+        refusals=refusals,
+        worker_exit_code=exit_code,
+        worker_pid=worker_pid,
+        worker_reaped=worker_reaped,
+        stdin_delivered=stdin_delivered,
+        process_tree_cleaned=process_tree_cleaned,
+        stdout_truncated=stdout_truncated,
+        stderr_truncated=stderr_truncated,
+        stderr_bytes=stderr_bytes,
+        observer=observer,
     )

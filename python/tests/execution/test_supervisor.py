@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import ast
 import ctypes
+import json
 import os
 import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -28,12 +30,16 @@ from dynamisbench.evidence.bundle import BundleOperationError
 from dynamisbench.evidence.staging import StagingBundle
 from dynamisbench.execution import (
     ExecutionDiagnostic,
+    ExecutionResult,
     ExecutionSealError,
     RefusalCode,
     RunLifecycleState,
+    SupervisedExecution,
     canonical_worker_request_bytes,
     execute_preflighted,
+    refusal,
 )
+from dynamisbench.identity import canonical_semantic_bytes
 from dynamisbench.workspace import PersistenceClass
 from tests.execution.support import (
     MISBEHAVING_WORKER,
@@ -61,6 +67,33 @@ def _sealed_root(fixture: ExecutionFixture) -> Path:
 def _diagnostic(fixture: ExecutionFixture):
     path = _staging_root(fixture) / "diagnostics.json"
     return ExecutionDiagnostic.model_validate_json(path.read_bytes())
+
+
+def _write_diagnostic(fixture: ExecutionFixture, diagnostic: ExecutionDiagnostic) -> None:
+    """Replace the persisted terminal record, as a staging-directory writer could."""
+    (_staging_root(fixture) / "diagnostics.json").write_bytes(canonical_semantic_bytes(diagnostic))
+
+
+def _fabricated_completed_result(result: ExecutionResult) -> ExecutionResult:
+    """A plausible COMPLETED value for the same run, which the API must not authorize."""
+    return ExecutionResult(
+        run_id=result.run_id,
+        execution_fingerprint=result.execution_fingerprint,
+        environment=result.environment,
+        adapter=result.adapter,
+        state=RunLifecycleState.COMPLETED,
+        staging=result.staging,
+        refusals=(),
+        diagnostic_reference="diagnostics.json",
+        log_reference=result.log_reference,
+        worker_exit_code=0,
+        worker_pid=result.worker_pid,
+        worker_reaped=result.worker_reaped,
+        stdin_delivered=result.stdin_delivered,
+        process_tree_cleaned=result.process_tree_cleaned,
+        stdout_truncated=result.stdout_truncated,
+        stderr_truncated=result.stderr_truncated,
+    )
 
 
 def _pid_is_alive(pid: int) -> bool:
@@ -207,6 +240,306 @@ def test_a_failed_result_cannot_be_mutated_into_a_successful_seal(
 
     with pytest.raises(ExecutionSealError):
         supervised.finalize(RunOutcome.SUCCEEDED)
+    assert not _sealed_root(execution_fixture).exists()
+
+
+def test_dataclasses_replace_cannot_substitute_a_completed_result_for_a_failed_worker(
+    execution_fixture: ExecutionFixture,
+) -> None:
+    """The reported P1: replace the result, keep the failed bundle, seal success."""
+    manifest = worker_manifest(
+        execution_fixture,
+        script=MISBEHAVING_WORKER,
+        arguments=("crash",),
+    )
+    supervised = execute(execution_fixture, manifest)
+    assert supervised.result.state is RunLifecycleState.FAILED
+    assert _diagnostic(execution_fixture).state is RunLifecycleState.FAILED
+
+    forged = _fabricated_completed_result(supervised.result)
+    assert forged.seal_outcome is RunOutcome.SUCCEEDED
+
+    with pytest.raises(TypeError):
+        replace(supervised, result=forged)  # pyright: ignore[reportArgumentType]
+
+    assert supervised.result.state is RunLifecycleState.FAILED
+    with pytest.raises(ExecutionSealError):
+        supervised.finalize(RunOutcome.SUCCEEDED)
+    assert not _sealed_root(execution_fixture).exists()
+
+    sealed = supervised.finalize()
+    assert sealed.manifest.outcome is RunOutcome.FAILED
+    verification = verify_sealed_bundle(execution_fixture.workspace, execution_fixture.run_id)
+    assert verification.is_valid
+    assert verification.bundle is not None
+    assert verification.bundle.manifest.outcome is RunOutcome.FAILED
+
+
+def test_a_publicly_assembled_handle_cannot_authorize_a_fabricated_completed_result(
+    execution_fixture: ExecutionFixture,
+) -> None:
+    """No public constructor or attribute write may rebind terminal authority."""
+    manifest = worker_manifest(
+        execution_fixture,
+        script=MISBEHAVING_WORKER,
+        arguments=("crash",),
+    )
+    supervised = execute(execution_fixture, manifest)
+    forged = _fabricated_completed_result(supervised.result)
+    bundle = supervised._bundle  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(TypeError, match="created only by execute_preflighted"):
+        SupervisedExecution(result=forged, _bundle=bundle)
+    with pytest.raises(AttributeError, match="immutable"):
+        supervised.result = forged  # pyright: ignore[reportAttributeAccessIssue]
+    with pytest.raises(AttributeError, match="immutable"):
+        supervised._bundle = None  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(TypeError, match="cannot be subclassed"):
+
+        class ForgedHandle(SupervisedExecution):  # pyright: ignore
+            pass
+
+    class ForgedWrapper:
+        """A caller-made object that tries to reuse the sealing decision."""
+
+        def __init__(self) -> None:
+            self._result = forged
+            self._bundle = bundle
+
+        finalize = SupervisedExecution.finalize
+
+    with pytest.raises(ExecutionSealError, match="does not agree"):
+        ForgedWrapper().finalize(RunOutcome.SUCCEEDED)
+
+    assert supervised.result.state is RunLifecycleState.FAILED
+    with pytest.raises(ExecutionSealError):
+        supervised.finalize(RunOutcome.SUCCEEDED)
+    assert not _sealed_root(execution_fixture).exists()
+
+
+@pytest.mark.parametrize(
+    ("arguments", "timeout_seconds", "canceled", "expected"),
+    [
+        pytest.param(
+            ("sleep",),
+            0.3,
+            False,
+            RunLifecycleState.TIMED_OUT,
+            id="timed-out",
+        ),
+        pytest.param(
+            ("sleep",),
+            30.0,
+            True,
+            RunLifecycleState.CANCELED,
+            id="canceled",
+        ),
+    ],
+)
+def test_a_non_successful_terminal_state_cannot_be_substituted_into_success(
+    execution_fixture: ExecutionFixture,
+    arguments: tuple[str, ...],
+    timeout_seconds: float,
+    canceled: bool,
+    expected: RunLifecycleState,
+) -> None:
+    manifest = worker_manifest(
+        execution_fixture,
+        script=MISBEHAVING_WORKER,
+        arguments=arguments,
+        timeout_seconds=timeout_seconds,
+    )
+    cancel_event: threading.Event | None = None
+    observer = None
+    if canceled:
+        cancel_event = threading.Event()
+
+        def observe(state: RunLifecycleState) -> None:
+            if state is RunLifecycleState.RUNNING:
+                assert cancel_event is not None
+                cancel_event.set()
+
+        observer = observe
+
+    supervised = execute(
+        execution_fixture,
+        manifest,
+        cancel_event=cancel_event,
+        observer=observer,
+    )
+    assert supervised.result.state is expected
+    forged = _fabricated_completed_result(supervised.result)
+
+    with pytest.raises(TypeError):
+        replace(supervised, result=forged)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(ExecutionSealError):
+        supervised.finalize(RunOutcome.SUCCEEDED)
+    assert not _sealed_root(execution_fixture).exists()
+
+    sealed = supervised.finalize()
+    assert sealed.manifest.outcome is RunOutcome.FAILED
+    verification = verify_sealed_bundle(execution_fixture.workspace, execution_fixture.run_id)
+    assert verification.is_valid
+    assert verification.bundle is not None
+    assert verification.bundle.manifest.outcome is RunOutcome.FAILED
+
+
+def test_a_diagnostic_that_claims_failure_cannot_authorize_a_successful_seal(
+    execution_fixture: ExecutionFixture,
+) -> None:
+    supervised = execute(execution_fixture)
+    diagnostic = _diagnostic(execution_fixture)
+    assert diagnostic.state is RunLifecycleState.COMPLETED
+
+    _write_diagnostic(
+        execution_fixture,
+        diagnostic.model_copy(
+            update={
+                "state": RunLifecycleState.FAILED,
+                "refusals": (refusal(RefusalCode.WORKER_FAILED, "injected persisted failure"),),
+                "worker_exit_code": 1,
+            }
+        ),
+    )
+
+    with pytest.raises(ExecutionSealError, match="diagnostics.json"):
+        supervised.finalize(RunOutcome.SUCCEEDED)
+    with pytest.raises(ExecutionSealError, match="diagnostics.json"):
+        supervised.finalize()
+    assert not _sealed_root(execution_fixture).exists()
+
+
+def test_missing_diagnostics_fails_closed(execution_fixture: ExecutionFixture) -> None:
+    supervised = execute(execution_fixture)
+    (_staging_root(execution_fixture) / "diagnostics.json").unlink()
+
+    with pytest.raises(ExecutionSealError, match="diagnostics.json"):
+        supervised.finalize()
+    with pytest.raises(ExecutionSealError, match="diagnostics.json"):
+        supervised.finalize(RunOutcome.SUCCEEDED)
+    assert not _sealed_root(execution_fixture).exists()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(b'{"schema_version": 1,', id="truncated-json"),
+        pytest.param(b"[]", id="not-an-object"),
+        pytest.param(
+            b'{"schema_version": 1, "protocol_version": 1}',
+            id="missing-required-fields",
+        ),
+    ],
+)
+def test_a_malformed_diagnostic_fails_closed(
+    execution_fixture: ExecutionFixture, payload: bytes
+) -> None:
+    supervised = execute(execution_fixture)
+    (_staging_root(execution_fixture) / "diagnostics.json").write_bytes(payload)
+
+    with pytest.raises(ExecutionSealError, match="diagnostics.json"):
+        supervised.finalize()
+    with pytest.raises(ExecutionSealError, match="diagnostics.json"):
+        supervised.finalize(RunOutcome.SUCCEEDED)
+    assert not _sealed_root(execution_fixture).exists()
+
+
+def test_a_non_canonical_diagnostic_is_refused_as_substituted(
+    execution_fixture: ExecutionFixture,
+) -> None:
+    supervised = execute(execution_fixture)
+    canonical = canonical_semantic_bytes(_diagnostic(execution_fixture))
+    pretty = json.dumps(json.loads(canonical), indent=2, sort_keys=True).encode("utf-8")
+    assert pretty != canonical
+    (_staging_root(execution_fixture) / "diagnostics.json").write_bytes(pretty)
+
+    with pytest.raises(ExecutionSealError, match="substituted"):
+        supervised.finalize()
+    with pytest.raises(ExecutionSealError, match="substituted"):
+        supervised.finalize(RunOutcome.SUCCEEDED)
+    assert not _sealed_root(execution_fixture).exists()
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(
+            lambda diagnostic: diagnostic.model_copy(update={"run_id": "run-9999"}),
+            id="run-id",
+        ),
+        pytest.param(
+            lambda diagnostic: diagnostic.model_copy(
+                update={
+                    "execution_fingerprint": diagnostic.execution_fingerprint.model_copy(
+                        update={"hex": "0" * 64}
+                    )
+                }
+            ),
+            id="execution-fingerprint",
+        ),
+        pytest.param(
+            lambda diagnostic: diagnostic.model_copy(
+                update={
+                    "environment": diagnostic.environment.model_copy(update={"version": "9.9.9"})
+                }
+            ),
+            id="environment",
+        ),
+        pytest.param(
+            lambda diagnostic: diagnostic.model_copy(
+                update={
+                    "adapter": diagnostic.adapter.model_copy(update={"adapter_version": "9.9.9"})
+                }
+            ),
+            id="adapter",
+        ),
+    ],
+)
+def test_an_identity_mismatched_diagnostic_fails_closed(
+    execution_fixture: ExecutionFixture,
+    mutate: Callable[[ExecutionDiagnostic], ExecutionDiagnostic],
+) -> None:
+    supervised = execute(execution_fixture)
+    _write_diagnostic(execution_fixture, mutate(_diagnostic(execution_fixture)))
+
+    with pytest.raises(ExecutionSealError, match="does not agree"):
+        supervised.finalize()
+    with pytest.raises(ExecutionSealError, match="does not agree"):
+        supervised.finalize(RunOutcome.SUCCEEDED)
+    assert not _sealed_root(execution_fixture).exists()
+
+
+def test_rejected_sealing_attempts_leave_existing_sealed_authority_untouched(
+    execution_fixture: ExecutionFixture,
+) -> None:
+    sealed = seal_control_bundle(execution_fixture.workspace, "sealed-control")
+    before = verify_sealed_bundle(execution_fixture.workspace, "sealed-control")
+    assert before.is_valid
+    assert before.bundle is not None
+    assert before.bundle.evidence_digest == sealed.evidence_digest
+
+    manifest = worker_manifest(
+        execution_fixture,
+        script=MISBEHAVING_WORKER,
+        arguments=("crash",),
+    )
+    supervised = execute(execution_fixture, manifest)
+    forged = _fabricated_completed_result(supervised.result)
+
+    with pytest.raises(TypeError):
+        replace(supervised, result=forged)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(ExecutionSealError):
+        supervised.finalize(RunOutcome.SUCCEEDED)
+    with pytest.raises(TypeError, match="created only by execute_preflighted"):
+        SupervisedExecution(  # pyright: ignore[reportPrivateUsage]
+            result=forged,
+            _bundle=supervised._bundle,
+        )
+
+    after = verify_sealed_bundle(execution_fixture.workspace, "sealed-control")
+    assert after.is_valid
+    assert after.bundle is not None
+    assert after.bundle.evidence_digest == before.bundle.evidence_digest
     assert not _sealed_root(execution_fixture).exists()
 
 
