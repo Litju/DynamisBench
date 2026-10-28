@@ -162,11 +162,13 @@ def environment_requirement(
     component: str,
     kind: ComponentKind,
     version: str,
+    *,
+    comparator: Comparator = AT_LEAST,
 ) -> EnvironmentRequirement:
     return EnvironmentRequirement(
         component=component,
         kind=kind,
-        specifier=specifier((AT_LEAST, version)),
+        specifier=specifier((comparator, version)),
     )
 
 
