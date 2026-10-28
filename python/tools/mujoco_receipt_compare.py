@@ -21,6 +21,7 @@ import hashlib
 import json
 import math
 import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -39,6 +40,7 @@ from dynamisbench.planning.runspec import run_spec_fingerprint
 __all__ = ["main"]
 
 PYTHON_DIRECTORY: Final = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT: Final = PYTHON_DIRECTORY.parent
 ADAPTER_DIRECTORY: Final = PYTHON_DIRECTORY / "src" / "dynamisbench" / "adapters" / "mujoco"
 LOCKFILE: Final = PYTHON_DIRECTORY / "worker-mujoco" / "uv.lock"
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
@@ -98,6 +100,21 @@ def _load(path: Path) -> tuple[dict[str, Any], str]:
     if not isinstance(payload, dict):
         raise ComparisonError(f"{path} is not one JSON object")
     return payload, hashlib.sha256(raw).hexdigest()
+
+
+def checkout_head() -> str:
+    """The commit this comparator checkout actually contains."""
+    completed = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise ComparisonError(f"git rev-parse HEAD failed: {completed.stderr[-1000:]}")
+    return completed.stdout.strip()
 
 
 def _source_content_mismatches(
@@ -614,7 +631,21 @@ def compare(
 
     windows_platform = _TARGETS["windows-x64"]
     linux_platform = _TARGETS["linux-x64"]
+    checkout = checkout_head()
     checks: list[dict[str, object]] = []
+    checks.append(
+        _check(
+            "checkout_is_tested_commit",
+            checkout
+            == windows.get("git", {}).get("tested_commit")
+            == linux.get("git", {}).get("tested_commit"),
+            checkout,
+            [
+                windows.get("git", {}).get("tested_commit"),
+                linux.get("git", {}).get("tested_commit"),
+            ],
+        )
+    )
     checks.extend(_runtime_checks(windows, windows_platform, pin, lockfile_sha256, lock_packages))
     checks.extend(_runtime_checks(linux, linux_platform, pin, lockfile_sha256, lock_packages))
     checks.extend(_configuration_checks(windows))

@@ -14,7 +14,7 @@ import os
 
 import pytest
 from tools.mujoco_qualification_receipt import build_receipt
-from tools.mujoco_receipt_compare import compare
+from tools.mujoco_receipt_compare import checkout_head, compare
 
 from dynamisbench.adapters.mujoco import reference, reference_case
 from dynamisbench.execution.contracts import WORKER_PROTOCOL_VERSION
@@ -62,10 +62,11 @@ def _as_platform(receipt: dict, target: str) -> dict:
 def receipt_pair(mujoco_identity: dict) -> dict[str, dict]:
     current = "windows-x64" if os.name == "nt" else "linux-x64"
     other = "linux-x64" if current == "windows-x64" else "windows-x64"
+    commit = checkout_head()
     receipt = build_receipt(
         target=current,
-        tested_commit="a" * 40,
-        head_commit="b" * 40,
+        tested_commit=commit,
+        head_commit=commit,
         ref="test",
         image_os="test",
         image_version="test",
