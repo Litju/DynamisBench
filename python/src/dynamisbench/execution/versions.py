@@ -189,6 +189,47 @@ def _clause_matches(candidate: SemVer, comparator: Comparator, required: SemVer)
             raise UnsupportedComparatorError(f"unknown comparator {comparator!r}")
 
 
+def _immediate_successor(version: SemVer) -> SemVer:
+    """Return the least Semantic Versioning precedence value greater than ``version``.
+
+    Semantic Versioning precedence is *not* dense, which the previous satisfiability check
+    incorrectly assumed. For example, there is no version strictly between ``1.0.0-alpha``
+    and ``1.0.0-alpha.0``: a version above ``alpha`` must either share the whole identifier
+    prefix and add at least one more identifier, whose least value is the numeric ``0``, or
+    differ at an earlier identifier and therefore already exceed ``alpha.0``.
+
+    Every precedence value has an immediate successor:
+
+    * a prerelease ``A.B`` is followed by ``A.B.0`` — a longer sequence with the same
+      identifiers has higher precedence, and ``0`` is the lowest possible next identifier;
+    * a release ``X.Y.Z`` is followed by ``X.Y.(Z+1)-0`` — no prerelease of the same core can
+      exceed the release, and ``0`` is the lowest prerelease of the next core.
+
+    Build metadata is irrelevant here because it does not participate in precedence. The
+    successor is used only to decide interval emptiness; it is never compared as an artifact
+    identity, so its canonical raw spelling does not matter.
+    """
+    if version.prerelease:
+        prerelease = (*version.prerelease, "0")
+        return SemVer(
+            raw=f"{version.major}.{version.minor}.{version.patch}-{'.'.join(prerelease)}",
+            major=version.major,
+            minor=version.minor,
+            patch=version.patch,
+            prerelease=prerelease,
+            build=(),
+        )
+    patch = version.patch + 1
+    return SemVer(
+        raw=f"{version.major}.{version.minor}.{patch}-0",
+        major=version.major,
+        minor=version.minor,
+        patch=patch,
+        prerelease=("0",),
+        build=(),
+    )
+
+
 def _ordered_bounds(
     clauses: tuple[tuple[Comparator, SemVer], ...],
 ) -> tuple[tuple[SemVer, bool] | None, tuple[SemVer, bool] | None]:
@@ -239,10 +280,16 @@ def _parsed_clauses(specifier: VersionSpecifier) -> tuple[tuple[Comparator, SemV
 def specifier_is_satisfiable(specifier: VersionSpecifier) -> bool:
     """Whether at least one Semantic Versioning version satisfies all clauses.
 
-    This is a conservative satisfiability check for the supported comparators. It is used
-    to refuse contradictory authority with a distinct reason before a candidate version is
-    compared, rather than reporting an ordinary mismatch for a specifier that can never be
-    satisfied.
+    This is an exact decision procedure for the supported comparators, not a conservative
+    approximation. Precedence intervals are checked against the immediate-successor rule
+    above rather than assuming density, so adjacent prerelease endpoints such as
+    ``> 1.0.0-alpha, < 1.0.0-alpha.0`` are correctly refused. A finite not-equal set can
+    never empty a nonempty precedence interval because every precedence value has infinitely
+    many build-metadata spellings, and build metadata is part of exact/not-equal identity.
+
+    It is used to refuse contradictory authority with a distinct reason before a candidate
+    version is compared, rather than reporting an ordinary mismatch for a specifier that can
+    never be satisfied.
 
     :raises UnsupportedComparatorError: for ``COMPATIBLE``.
     :raises InvalidVersionError: for a clause version that is not Semantic Versioning.
@@ -263,9 +310,12 @@ def specifier_is_satisfiable(specifier: VersionSpecifier) -> bool:
     if comparison > 0:
         return False
     if comparison < 0:
-        # A prerelease exists between any two distinct precedence points, so a nonempty
-        # open or closed interval is satisfiable even with a finite not-equal set.
-        return True
+        # An inclusive endpoint is its own witness. Otherwise the open interval is nonempty
+        # exactly when the upper endpoint is not the immediate successor of the lower one;
+        # SemVer precedence has adjacent values and no version can exist between them.
+        if lower[1] or upper[1]:
+            return True
+        return compare_precedence(_immediate_successor(lower[0]), upper[0]) < 0
     # Equal precedence: only an inclusive bound on both sides leaves a candidate. Build
     # metadata variants remain distinct artifact strings at that precedence, so a finite
     # not-equal clause cannot empty the interval.

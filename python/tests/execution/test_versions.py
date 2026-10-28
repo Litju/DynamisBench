@@ -188,6 +188,144 @@ def test_a_prerelease_lies_between_two_distinct_releases() -> None:
     assert satisfies("1.0.1-alpha", specifier)
 
 
+def test_adjacent_prerelease_endpoints_are_unsatisfiable() -> None:
+    """SemVer precedence is not dense: nothing lies between ``alpha`` and ``alpha.0``."""
+    specifier = _specifier(
+        (Comparator.GREATER_THAN, "1.0.0-alpha"),
+        (Comparator.LESS_THAN, "1.0.0-alpha.0"),
+    )
+    assert not specifier_is_satisfiable(specifier)
+    with pytest.raises(UnsatisfiableSpecifierError, match="contradictory"):
+        satisfies("1.0.0-alpha.0", specifier)
+
+
+@pytest.mark.parametrize(
+    ("lower", "upper", "satisfiable"),
+    (
+        # Both inclusive: the lower endpoint is a witness.
+        (Comparator.GREATER_THAN_OR_EQUAL, Comparator.LESS_THAN_OR_EQUAL, True),
+        # Lower exclusive, upper inclusive: the upper endpoint is a witness.
+        (Comparator.GREATER_THAN, Comparator.LESS_THAN_OR_EQUAL, True),
+        # Lower inclusive, upper exclusive: the lower endpoint is a witness.
+        (Comparator.GREATER_THAN_OR_EQUAL, Comparator.LESS_THAN, True),
+        # Both exclusive: no value exists between adjacent endpoints.
+        (Comparator.GREATER_THAN, Comparator.LESS_THAN, False),
+    ),
+)
+def test_adjacent_bound_inclusivity_is_decided_exactly(
+    lower: Comparator, upper: Comparator, satisfiable: bool
+) -> None:
+    specifier = _specifier((lower, "1.0.0-alpha"), (upper, "1.0.0-alpha.0"))
+    assert specifier_is_satisfiable(specifier) is satisfiable
+
+
+@pytest.mark.parametrize("endpoint", ("0", "alpha", "alpha.beta", "alpha.zzz"))
+def test_every_prerelease_has_an_immediate_successor(endpoint: str) -> None:
+    specifier = _specifier(
+        (Comparator.GREATER_THAN, f"1.0.0-{endpoint}"),
+        (Comparator.LESS_THAN, f"1.0.0-{endpoint}.0"),
+    )
+    assert not specifier_is_satisfiable(specifier)
+
+
+@pytest.mark.parametrize(
+    ("lower", "upper", "witness"),
+    (
+        ("1.0.0-alpha", "1.0.0-alpha.0.0", "1.0.0-alpha.0"),
+        ("1.0.0-0", "1.0.0-0.0.0", "1.0.0-0.0"),
+        ("1.0.0-alpha.0", "1.0.0-alpha.0.1", "1.0.0-alpha.0.0"),
+        ("1.0.0-0.9", "1.0.0-0.10", "1.0.0-0.9.0"),
+        ("1.0.0-1", "1.0.0-2", "1.0.0-1.0"),
+    ),
+)
+def test_a_valid_narrow_open_interval_is_not_falsely_refused(
+    lower: str, upper: str, witness: str
+) -> None:
+    specifier = _specifier(
+        (Comparator.GREATER_THAN, lower),
+        (Comparator.LESS_THAN, upper),
+    )
+    assert specifier_is_satisfiable(specifier)
+    assert satisfies(witness, specifier)
+
+
+def test_adjacent_release_and_next_prerelease_are_unsatisfiable() -> None:
+    specifier = _specifier(
+        (Comparator.GREATER_THAN, "1.0.0"),
+        (Comparator.LESS_THAN, "1.0.1-0"),
+    )
+    assert not specifier_is_satisfiable(specifier)
+
+
+def test_large_numeric_prerelease_identifiers_are_compared_exactly() -> None:
+    large = 10**80
+    adjacent = _specifier(
+        (Comparator.GREATER_THAN, f"1.0.0-{large}"),
+        (Comparator.LESS_THAN, f"1.0.0-{large}.0"),
+    )
+    assert not specifier_is_satisfiable(adjacent)
+
+    narrow = _specifier(
+        (Comparator.GREATER_THAN, f"1.0.0-{large - 1}"),
+        (Comparator.LESS_THAN, f"1.0.0-{large}"),
+    )
+    assert specifier_is_satisfiable(narrow)
+    assert satisfies(f"1.0.0-{large - 1}.0", narrow)
+
+
+def test_exact_plus_not_equal_uses_artifact_identity_and_build_metadata() -> None:
+    contradictory = _specifier(
+        (Comparator.EXACT, "1.0.0"),
+        (Comparator.NOT_EQUAL, "1.0.0"),
+    )
+    assert not specifier_is_satisfiable(contradictory)
+
+    build_distinct = _specifier(
+        (Comparator.EXACT, "1.0.0+build.1"),
+        (Comparator.NOT_EQUAL, "1.0.0+build.2"),
+    )
+    assert specifier_is_satisfiable(build_distinct)
+    assert satisfies("1.0.0+build.1", build_distinct)
+
+    exact_release = _specifier(
+        (Comparator.EXACT, "1.0.0+build.1"),
+        (Comparator.GREATER_THAN_OR_EQUAL, "1.0.0"),
+        (Comparator.LESS_THAN_OR_EQUAL, "1.0.0"),
+    )
+    assert specifier_is_satisfiable(exact_release)
+
+    exact_above = _specifier(
+        (Comparator.EXACT, "1.0.0+build.1"),
+        (Comparator.GREATER_THAN, "1.0.0"),
+    )
+    assert not specifier_is_satisfiable(exact_above)
+
+
+def test_build_metadata_keeps_an_equal_precedence_interval_nonempty() -> None:
+    specifier = _specifier(
+        (Comparator.GREATER_THAN_OR_EQUAL, "1.0.0+build.1"),
+        (Comparator.LESS_THAN_OR_EQUAL, "1.0.0+build.1"),
+        (Comparator.NOT_EQUAL, "1.0.0+build.1"),
+    )
+    assert specifier_is_satisfiable(specifier)
+    assert satisfies("1.0.0+build.2", specifier)
+
+
+def test_inclusive_and_exclusive_precedence_bounds_remain_consistent() -> None:
+    inclusive = _specifier(
+        (Comparator.GREATER_THAN_OR_EQUAL, "1.0.0"),
+        (Comparator.LESS_THAN, "1.0.1-0"),
+    )
+    assert specifier_is_satisfiable(inclusive)
+    assert satisfies("1.0.0", inclusive)
+
+    exclusive = _specifier(
+        (Comparator.GREATER_THAN, "1.0.0"),
+        (Comparator.LESS_THAN, "1.0.1-0"),
+    )
+    assert not specifier_is_satisfiable(exclusive)
+
+
 def test_a_build_variant_remains_distinct_at_the_same_precedence() -> None:
     specifier = _specifier(
         (Comparator.GREATER_THAN_OR_EQUAL, "1.0.0"),
