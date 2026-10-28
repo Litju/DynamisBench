@@ -83,7 +83,7 @@ waiting for review.
 A change is qualified only when, on both Windows and Linux:
 
 ```powershell
-Push-Location python; uv sync --frozen; uv run ruff check .; uv run ruff format --check .; uv run pyright; uv run pytest; Pop-Location
+Push-Location python; uv sync --frozen; uv sync --frozen --project worker-mujoco; uv run ruff check .; uv run ruff format --check .; uv run pyright; uv run pyright -p pyrightconfig.worker.json; $env:DYNAMISBENCH_MUJOCO_PYTHON = (Resolve-Path .\worker-mujoco\.venv\Scripts\python.exe); $env:DYNAMISBENCH_REQUIRE_MUJOCO = "1"; uv run pytest; Pop-Location
 pnpm install --frozen-lockfile
 pnpm run typecheck
 pnpm run test
@@ -91,6 +91,13 @@ pnpm run build
 pnpm --filter @dynamisbench/workbench exec playwright install chromium
 pnpm --filter @dynamisbench/workbench run test:e2e
 ```
+
+The MuJoCo adapter is installed only in its own scientific environment,
+`python/worker-mujoco`. The application runtime never installs or imports it (ADR-001,
+ADR-018). The worker environment is a separate `uv` project with its own lockfile; the main
+Pyright configuration excludes the engine-facing adapter and `pyrightconfig.worker.json`
+checks it against that environment. `DYNAMISBENCH_REQUIRE_MUJOCO=1` makes absence of the
+worker environment a failure rather than a silent skip.
 
 The Playwright gate drives the production route tree against a real secured sidecar. It
 needs the locked Python environment above and a pinned Chromium build; the first command
@@ -100,6 +107,6 @@ job, so `pnpm run test` alone is not the complete frontend qualification.
 Touching `apps/desktop/src-tauri` additionally requires
 `cargo build --locked --manifest-path apps/desktop/src-tauri/Cargo.toml`.
 
-Lockfiles (`python/uv.lock`, `pnpm-lock.yaml`,
+Lockfiles (`python/uv.lock`, `python/worker-mujoco/uv.lock`, `pnpm-lock.yaml`,
 `apps/desktop/src-tauri/Cargo.lock`) are committed and must stay in sync with the
 manifests.

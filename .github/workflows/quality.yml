@@ -148,6 +148,30 @@ jobs:
           enable-cache: true
       - name: Install locked dependencies
         run: uv sync --frozen
+      # The MuJoCo adapter is type-checked and executed in its own locked environment. It is
+      # never installed into the application runtime environment above (ADR-018).
+      - name: Provision the isolated MuJoCo worker environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv sync --frozen --project worker-mujoco
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            worker_python="$GITHUB_WORKSPACE/python/worker-mujoco/.venv/Scripts/python.exe"
+          else
+            worker_python="$GITHUB_WORKSPACE/python/worker-mujoco/.venv/bin/python"
+          fi
+          "$worker_python" -I -m dynamisbench.adapters.mujoco --identity \
+            > "$RUNNER_TEMP/mujoco-identity.json"
+          cat "$RUNNER_TEMP/mujoco-identity.json"
+          {
+            echo "### Isolated MuJoCo worker identity"
+            echo
+            echo '```json'
+            cat "$RUNNER_TEMP/mujoco-identity.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "DYNAMISBENCH_MUJOCO_PYTHON=$worker_python" >> "$GITHUB_ENV"
+          echo "DYNAMISBENCH_REQUIRE_MUJOCO=1" >> "$GITHUB_ENV"
       - name: Record resolved Python toolchain
         run: |
           {
@@ -161,6 +185,8 @@ jobs:
         run: uv run ruff format --check .
       - name: Type check (Pyright)
         run: uv run pyright
+      - name: Type check the MuJoCo adapter (Pyright)
+        run: uv run pyright -p pyrightconfig.worker.json
       - name: Test (pytest + Hypothesis)
         run: uv run pytest --junitxml=evidence/pytest.xml
         env:

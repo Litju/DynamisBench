@@ -64,9 +64,15 @@ Pop-Location
 
 # Python quality gates
 Push-Location python
+uv sync --frozen
+# The MuJoCo adapter runs in a separate locked scientific environment (ADR-018).
+uv sync --frozen --project worker-mujoco
 uv run ruff check .
 uv run ruff format --check .
 uv run pyright
+uv run pyright -p pyrightconfig.worker.json
+$env:DYNAMISBENCH_MUJOCO_PYTHON = (Resolve-Path .\worker-mujoco\.venv\Scripts\python.exe)
+$env:DYNAMISBENCH_REQUIRE_MUJOCO = "1"
 uv run pytest
 Pop-Location
 
@@ -97,7 +103,7 @@ gate runs on both explicit GitHub-hosted images, `windows-2025` and `ubuntu-24.0
 | Job | Gate |
 | --- | --- |
 | `platform-identity` | runner image, OS/architecture, commit, and resolved Python/uv/Node/pnpm/Rust/Cargo versions, published as a run artifact |
-| `python` | locked `uv sync`, Ruff lint + format, Pyright, pytest with the `ci` Hypothesis profile |
+| `python` | locked `uv sync`, isolated MuJoCo worker environment, Ruff lint + format, both Pyright configurations, pytest with the `ci` Hypothesis profile and the real MuJoCo adapter regressions |
 | `frontend` | locked `pnpm install`, `tsc --noEmit`, Vitest, Vite build, pinned Chromium Playwright against a real secured sidecar |
 | `desktop` | Rust toolchain, Tauri Linux system deps, workbench build, `cargo build --locked` |
 
@@ -116,7 +122,18 @@ preflight, isolated subprocess supervision with bounded IPC/logging, timeout, ca
 and reaping) and the local application boundary (`/api/v1` plus the session-secured
 loopback sidecar) exist and are qualified, as does the workbench foundation that consumes
 them (volatile desktop session boundary, typed `/api/v1` client, TanStack Query server
-state, code-based routes). Explicitly not present yet: simulator libraries, numerical
-simulation, qualified simulator execution environments, the MuJoCo capability adapter, the
-scientific workbench surfaces (explorer, artifact inspector, charts, 3D playback), and
-packaging.
+state, code-based routes).
+
+RES-550 adds the first real simulator execution: a fixed, self-contained MuJoCo planar
+pendulum reference adapter in `python/src/dynamisbench/adapters/mujoco`, run only in the
+separate locked environment defined by `python/worker-mujoco`. It advertises only
+`forward_dynamics`, is admitted through the accepted `RunSpec → preflight → supervisor`
+boundary, and emits a bounded native diagnostic that is not sealed native evidence.
+Execution-time engine-version admission supports exact, not-equal and ordered Semantic
+Versioning clauses; the `compatible` comparator has no accepted authority definition and is
+refused rather than guessed.
+
+Explicitly not present yet: arbitrary model/asset materialization for a generic MuJoCo
+realization, native→canonical normalization, `assessment.json`, scientific benchmark
+acceptance or model validation, a production simulation UI/run command, OpenSim, packaging,
+and the scientific workbench surfaces (explorer, artifact inspector, charts, 3D playback).
