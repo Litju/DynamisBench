@@ -39,6 +39,7 @@ from dynamisbench.planning.runspec import run_spec_fingerprint
 __all__ = ["main"]
 
 PYTHON_DIRECTORY: Final = Path(__file__).resolve().parents[1]
+ADAPTER_DIRECTORY: Final = PYTHON_DIRECTORY / "src" / "dynamisbench" / "adapters" / "mujoco"
 LOCKFILE: Final = PYTHON_DIRECTORY / "worker-mujoco" / "uv.lock"
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _TARGETS: Final = {
@@ -99,6 +100,31 @@ def _load(path: Path) -> tuple[dict[str, Any], str]:
     return payload, hashlib.sha256(raw).hexdigest()
 
 
+def _source_content_mismatches(
+    source_manifest: tuple[dict[str, Any], ...],
+) -> list[str]:
+    """Re-hash the adapter files at the tested checkout and name every disagreement.
+
+    The receipt records the implementation source manifest the worker observed. The
+    comparison job checks out the exact tested commit, so it can independently read those
+    files and prove that the recorded hashes are the bytes in this repository — not merely
+    hashes the receipt reported about itself.
+    """
+    mismatches: list[str] = []
+    for entry in source_manifest:
+        relative = str(entry.get("path", ""))
+        expected = str(entry.get("sha256", ""))
+        try:
+            content = (ADAPTER_DIRECTORY / relative).read_bytes()
+        except OSError:
+            mismatches.append(f"{relative}: unreadable")
+            continue
+        observed = hashlib.sha256(content).hexdigest()
+        if observed != expected:
+            mismatches.append(f"{relative}: {observed} != {expected}")
+    return mismatches
+
+
 def _runtime_checks(
     receipt: dict[str, Any],
     platform_tag: str,
@@ -133,6 +159,13 @@ def _runtime_checks(
     recomputed_implementation = hashlib.sha256(
         canonical_semantic_bytes(identity_payload)
     ).hexdigest()
+    source_content_mismatches = _source_content_mismatches(source_manifest)
+    try:
+        model_content_digest = hashlib.sha256(
+            (ADAPTER_DIRECTORY / reference.MODEL_ASSET_PATH).read_bytes()
+        ).hexdigest()
+    except OSError:
+        model_content_digest = "unreadable"
     expected_spec = reference_case.run_spec(platform_tag=platform_tag)
     expected_fingerprint = run_spec_fingerprint(expected_spec).hex
     return [
@@ -268,6 +301,18 @@ def _runtime_checks(
             bool(source_manifest) and manifest_hashes_valid,
             len(source_manifest),
             "nonempty manifest with 64-hex SHA-256 values",
+        ),
+        _check(
+            "source_manifest_content",
+            not source_content_mismatches,
+            source_content_mismatches,
+            [],
+        ),
+        _check(
+            "model_asset_content",
+            model_content_digest == runtime.get("model_sha256") == reference.MODEL_SHA256,
+            model_content_digest,
+            reference.MODEL_SHA256,
         ),
         _check(
             "implementation_digest_recomputable",
