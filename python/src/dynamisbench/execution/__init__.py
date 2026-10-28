@@ -2,8 +2,11 @@
 
 This package is the first implemented M3 execution boundary. It is engine-independent by
 construction: nothing here imports MuJoCo, OpenSim or any other simulator, and no
-simulator-native object can cross into it. A future MuJoCo adapter lives in its own
-execution environment and is launched through the same fixed worker contract.
+simulator-native object can cross into it. The first real MuJoCo adapter lives in
+:mod:`dynamisbench.adapters.mujoco` and is launched, in its own locked execution environment,
+through the same fixed worker contract. Version admission is evaluated by
+:mod:`dynamisbench.execution.versions`; ``compatible`` constraints are refused because the
+accepted authority does not define their semantics.
 
 What the boundary owns:
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,9 +18,11 @@ from dynamisbench.evidence.bundle import BundleNamingError
 from dynamisbench.execution import (
     PreflightDecision,
     RefusalCode,
+    WorkerCommand,
     canonical_preflight_bytes,
     preflight_digest,
     preflight_run,
+    resolved_worker_program,
 )
 from dynamisbench.identity import SemanticDigest
 from dynamisbench.planning.authority import ResolvedEnvironmentRef
@@ -40,6 +44,28 @@ from tests.execution.support import (
 
 def _codes(fixture) -> set[RefusalCode]:
     return {item.code for item in fixture.report.refusals}
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="Windows virtual-environment interpreters are not symlinks"
+)
+def test_a_symlinked_worker_interpreter_is_not_resolved_away(
+    execution_fixture: ExecutionFixture, tmp_path: Path
+) -> None:
+    """A POSIX venv interpreter is a symlink, and the symlink selects the environment.
+
+    Resolving it to the base CPython target would silently launch a different execution
+    environment. The fixed program is therefore returned exactly as declared once it has
+    been proved to be an executable regular file.
+    """
+    link = tmp_path / "worker-python"
+    link.symlink_to(sys.executable)
+    manifest = worker_manifest(execution_fixture).model_copy(
+        update={"command": WorkerCommand(program=str(link))}
+    )
+
+    assert resolved_worker_program(manifest) == link
+    assert resolved_worker_program(manifest) != Path(sys.executable).resolve()
 
 
 def test_ready_preflight_is_deterministic_and_read_only(

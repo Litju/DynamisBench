@@ -1,0 +1,25 @@
+[project]
+name = "dynamisbench-mujoco-environment"
+version = "0.1.0"
+description = "Isolated MuJoCo execution environment for the DynamisBench reference adapter."
+requires-python = ">=3.12,<3.13"
+# MuJoCo is deliberately exact-pinned: the adapter admits an engine version and checks that
+# the running native engine is exactly that version. NumPy and the rest of MuJoCo's runtime
+# closure are pinned by uv.lock, not by an unbounded transitive requirement.
+dependencies = [
+    "dynamisbench",
+    "mujoco==3.17.0",
+]
+
+# The engine-independent contracts and the adapter live in the main distribution. Installing
+# it here does not put MuJoCo into the application runtime; the dependency direction is one
+# way and this project is never a dependency of `dynamisbench`.
+
+[tool.uv.sources]
+dynamisbench = { path = "..", editable = true }
+
+[tool.uv]
+# This project is an environment, not a second Python package. `uv sync` creates the
+# isolated interpreter and installs the locked closure; the fixed worker command imports the
+# adapter module from the editable main distribution.
+package = false

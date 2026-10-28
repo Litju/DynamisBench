@@ -48,6 +48,7 @@ dev = [
     "pyright>=1.1.414",
     "pytest>=9.1.1",
     "ruff>=0.16.9",
+    "scipy>=1.16.0",
 ]
 
 [build-system]
@@ -70,8 +71,17 @@ select = ["B", "E", "F", "I", "N", "UP", "W"]
 [tool.ruff.lint.isort]
 known-first-party = ["dynamisbench"]
 
+[tool.ruff.lint.per-file-ignores]
+# The stub mirrors MuJoCo's public names exactly; renaming them would break the type surface.
+"worker-mujoco/stubs/**/*.pyi" = ["N801", "N802", "N815"]
+
 [tool.pyright]
 include = ["src", "tests", "tools"]
+# The MuJoCo adapter's engine-facing module imports the engine and therefore resolves its
+# types from the isolated worker environment, configured separately in
+# `pyrightconfig.worker.json`. The engine-independent application runtime must not need
+# MuJoCo installed to type-check its own core.
+exclude = ["src/dynamisbench/adapters/mujoco"]
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.12"
