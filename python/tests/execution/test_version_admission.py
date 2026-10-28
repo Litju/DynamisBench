@@ -239,6 +239,55 @@ def test_contradictory_environment_constraints_are_unresolvable(tmp_path: Path) 
     assert RefusalCode.INVALID_RUN_SPEC in _codes(admission)
 
 
+def test_an_environment_requirement_below_the_semver_minimum_is_unresolvable(
+    tmp_path: Path,
+) -> None:
+    """No version precedes 0.0.0-0, so the requirement is unusable authority, not a mismatch."""
+    fixture = _fixture(
+        tmp_path,
+        realization=control_realization(engine=_engine(CONTROL_ENGINE_VERSION)),
+        environment=_environment(_specifier((Comparator.LESS_THAN, "0.0.0-0"))),
+    )
+    admission = preflight(fixture)
+
+    assert admission.report.decision is PreflightDecision.REFUSED
+    assert RefusalCode.INVALID_RUN_SPEC in _codes(admission)
+    assert RefusalCode.ADAPTER_ENGINE_MISMATCH not in _codes(admission)
+
+
+def test_a_realization_engine_requirement_below_the_semver_minimum_is_unresolvable(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(
+        tmp_path,
+        realization=control_realization(engine=_engine("0.0.0-0", Comparator.LESS_THAN)),
+        environment=_environment(_specifier((Comparator.EXACT, CONTROL_ENGINE_VERSION))),
+    )
+    admission = preflight(fixture)
+
+    assert admission.report.decision is PreflightDecision.REFUSED
+    assert RefusalCode.INVALID_RUN_SPEC in _codes(admission)
+    assert RefusalCode.ADAPTER_ENGINE_MISMATCH not in _codes(admission)
+
+
+def test_the_global_minimum_is_admitted_when_the_bounds_include_it(tmp_path: Path) -> None:
+    """A valid candidate at the minimum precedence must not be falsely refused."""
+    fixture = _fixture(
+        tmp_path,
+        realization=control_realization(engine=_engine("0.0.0-0", Comparator.EXACT)),
+        environment=_environment(_specifier((Comparator.GREATER_THAN_OR_EQUAL, "0.0.0-0"))),
+    )
+    admission = preflight(
+        fixture,
+        worker_manifest(
+            fixture,
+            adapter=adapter_identity(fixture.required_capabilities, engine_version="0.0.0-0"),
+        ),
+    )
+
+    assert admission.report.decision is PreflightDecision.READY
+
+
 def test_an_environment_without_an_engine_requirement_is_refused(tmp_path: Path) -> None:
     environment = control_environment(
         requirements=(

@@ -31,6 +31,51 @@ def _specifier(*clauses: tuple[Comparator, str]) -> VersionSpecifier:
     )
 
 
+_BOUNDARY_VERSIONS = (
+    "0.0.0-0",
+    "0.0.0-0.0",
+    "0.0.0-0+build.1",
+    "0.0.0",
+    "0.0.0+build.1",
+    "0.0.1-0",
+    "0.0.1",
+    "1.0.0-alpha",
+    "1.0.0-alpha.0",
+    "1.0.0-alpha.0.0",
+    "1.0.0",
+    "1.0.0+build.1",
+    "1.0.1-0",
+    "1.0.0-184467440737095516160",
+)
+"""Precedence boundaries, including the global minimum and its immediate successors."""
+
+
+def _successor_text(version: str) -> str:
+    """The least precedence value above ``version``, written as a valid version string."""
+    parsed = parse_semver(version)
+    if parsed.prerelease:
+        identifiers = (*parsed.prerelease, "0")
+        return f"{parsed.major}.{parsed.minor}.{parsed.patch}-{'.'.join(identifiers)}"
+    return f"{parsed.major}.{parsed.minor}.{parsed.patch + 1}-0"
+
+
+def _with_build(version: str, tag: int) -> str:
+    """A distinct build-metadata spelling at the same precedence as ``version``."""
+    return f"{version}.witness{tag}" if "+" in version else f"{version}+witness{tag}"
+
+
+def _witness_pool(clauses: tuple[tuple[Comparator, str], ...]) -> list[str]:
+    versions = {"0.0.0-0"}
+    for _comparator, version in clauses:
+        versions.add(version)
+        versions.add(_successor_text(version))
+    return [
+        witness
+        for version in versions
+        for witness in (version, *(_with_build(version, tag) for tag in range(4)))
+    ]
+
+
 def _numeric() -> st.SearchStrategy[int]:
     return st.integers(min_value=0, max_value=30)
 
@@ -229,6 +274,155 @@ def test_every_prerelease_has_an_immediate_successor(endpoint: str) -> None:
 
 
 @pytest.mark.parametrize(
+    ("clauses", "satisfiable", "witness"),
+    (
+        # Semantic Versioning has a global minimum precedence, 0.0.0-0. A range that ends
+        # at or below it is empty even though it declares no lower bound.
+        (((Comparator.LESS_THAN, "0.0.0-0"),), False, None),
+        (((Comparator.LESS_THAN_OR_EQUAL, "0.0.0-0"),), True, "0.0.0-0"),
+        (((Comparator.GREATER_THAN, "0.0.0-0"),), True, "0.0.0-0.0"),
+        (((Comparator.GREATER_THAN_OR_EQUAL, "0.0.0-0"),), True, "0.0.0-0"),
+        # Build metadata does not move the endpoint in precedence, so it cannot rescue a
+        # range that excludes the minimum, and cannot make an inclusive minimum empty.
+        (((Comparator.LESS_THAN, "0.0.0-0+build.1"),), False, None),
+        (((Comparator.LESS_THAN_OR_EQUAL, "0.0.0-0+build.1"),), True, "0.0.0-0"),
+        # Adjacent prerelease endpoints remain empty/open as before.
+        (
+            (
+                (Comparator.GREATER_THAN, "1.0.0-alpha"),
+                (Comparator.LESS_THAN, "1.0.0-alpha.0"),
+            ),
+            False,
+            None,
+        ),
+        (
+            (
+                (Comparator.GREATER_THAN_OR_EQUAL, "1.0.0-alpha"),
+                (Comparator.LESS_THAN_OR_EQUAL, "1.0.0-alpha.0"),
+            ),
+            True,
+            "1.0.0-alpha",
+        ),
+    ),
+)
+def test_global_minimum_and_adjacent_bounds_are_decided_exactly(
+    clauses: tuple[tuple[Comparator, str], ...],
+    satisfiable: bool,
+    witness: str | None,
+) -> None:
+    specifier = _specifier(*clauses)
+
+    assert specifier_is_satisfiable(specifier) is satisfiable
+    if witness is not None:
+        assert satisfies(witness, specifier)
+    else:
+        with pytest.raises(UnsatisfiableSpecifierError, match="contradictory"):
+            satisfies("0.0.0-0", specifier)
+
+
+def test_minimum_precedence_bounds_every_valid_version() -> None:
+    minimum = parse_semver("0.0.0-0")
+    for version in _BOUNDARY_VERSIONS:
+        assert compare_precedence(minimum, parse_semver(version)) <= 0
+
+
+@pytest.mark.parametrize(
+    ("clauses", "satisfiable", "witness"),
+    (
+        # A not-equal clause cannot empty an interval that still contains a build-metadata
+        # spelling of an accepted precedence, even at the global minimum.
+        (
+            (
+                (Comparator.LESS_THAN, "0.0.0-0"),
+                (Comparator.NOT_EQUAL, "0.0.0-0"),
+            ),
+            False,
+            None,
+        ),
+        (
+            (
+                (Comparator.LESS_THAN_OR_EQUAL, "0.0.0-0"),
+                (Comparator.NOT_EQUAL, "0.0.0-0"),
+            ),
+            True,
+            "0.0.0-0+build.1",
+        ),
+        (
+            (
+                (Comparator.GREATER_THAN_OR_EQUAL, "0.0.0-0"),
+                (Comparator.LESS_THAN_OR_EQUAL, "0.0.0-0"),
+                (Comparator.NOT_EQUAL, "0.0.0-0"),
+            ),
+            True,
+            "0.0.0-0+build.1",
+        ),
+        (
+            (
+                (Comparator.LESS_THAN, "0.0.0-0+build.1"),
+                (Comparator.NOT_EQUAL, "0.0.0-0+build.1"),
+            ),
+            False,
+            None,
+        ),
+        (
+            (
+                (Comparator.LESS_THAN_OR_EQUAL, "0.0.0-0+build.1"),
+                (Comparator.NOT_EQUAL, "0.0.0-0+build.1"),
+            ),
+            True,
+            "0.0.0-0+build.2",
+        ),
+    ),
+)
+def test_minimum_boundary_with_not_equal_and_build_metadata(
+    clauses: tuple[tuple[Comparator, str], ...],
+    satisfiable: bool,
+    witness: str | None,
+) -> None:
+    specifier = _specifier(*clauses)
+
+    assert specifier_is_satisfiable(specifier) is satisfiable
+    if witness is not None:
+        assert satisfies(witness, specifier)
+
+
+def test_minimum_boundary_with_large_numeric_prerelease_identifiers() -> None:
+    large = 10**80
+
+    adjacent = _specifier(
+        (Comparator.GREATER_THAN, f"0.0.0-{large}"),
+        (Comparator.LESS_THAN, f"0.0.0-{large}.0"),
+    )
+    assert not specifier_is_satisfiable(adjacent)
+
+    unbounded = _specifier((Comparator.GREATER_THAN, f"0.0.0-{large}"))
+    assert specifier_is_satisfiable(unbounded)
+    assert satisfies(f"0.0.0-{large}.0", unbounded)
+
+    narrow = _specifier(
+        (Comparator.GREATER_THAN, f"0.0.0-{large - 1}"),
+        (Comparator.LESS_THAN, f"0.0.0-{large}"),
+    )
+    assert specifier_is_satisfiable(narrow)
+    assert satisfies(f"0.0.0-{large - 1}.0", narrow)
+
+
+def test_minimum_release_is_adjacent_to_the_next_prerelease() -> None:
+    adjacent = _specifier(
+        (Comparator.GREATER_THAN, "0.0.0"),
+        (Comparator.LESS_THAN, "0.0.1-0"),
+    )
+    assert not specifier_is_satisfiable(adjacent)
+
+    inclusive = _specifier(
+        (Comparator.GREATER_THAN_OR_EQUAL, "0.0.0"),
+        (Comparator.LESS_THAN, "0.0.1-0"),
+    )
+    assert specifier_is_satisfiable(inclusive)
+    assert satisfies("0.0.0", inclusive)
+
+
+@pytest.mark.parametrize(
     ("lower", "upper", "witness"),
     (
         ("1.0.0-alpha", "1.0.0-alpha.0.0", "1.0.0-alpha.0"),
@@ -372,12 +566,19 @@ def test_adding_build_metadata_does_not_change_precedence(version: str) -> None:
 @settings(max_examples=100, deadline=None)
 def test_ordered_clauses_agree_with_the_precedence_function(left: str, right: str) -> None:
     comparison = compare_precedence(parse_semver(left), parse_semver(right))
-    assert satisfies(left, _specifier((Comparator.LESS_THAN, right))) == (comparison < 0)
-    assert satisfies(left, _specifier((Comparator.LESS_THAN_OR_EQUAL, right))) == (comparison <= 0)
-    assert satisfies(left, _specifier((Comparator.GREATER_THAN, right))) == (comparison > 0)
-    assert satisfies(left, _specifier((Comparator.GREATER_THAN_OR_EQUAL, right))) == (
-        comparison >= 0
-    )
+    for comparator, expected in (
+        (Comparator.LESS_THAN, comparison < 0),
+        (Comparator.LESS_THAN_OR_EQUAL, comparison <= 0),
+        (Comparator.GREATER_THAN, comparison > 0),
+        (Comparator.GREATER_THAN_OR_EQUAL, comparison >= 0),
+    ):
+        specifier = _specifier((comparator, right))
+        if specifier_is_satisfiable(specifier):
+            assert satisfies(left, specifier) == expected
+        else:
+            # A single clause can still be empty against the global minimum, in which
+            # case the candidate is refused as contradictory rather than mismatched.
+            assert expected is False
 
 
 @given(_semantic_versions())
@@ -385,3 +586,73 @@ def test_ordered_clauses_agree_with_the_precedence_function(left: str, right: st
 def test_exact_and_not_equal_are_exact_artifact_identities(version: str) -> None:
     assert satisfies(version, _specifier((Comparator.EXACT, version)))
     assert not satisfies(version, _specifier((Comparator.NOT_EQUAL, version)))
+
+
+_ORDERED_COMPARATORS = (
+    Comparator.EXACT,
+    Comparator.NOT_EQUAL,
+    Comparator.GREATER_THAN,
+    Comparator.GREATER_THAN_OR_EQUAL,
+    Comparator.LESS_THAN,
+    Comparator.LESS_THAN_OR_EQUAL,
+)
+
+
+@given(
+    st.lists(
+        st.tuples(
+            st.sampled_from(_ORDERED_COMPARATORS),
+            st.one_of(_semantic_versions(with_build=False), st.sampled_from(_BOUNDARY_VERSIONS)),
+        ),
+        min_size=1,
+        max_size=3,
+        unique_by=lambda clause: clause[0],
+    )
+)
+@settings(max_examples=250, deadline=None)
+def test_satisfiable_specifiers_admit_a_constructed_witness(
+    clauses: list[tuple[Comparator, str]],
+) -> None:
+    """A satisfiable decision must name a version the ordinary evaluator admits.
+
+    The witness pool is constructed from the clause endpoints, the global minimum, each
+    endpoint's immediate successor, and distinct build-metadata spellings. If the decision
+    says a range is nonempty, at least one of those candidates must actually satisfy it.
+    This is the no-false-refusal direction, exercised over the whole supported comparator
+    set; the endpoint table tests cover the false-refusal direction directly.
+    """
+    specifier = _specifier(*clauses)
+    if not specifier_is_satisfiable(specifier):
+        return
+
+    witnesses = _witness_pool(tuple(clauses))
+    assert any(satisfies(witness, specifier) for witness in witnesses), (
+        f"the decision says {clauses} is satisfiable but no constructed witness satisfies it"
+    )
+
+
+@given(st.one_of(_semantic_versions(with_build=False), st.sampled_from(_BOUNDARY_VERSIONS)))
+@settings(max_examples=200, deadline=None)
+def test_initial_segment_satisfiability_is_bounded_by_the_global_minimum(version: str) -> None:
+    minimum = parse_semver("0.0.0-0")
+    parsed = parse_semver(version)
+    less = _specifier((Comparator.LESS_THAN, version))
+    at_most = _specifier((Comparator.LESS_THAN_OR_EQUAL, version))
+
+    assert specifier_is_satisfiable(less) == (compare_precedence(minimum, parsed) < 0)
+    assert specifier_is_satisfiable(at_most)
+    if specifier_is_satisfiable(less):
+        assert satisfies("0.0.0-0", less)
+    assert satisfies("0.0.0-0", at_most)
+
+
+@given(st.one_of(_semantic_versions(with_build=False), st.sampled_from(_BOUNDARY_VERSIONS)))
+@settings(max_examples=200, deadline=None)
+def test_final_segment_satisfiability_has_no_upper_bound(version: str) -> None:
+    greater = _specifier((Comparator.GREATER_THAN, version))
+    at_least = _specifier((Comparator.GREATER_THAN_OR_EQUAL, version))
+
+    assert specifier_is_satisfiable(greater)
+    assert specifier_is_satisfiable(at_least)
+    assert satisfies(_successor_text(version), greater)
+    assert satisfies(version, at_least)

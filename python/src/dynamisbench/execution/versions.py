@@ -164,6 +164,23 @@ def compare_precedence(left: SemVer, right: SemVer) -> int:
     )
 
 
+_GLOBAL_MINIMUM_PRECEDENCE: Final = SemVer(
+    raw="0.0.0-0",
+    major=0,
+    minor=0,
+    patch=0,
+    prerelease=("0",),
+    build=(),
+)
+"""The least Semantic Versioning precedence value.
+
+Semantic Versioning has no negative components and no prerelease identifier below the
+numeric ``0``, so ``0.0.0-0`` precedes every other valid version. It bounds the precedence
+domain below exactly as the absence of a maximum bounds it above; a satisfiability decision
+that treats an absent lower bound as unbounded in both directions is therefore wrong.
+"""
+
+
 def _clause_matches(candidate: SemVer, comparator: Comparator, required: SemVer) -> bool:
     """Evaluate one already-parsed clause against one already-parsed candidate."""
     match comparator:
@@ -283,9 +300,11 @@ def specifier_is_satisfiable(specifier: VersionSpecifier) -> bool:
     This is an exact decision procedure for the supported comparators, not a conservative
     approximation. Precedence intervals are checked against the immediate-successor rule
     above rather than assuming density, so adjacent prerelease endpoints such as
-    ``> 1.0.0-alpha, < 1.0.0-alpha.0`` are correctly refused. A finite not-equal set can
-    never empty a nonempty precedence interval because every precedence value has infinitely
-    many build-metadata spellings, and build metadata is part of exact/not-equal identity.
+    ``> 1.0.0-alpha, < 1.0.0-alpha.0`` are correctly refused. The precedence domain is
+    bounded below by ``0.0.0-0``, so a range that ends at or before the global minimum is
+    refused even when it declares no lower bound. A finite not-equal set can never empty a
+    nonempty precedence interval because every precedence value has infinitely many
+    build-metadata spellings, and build metadata is part of exact/not-equal identity.
 
     It is used to refuse contradictory authority with a distinct reason before a candidate
     version is compared, rather than reporting an ordinary mismatch for a specifier that can
@@ -302,10 +321,20 @@ def specifier_is_satisfiable(specifier: VersionSpecifier) -> bool:
         return all(_clause_matches(exact, comparator, required) for comparator, required in clauses)
 
     lower, upper = _ordered_bounds(clauses)
-    if lower is None or upper is None:
-        # With no two-sided precedence interval, a not-equal clause cannot exhaust the
-        # infinite Semantic Versioning vocabulary.
+    if upper is None:
+        # Semantic Versioning has no maximum precedence, so any lower bound leaves a
+        # nonempty ray, and build-metadata spellings keep a finite not-equal set from
+        # exhausting it.
         return True
+    if lower is None:
+        # The set is the initial segment below ``upper``. The global minimum precedence
+        # ``0.0.0-0`` is a witness strictly below any greater endpoint, and is admitted at
+        # the endpoint itself only by an inclusive bound. No version precedes it, so an
+        # endpoint below it (which cannot be a valid version) leaves the set empty.
+        comparison = compare_precedence(_GLOBAL_MINIMUM_PRECEDENCE, upper[0])
+        if comparison == 0:
+            return upper[1]
+        return comparison < 0
     comparison = compare_precedence(lower[0], upper[0])
     if comparison > 0:
         return False
