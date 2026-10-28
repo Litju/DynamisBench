@@ -109,28 +109,30 @@ def _read_request() -> WorkerRequest:
     return parse_worker_request(raw)
 
 
-def _verify_request(request: WorkerRequest, identity: ImplementationIdentity) -> None:
-    """Prove the request and the running implementation are the same execution.
+def _verify_reference_authority(request: WorkerRequest) -> None:
+    """Prove the request names exactly the compiled reference experiment.
 
-    Every comparison is against the installed implementation or the reviewed reference
-    constants, never against a value the request supplies about itself. A caller can
-    therefore substitute an adapter version, engine version, realization, environment,
-    benchmark, scenario or outcome in the request and be refused here even if a broken
-    upstream admitted it.
+    This check is deliberately made before the engine is asked to load a model or advance
+    physics. Every comparison is against a reviewed constant in
+    :mod:`dynamisbench.adapters.mujoco.reference`, never against a value the request supplies
+    about itself. The semantic digests are the binding that closes the RES-550 P1 finding:
+    an identifier and version alone name an artifact, and the same name can be re-pointed at
+    different content. A request whose benchmark, scenario, realization, system under test
+    or environment meaning changed is refused here even if every visible name is unchanged
+    and an upstream preflight admitted it.
     """
     adapter = request.adapter
     expected_pairs = (
         ("adapter id", adapter.adapter_id, reference.ADAPTER_ID),
         ("adapter version", adapter.adapter_version, reference.ADAPTER_VERSION),
         ("engine", adapter.engine, reference.ENGINE),
-        ("engine version", adapter.engine_version, physics.engine_version()),
+        ("engine version", adapter.engine_version, reference.ENGINE_VERSION),
         ("protocol version", adapter.protocol_version, WORKER_PROTOCOL_VERSION),
-        ("implementation digest", adapter.implementation_digest, identity.digest),
     )
     for label, observed, expected in expected_pairs:
         if observed != expected:
             raise reference.ReferenceAdapterError(
-                f"the request's {label} is not the installed implementation identity"
+                f"the request's {label} is not the compiled reference authority"
             )
     if tuple(adapter.capabilities) != tuple(reference.CAPABILITIES):
         raise reference.ReferenceAdapterError(
@@ -161,6 +163,48 @@ def _verify_request(request: WorkerRequest, identity: ImplementationIdentity) ->
             raise reference.ReferenceAdapterError(
                 f"the request's {label} is not the compiled reference case"
             )
+
+    # The P1 binding: content identity, not just the nominal identity above. These are the
+    # reviewed digests of the definitions the adapter was compiled for, so a changed
+    # duration, initial condition, solver configuration, asset digest, SUT or environment
+    # content is refused even when its identifier and version still match.
+    semantic_digests = (
+        (
+            "benchmark semantic digest",
+            spec.benchmark.semantic_digest,
+            reference.BENCHMARK_SEMANTIC_DIGEST,
+        ),
+        (
+            "scenario semantic digest",
+            spec.scenario.semantic_digest,
+            reference.SCENARIO_SEMANTIC_DIGEST,
+        ),
+        (
+            "realization semantic digest",
+            spec.realization.semantic_digest,
+            reference.REALIZATION_SEMANTIC_DIGEST,
+        ),
+        (
+            "system under test semantic digest",
+            spec.system_under_test.semantic_digest,
+            reference.SUT_SEMANTIC_DIGEST,
+        ),
+        (
+            "environment semantic digest",
+            spec.environment.semantic_digest,
+            reference.environment_semantic_digest_for(reference.platform_tag()),
+        ),
+    )
+    for label, observed, expected in semantic_digests:
+        if observed != expected:
+            raise reference.ReferenceAdapterError(
+                f"the request's {label} is not the compiled reference definition"
+            )
+
+    if spec.seed != reference.SEED:
+        raise reference.ReferenceAdapterError(
+            f"the request's seed {spec.seed} is not the compiled reference seed {reference.SEED}"
+        )
     if tuple(spec.outcomes) != (reference.OUTCOME,):
         raise reference.ReferenceAdapterError(
             f"the request asks for outcomes {tuple(spec.outcomes)!r}; this adapter produces "
@@ -173,6 +217,10 @@ def _verify_request(request: WorkerRequest, identity: ImplementationIdentity) ->
             "other factor assignments"
         )
     gravity = spec.factors[0]
+    if str(gravity.factor_id) != "f.reference.gravity":
+        raise reference.ReferenceAdapterError(
+            "the request's single factor is not the compiled gravity control"
+        )
     if gravity.target.parameter != "gravity":
         raise reference.ReferenceAdapterError(
             "the request's single factor is not the compiled gravity control"
@@ -186,6 +234,29 @@ def _verify_request(request: WorkerRequest, identity: ImplementationIdentity) ->
     ):
         raise reference.ReferenceAdapterError(
             "the request's gravity factor is not the compiled standard-gravity reference value"
+        )
+
+
+def _verify_installed_identity(request: WorkerRequest, identity: ImplementationIdentity) -> None:
+    """Prove the running implementation is the one the request named.
+
+    The authority check above has already proved that the request describes the compiled
+    reference experiment. This second check binds that experiment to the actual executable
+    files, model bytes, native engine release, Python release and platform that will execute
+    it. A mismatch in any of them is a refusal before the first physics step.
+    """
+    adapter = request.adapter
+    if adapter.engine_version != physics.engine_version():
+        raise reference.ReferenceAdapterError(
+            "the request's engine version is not the installed worker engine version"
+        )
+    if _python_version() != reference.PYTHON_VERSION:
+        raise reference.ReferenceAdapterError(
+            "the worker's Python version is not the qualified worker environment version"
+        )
+    if adapter.implementation_digest != identity.digest:
+        raise reference.ReferenceAdapterError(
+            "the request's implementation digest is not the installed implementation identity"
         )
 
 
@@ -224,8 +295,11 @@ def _run_protocol() -> int:
         _refuse_process(f"request is not valid protocol v1: {error}")
 
     try:
+        # Authority first, so a request whose scientific meaning differs from the compiled
+        # reference is refused before the engine loads or advances a model.
+        _verify_reference_authority(request)
         identity = _identity()
-        _verify_request(request, identity)
+        _verify_installed_identity(request, identity)
         context = _context(request, identity)
         run = physics.run_reference(context)
     except reference.ReferenceAdapterError as error:

@@ -21,12 +21,14 @@ from importlib.resources import files
 from typing import Final
 
 from dynamisbench.domain.spec.capability import Capability
+from dynamisbench.identity import SemanticDigest
 
 __all__ = [
     "ADAPTER_ID",
     "ADAPTER_SOURCE_FILES",
     "ADAPTER_VERSION",
     "BENCHMARK_ID",
+    "BENCHMARK_SEMANTIC_DIGEST",
     "BENCHMARK_VERSION",
     "CAPABILITIES",
     "CHECKPOINT_TIMES_S",
@@ -36,6 +38,8 @@ __all__ = [
     "CONTROL_POLICY",
     "DURATION_S",
     "ENGINE",
+    "ENGINE_VERSION",
+    "ENVIRONMENT_SEMANTIC_DIGESTS",
     "ENVIRONMENT_VERSION",
     "GRAVITY_M_S2",
     "GRAVITY_UNIT",
@@ -49,25 +53,33 @@ __all__ = [
     "MASS_KG",
     "MODEL_ASSET_PATH",
     "MODEL_SHA256",
+    "MODEL_SOURCE_PATH",
     "NATIVE_STATE_LAYOUT",
     "OUTCOME",
+    "PYTHON_VERSION",
     "QUALIFICATION_SCHEMA",
     "RANDOMNESS_POLICY",
     "REALIZATION_ID",
+    "REALIZATION_SEMANTIC_DIGEST",
     "REALIZATION_VERSION",
     "REFERENCE_DIAGNOSTIC_SCHEMA",
     "SCENARIO_ID",
+    "SCENARIO_SEMANTIC_DIGEST",
     "SCENARIO_VERSION",
+    "SEED",
     "SOLVER",
     "STEPS",
     "SUT_ID",
+    "SUT_SEMANTIC_DIGEST",
     "SUT_VERSION",
     "TIMESTEP_S",
     "TOLERANCE",
     "ReferenceAdapterError",
     "ReferenceModelError",
     "ReferencePlatformError",
+    "environment_semantic_digest_for",
     "expected_environment_id",
+    "expected_environment_id_for",
     "model_bytes",
     "platform_tag",
 ]
@@ -75,6 +87,10 @@ __all__ = [
 ADAPTER_ID: Final = "dynamisbench.mujoco.reference"
 ADAPTER_VERSION: Final = "0.1.0"
 ENGINE: Final = "mujoco"
+ENGINE_VERSION: Final = "3.17.0"
+"""The one native engine release the qualified reference adapter is compiled for."""
+PYTHON_VERSION: Final = "3.12.13"
+"""The exact CPython patch release of the isolated worker environment."""
 CAPABILITIES: Final = (Capability.FORWARD_DYNAMICS,)
 """The only capability this adapter implements and has qualified."""
 
@@ -88,10 +104,45 @@ SUT_ID: Final = "sut.reference.pendulum"
 SUT_VERSION: Final = "1.0.0"
 ENVIRONMENT_VERSION: Final = "1.0.0"
 OUTCOME: Final = "reference-state"
+SEED: Final = 0
+"""The declared seed of the reference run. The physics is deterministic and does not consume
+randomness, but the seed remains execution-defining: the compiled reference supports exactly
+this value, so a request carrying another seed is a different requested execution."""
 
 MODEL_ASSET_PATH: Final = "assets/reference_pendulum.xml"
+MODEL_SOURCE_PATH: Final = "models/reference/pendulum.xml"
+"""The workspace-relative authority path of the realization's model asset."""
 MODEL_SHA256: Final = "eac679a723ccfebb48ea5ee40692fa6ee38f965772b484b94b827be6b9dbfdfd"
 """Raw-byte SHA-256 of the reviewed reference model."""
+
+BENCHMARK_SEMANTIC_DIGEST: Final = SemanticDigest(
+    hex="7998fdd62b5d3b29fa5c04a50d9dce9daf506703777e2cc3b51b3ca69f88f7bd"
+)
+SCENARIO_SEMANTIC_DIGEST: Final = SemanticDigest(
+    hex="ef31253d815a43b7893e9628e03be6632f385dbd75b568ce816a561261057ccb"
+)
+REALIZATION_SEMANTIC_DIGEST: Final = SemanticDigest(
+    hex="f31340c60166f8f37b6a4609929ef7ccf23554b294fb57889e4644d04c86d8cb"
+)
+SUT_SEMANTIC_DIGEST: Final = SemanticDigest(
+    hex="7dd9bb16f04c8b15bc012b87660b55d24bd7e6108daffafeaf84f62c719a51ee"
+)
+ENVIRONMENT_SEMANTIC_DIGESTS: Final = {
+    "windows-x86-64": SemanticDigest(
+        hex="5391e3ba772aa7fa3b7d01f42a56585f24a4525527e6cd0ba5e672f447ae5231"
+    ),
+    "linux-x86-64": SemanticDigest(
+        hex="8652ad6cc054383eb301183f3036e01f673ccbe8e93b807e4c0968ffa5a73963"
+    ),
+}
+"""Reviewed semantic digests of the exact definitions the adapter is compiled for.
+
+These are not derived from a request. They are generated from
+:mod:`dynamisbench.adapters.mujoco.reference_case` by
+``python/tools/mujoco_reference_authority.py`` and verified by the qualification suite. A
+different definition that keeps the same identifier and version therefore cannot reach the
+compiled reference physics.
+"""
 
 ADAPTER_SOURCE_FILES: Final = (
     "__init__.py",
@@ -99,6 +150,7 @@ ADAPTER_SOURCE_FILES: Final = (
     "diagnostics.py",
     "identity.py",
     "physics.py",
+    "reference_case.py",
     "reference.py",
     "worker.py",
     MODEL_ASSET_PATH,
@@ -194,6 +246,27 @@ def platform_tag() -> str:
     )
 
 
+def expected_environment_id_for(platform: str) -> str:
+    """The environment identifier of one of the two qualified platforms."""
+    if platform not in ENVIRONMENT_SEMANTIC_DIGESTS:
+        raise ReferencePlatformError(
+            f"the reference adapter has no environment authority for platform {platform!r}; "
+            "only Windows x86-64 and Linux x86-64 are qualified"
+        )
+    return f"env.mujoco.reference.{platform}"
+
+
 def expected_environment_id() -> str:
     """The platform-specific environment identifier this adapter is compiled for."""
-    return f"env.mujoco.reference.{platform_tag()}"
+    return expected_environment_id_for(platform_tag())
+
+
+def environment_semantic_digest_for(platform: str) -> SemanticDigest:
+    """The reviewed semantic digest of the environment on one qualified platform."""
+    try:
+        return ENVIRONMENT_SEMANTIC_DIGESTS[platform]
+    except KeyError as error:
+        raise ReferencePlatformError(
+            f"the reference adapter has no environment authority for platform {platform!r}; "
+            "only Windows x86-64 and Linux x86-64 are qualified"
+        ) from error

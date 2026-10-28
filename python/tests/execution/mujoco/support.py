@@ -654,45 +654,61 @@ def build_mujoco_fixture(
     root: Path,
     *,
     identity: dict[str, Any],
+    benchmark: BenchmarkRelease | None = None,
+    realization: RealizationDefinition | None = None,
+    sut: SUTDefinition | None = None,
+    environment: EnvironmentDefinition | None = None,
+    study: StudyDefinition | None = None,
+    asset_bytes: bytes | None = None,
 ) -> ExecutionFixture:
-    """Build one initialized workspace and one planned real-MuJoCo reference run."""
+    """Build one initialized workspace and one planned real-MuJoCo reference run.
+
+    The optional definitions exist so the adversarial suite can construct a genuinely
+    different, valid authority and compile it through the real planner. They are not a
+    shortcut around preflight: every substituted definition is revalidated by its Pydantic
+    model and resolved by :func:`plan_study` exactly like the accepted fixture.
+    """
     source = root / "source"
     evidence = root / "evidence"
     source.mkdir()
     evidence.mkdir()
     workspace = initialize_workspace(source, evidence)
 
-    model_bytes = reference.model_bytes()
+    model_bytes = reference.model_bytes() if asset_bytes is None else asset_bytes
     model_path = workspace.source_root.joinpath(*MODEL_SOURCE_PATH.split("/"))
     model_path.parent.mkdir(parents=True, exist_ok=True)
     model_path.write_bytes(model_bytes)
     asset_sha256 = hashlib.sha256(model_bytes).hexdigest()
-    assert asset_sha256 == reference.MODEL_SHA256
 
-    benchmark = benchmark_release()
-    environment = environment_definition(identity)
-    realization = realization_definition(
+    chosen_benchmark = benchmark or benchmark_release()
+    chosen_environment = environment or environment_definition(identity)
+    chosen_realization = realization or realization_definition(
         asset_sha256=asset_sha256,
         engine_version=identity["engine_version"],
     )
-    sut = system_under_test(asset_sha256=asset_sha256)
-    study = study_definition(environment.environment_id)
+    chosen_sut = sut or system_under_test(asset_sha256=asset_sha256)
+    if chosen_realization.assets:
+        assert chosen_realization.assets[0].sha256 == asset_sha256, (
+            "a substituted realization must declare the digest of the asset bytes the "
+            "fixture writes, or preflight would refuse before exercising the worker"
+        )
+    chosen_study = study or study_definition(chosen_environment.environment_id)
     context = PlanningContext(
-        benchmarks=(benchmark,),
-        realizations=(realization,),
-        systems_under_test=(sut,),
-        environments=(environment,),
+        benchmarks=(chosen_benchmark,),
+        realizations=(chosen_realization,),
+        systems_under_test=(chosen_sut,),
+        environments=(chosen_environment,),
     )
-    plan = plan_study(study, context)
+    plan = plan_study(chosen_study, context)
     planned: PlannedRun = plan.runs[0]
     return ExecutionFixture(
         workspace=workspace,
         run=planned,
-        realization=realization,
-        environment=environment,
-        benchmark=benchmark,
-        system_under_test=sut,
-        study=study,
+        realization=chosen_realization,
+        environment=chosen_environment,
+        benchmark=chosen_benchmark,
+        system_under_test=chosen_sut,
+        study=chosen_study,
     )
 
 
