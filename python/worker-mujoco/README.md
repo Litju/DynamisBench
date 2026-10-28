@@ -23,6 +23,15 @@ worker-mujoco/.venv/bin/python           # Linux x86-64
 `uv.lock` is the authoritative dependency closure. `mujoco` is exact-pinned in
 `pyproject.toml`; the lock file pins NumPy, GLFW and every other transitive package.
 
+The reviewed lockfile hash and the exact `(normalised name, version)` closure are pinned in
+`src/dynamisbench/adapters/mujoco/dependencies.py`. On every worker start, the worker reads
+the *installed* distribution versions with `importlib.metadata` and refuses a missing, extra
+or differently versioned distribution. That check is folded into the existing adapter
+`implementation_digest`; it does not add a worker-protocol field. The pinned lockfile hash is
+an attestation by the repository and CI, not something the worker can prove from inside its
+own environment, and installed wheel file bytes are not authenticated by this check. Regenerate
+the pins with `uv run python tools/mujoco_dependency_closure.py --check` from `python/`.
+
 ## Fixed worker command
 
 The supervisor starts exactly this vector, with no shell and no per-run program selection:
@@ -49,6 +58,14 @@ identity, and writes one canonical JSON object to stdout. The output includes th
 interface, not part of the worker wire protocol and not reachable from a `RunSpec`.
 
 The production command has **no arguments**. The worker refuses every other argument vector.
+
+Before the production request reaches physics, the worker compares the resolved benchmark,
+scenario, realization, system-under-test and environment semantic digests with the reviewed
+pins in `reference.py`. Identifiers and versions alone are not sufficient authority: the same
+name can be re-pointed at different content. The accepted seed, gravity factor and value,
+outcomes and capability sets are checked explicitly as well. A mismatch is a protocol-valid
+`failed` response, no MuJoCo physics step is taken, and the supervisor cannot seal it as a
+successful execution.
 
 ## What is installed
 

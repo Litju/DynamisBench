@@ -21,6 +21,15 @@ them. The authoritative realization asset is verified byte-for-byte against the 
 compiled model during preflight. That is sufficient for this fixed reference adapter and is
 not a general arbitrary-model adapter; a later, separately authorized content-addressed
 asset-materialization gate is required before a generic MuJoCo realization can run.
+
+**Why the semantic digests are pinned.** An identifier and version name an artifact, not its
+meaning. The reviewed definitions in :mod:`~dynamisbench.adapters.mujoco.reference_case` are
+therefore bound by semantic digests pinned in
+:mod:`~dynamisbench.adapters.mujoco.reference`, and the worker refuses any request whose
+resolved digests differ before it advances physics. A re-authored benchmark, scenario,
+realization, system under test or environment that keeps every visible name is still a
+different experiment. The implementation identity additionally binds the installed worker
+dependency closure; see :mod:`~dynamisbench.adapters.mujoco.dependencies`.
 """
 
 from __future__ import annotations

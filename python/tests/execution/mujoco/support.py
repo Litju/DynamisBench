@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from dynamisbench.adapters.mujoco import reference
+from dynamisbench.adapters.mujoco import dependencies, reference
 from dynamisbench.adapters.mujoco.diagnostics import ReferenceDiagnostic
 from dynamisbench.domain.spec.benchmark import BenchmarkRelease, CredibilityLevel
 from dynamisbench.domain.spec.capability import (
@@ -823,6 +823,10 @@ def assert_identity_is_the_reviewed_environment(identity: dict[str, Any]) -> Non
     assert identity["adapter_version"] == "0.1.0"
     assert len(identity["implementation_digest"]) == 64
     assert all(len(entry["sha256"]) == 64 for entry in identity["source_manifest"])
+    closure = identity["dependency_closure"]
+    assert closure["lockfile_sha256"] == dependencies.LOCKFILE_SHA256
+    assert tuple(tuple(item) for item in closure["packages"]) == dependencies.APPROVED_DEPENDENCIES
+    assert closure["digest"] == dependencies.closure_digest(dependencies.APPROVED_DEPENDENCIES)
 
 
 def platform_name() -> str:

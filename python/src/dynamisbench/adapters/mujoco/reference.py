@@ -147,6 +147,7 @@ compiled reference physics.
 ADAPTER_SOURCE_FILES: Final = (
     "__init__.py",
     "__main__.py",
+    "dependencies.py",
     "diagnostics.py",
     "identity.py",
     "physics.py",

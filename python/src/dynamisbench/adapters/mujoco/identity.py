@@ -20,6 +20,7 @@ from importlib.resources import files
 from typing import Any
 
 from dynamisbench.adapters.mujoco import reference
+from dynamisbench.adapters.mujoco.dependencies import installed_closure
 from dynamisbench.execution.contracts import WORKER_PROTOCOL_VERSION
 from dynamisbench.identity import canonical_semantic_bytes
 
@@ -74,8 +75,15 @@ def build_implementation_identity(
     module remains importable without the engine. ``python_version`` and ``platform_tag``
     are supplied by the worker for the same reason, and because the identity must describe
     the process that will execute rather than a declaration.
+
+    The installed dependency closure is verified here and folded into the identity payload.
+    It therefore changes the existing ``implementation_digest`` instead of adding a new
+    worker-protocol field. The closure is a runtime observation of distribution versions; the
+    reviewed lockfile hash it carries is an attestation by the repository, as documented in
+    :mod:`dynamisbench.adapters.mujoco.dependencies`.
     """
     reference.model_bytes()  # verify the reviewed model before identifying the adapter
+    closure = installed_closure()
     payload: dict[str, Any] = {
         "schema": reference.IMPLEMENTATION_IDENTITY_SCHEMA,
         "adapter_id": reference.ADAPTER_ID,
@@ -88,6 +96,7 @@ def build_implementation_identity(
         "python_version": python_version,
         "model_sha256": reference.MODEL_SHA256,
         "source_manifest": _source_manifest(),
+        "dependency_closure": closure.as_json_object(),
     }
     digest = hashlib.sha256(canonical_semantic_bytes(payload)).hexdigest()
     return ImplementationIdentity(payload=payload, digest=digest)
