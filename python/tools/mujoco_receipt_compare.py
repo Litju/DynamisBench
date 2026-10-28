@@ -58,6 +58,43 @@ def _check(name: str, passed: bool, observed: object, limit: object) -> dict[str
     return {"name": name, "passed": bool(passed), "observed": observed, "limit": limit}
 
 
+def _finite_number(value: object) -> float | None:
+    """A finite JSON number, or ``None`` for anything that is not one.
+
+    Receipt fields are JSON numbers, so only ``int`` and ``float`` are numerical. A boolean,
+    string, null, NaN or infinity is not a measurement, and must fail closed rather than be
+    coerced or silently skipped.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except (OverflowError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _finite_magnitude(value: object) -> float | None:
+    """A finite, nonnegative error magnitude, or ``None`` when the field is not one."""
+    number = _finite_number(value)
+    return number if number is not None and number >= 0.0 else None
+
+
+def _finite_positive(value: object) -> float | None:
+    """A finite, strictly positive duration, or ``None`` when the field is not one."""
+    number = _finite_number(value)
+    return number if number is not None and number > 0.0 else None
+
+
+def _magnitude_check(name: str, value: object, limit: float) -> dict[str, object]:
+    magnitude = _finite_magnitude(value)
+    return _check(name, magnitude is not None and magnitude <= limit, value, limit)
+
+
+def _mapping(value: object) -> dict[str, Any] | None:
+    return value if isinstance(value, dict) else None
+
+
 def _authority() -> dict[str, str]:
     observed = reference_case.reference_authority_matches_definitions()
     expected = {
@@ -373,86 +410,142 @@ def _configuration_checks(receipt: dict[str, Any]) -> list[dict[str, object]]:
     return checks
 
 
-def _numerical_checks(receipt: dict[str, Any]) -> list[dict[str, object]]:
-    observation = receipt.get("observation", {})
-    checks = [
+def _period_checks(observation: dict[str, Any]) -> list[dict[str, object]]:
+    """Independently verify the period fields of one receipt.
+
+    Three distinct facts are checked, and success in one never implies another:
+
+    * both source periods are real, finite, positive durations;
+    * the error computed from those two values is within the platform tolerance; and
+    * the receipt's recorded error is finite, nonnegative and agrees with that computation.
+
+    The receipt's own ``period_error_s`` is therefore evidence to be cross-checked, never the
+    condition that grants a pass.
+    """
+    observed = _finite_positive(observation.get("observed_period_s"))
+    analytical = _finite_positive(observation.get("analytical_period_s"))
+    source_ok = observed is not None and analytical is not None
+    computed = (
+        abs(observed - analytical) if observed is not None and analytical is not None else None
+    )
+    computed_ok = computed is not None and math.isfinite(computed) and computed >= 0.0
+    reported = _finite_magnitude(observation.get("period_error_s"))
+    difference = abs(reported - computed) if reported is not None and computed is not None else None
+    agreement = (
+        difference is not None
+        and difference <= qualification_criteria.PERIOD_ERROR_REPORT_AGREEMENT_S
+    )
+    source = {
+        "observed_period_s": observation.get("observed_period_s"),
+        "analytical_period_s": observation.get("analytical_period_s"),
+    }
+    return [
         _check(
-            "final_time",
-            float(observation.get("final_time_error_s", math.inf))
-            <= qualification_criteria.FINAL_TIME_TOLERANCE_S,
-            observation.get("final_time_error_s"),
-            qualification_criteria.FINAL_TIME_TOLERANCE_S,
-        ),
-        _check(
-            "maximum_angle_error",
-            float(observation.get("max_angle_error_rad", math.inf))
-            <= qualification_criteria.ANGLE_TOLERANCE_RAD,
-            observation.get("max_angle_error_rad"),
-            qualification_criteria.ANGLE_TOLERANCE_RAD,
-        ),
-        _check(
-            "maximum_angular_velocity_error",
-            float(observation.get("max_angular_velocity_error_rad_s", math.inf))
-            <= qualification_criteria.ANGULAR_VELOCITY_TOLERANCE_RAD_S,
-            observation.get("max_angular_velocity_error_rad_s"),
-            qualification_criteria.ANGULAR_VELOCITY_TOLERANCE_RAD_S,
-        ),
-        _check(
-            "velocity_consistency",
-            float(observation.get("max_velocity_consistency_error_rad_s", math.inf))
-            <= qualification_criteria.VELOCITY_CONSISTENCY_TOLERANCE_RAD_S,
-            observation.get("max_velocity_consistency_error_rad_s"),
-            qualification_criteria.VELOCITY_CONSISTENCY_TOLERANCE_RAD_S,
-        ),
-        _check(
-            "energy_reconstruction",
-            float(observation.get("energy_reconstruction_max_abs_j", math.inf))
-            <= qualification_criteria.ENERGY_RECONSTRUCTION_TOLERANCE_J,
-            observation.get("energy_reconstruction_max_abs_j"),
-            qualification_criteria.ENERGY_RECONSTRUCTION_TOLERANCE_J,
-        ),
-        _check(
-            "relative_energy_drift",
-            float(observation.get("relative_energy_drift", math.inf))
-            <= qualification_criteria.ENERGY_RELATIVE_TOLERANCE,
-            observation.get("relative_energy_drift"),
-            qualification_criteria.ENERGY_RELATIVE_TOLERANCE,
-        ),
-        _check(
-            "diagnostic_relative_energy_drift",
-            float(observation.get("diagnostic_relative_energy_drift", math.inf))
-            <= qualification_criteria.ENERGY_RELATIVE_TOLERANCE,
-            observation.get("diagnostic_relative_energy_drift"),
-            qualification_criteria.ENERGY_RELATIVE_TOLERANCE,
+            "period_source_values",
+            source_ok,
+            source,
+            "finite positive observed and analytical periods",
         ),
         _check(
             "period",
-            float(observation.get("period_error_s", math.inf))
-            <= qualification_criteria.PERIOD_TOLERANCE_S,
-            observation.get("period_error_s"),
+            computed_ok
+            and computed is not None
+            and computed <= qualification_criteria.PERIOD_TOLERANCE_S,
+            {
+                "computed_period_error_s": computed,
+                "reported_period_error_s": observation.get("period_error_s"),
+            },
             qualification_criteria.PERIOD_TOLERANCE_S,
         ),
+        _check(
+            "period_error_report",
+            agreement,
+            {
+                "reported_period_error_s": observation.get("period_error_s"),
+                "computed_period_error_s": computed,
+                "absolute_difference_s": difference,
+            },
+            {
+                "agreement_tolerance_s": qualification_criteria.PERIOD_ERROR_REPORT_AGREEMENT_S,
+                "nonnegative_finite_magnitude": True,
+            },
+        ),
     ]
-    refinement = observation.get("refinement", ())
-    errors = [float(entry.get("error_rad", math.inf)) for entry in refinement]
-    ratios = [entry.get("convergence_ratio") for entry in refinement]
-    if not errors:
-        checks.append(_check("refinement_present", False, 0, "at least one refinement entry"))
+
+
+def _numerical_checks(receipt: dict[str, Any]) -> list[dict[str, object]]:
+    observation = _mapping(receipt.get("observation"))
+    if observation is None:
+        return [_check("observation", False, receipt.get("observation"), "one JSON object")]
+    checks = [
+        _magnitude_check(
+            "final_time",
+            observation.get("final_time_error_s"),
+            qualification_criteria.FINAL_TIME_TOLERANCE_S,
+        ),
+        _magnitude_check(
+            "maximum_angle_error",
+            observation.get("max_angle_error_rad"),
+            qualification_criteria.ANGLE_TOLERANCE_RAD,
+        ),
+        _magnitude_check(
+            "maximum_angular_velocity_error",
+            observation.get("max_angular_velocity_error_rad_s"),
+            qualification_criteria.ANGULAR_VELOCITY_TOLERANCE_RAD_S,
+        ),
+        _magnitude_check(
+            "velocity_consistency",
+            observation.get("max_velocity_consistency_error_rad_s"),
+            qualification_criteria.VELOCITY_CONSISTENCY_TOLERANCE_RAD_S,
+        ),
+        _magnitude_check(
+            "energy_reconstruction",
+            observation.get("energy_reconstruction_max_abs_j"),
+            qualification_criteria.ENERGY_RECONSTRUCTION_TOLERANCE_J,
+        ),
+        _magnitude_check(
+            "relative_energy_drift",
+            observation.get("relative_energy_drift"),
+            qualification_criteria.ENERGY_RELATIVE_TOLERANCE,
+        ),
+        _magnitude_check(
+            "diagnostic_relative_energy_drift",
+            observation.get("diagnostic_relative_energy_drift"),
+            qualification_criteria.ENERGY_RELATIVE_TOLERANCE,
+        ),
+    ]
+    checks.extend(_period_checks(observation))
+    refinement = observation.get("refinement")
+    if not isinstance(refinement, (list, tuple)) or not refinement:
+        checks.append(_check("refinement_present", False, refinement, "at least one entry"))
         return checks
+    entries = [entry if isinstance(entry, dict) else None for entry in refinement]
+    for index, entry in enumerate(entries):
+        if entry is None:
+            checks.append(
+                _check(f"refinement_entry_{index}", False, refinement[index], "one JSON object")
+            )
+    errors = [
+        _finite_magnitude(entry.get("error_rad")) if entry is not None else None
+        for entry in entries
+    ]
+    final_error = errors[-1]
     checks.append(
         _check(
             "refinement_final_error",
-            errors[-1] <= qualification_criteria.REFINEMENT_FINAL_TOLERANCE_RAD,
-            errors[-1],
+            final_error is not None
+            and final_error <= qualification_criteria.REFINEMENT_FINAL_TOLERANCE_RAD,
+            entries[-1].get("error_rad") if entries[-1] is not None else None,
             qualification_criteria.REFINEMENT_FINAL_TOLERANCE_RAD,
         )
     )
-    for index, ratio in enumerate(ratios[:-1]):
+    for index, entry in enumerate(entries[:-1]):
+        ratio = _finite_magnitude(entry.get("convergence_ratio")) if entry is not None else None
         checks.append(
             _check(
                 f"refinement_ratio_{index}",
-                ratio is not None and float(ratio) >= qualification_criteria.REFINEMENT_MIN_RATIO,
-                ratio,
+                ratio is not None and ratio >= qualification_criteria.REFINEMENT_MIN_RATIO,
+                entry.get("convergence_ratio") if entry is not None else None,
                 qualification_criteria.REFINEMENT_MIN_RATIO,
             )
         )
@@ -467,21 +560,55 @@ def _cross_platform_checks(
     windows: dict[str, Any],
     linux: dict[str, Any],
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
-    windows_observation = windows["observation"]
-    linux_observation = linux["observation"]
-    windows_final = windows_observation["final_state"]
-    linux_final = linux_observation["final_state"]
-    angle_delta = abs(float(windows_final["angle_rad"]) - float(linux_final["angle_rad"]))
-    velocity_delta = abs(
-        float(windows_final["angular_velocity_rad_s"])
-        - float(linux_final["angular_velocity_rad_s"])
+    windows_observation = _mapping(windows.get("observation"))
+    linux_observation = _mapping(linux.get("observation"))
+    windows_final = (
+        _mapping(windows_observation.get("final_state")) if windows_observation else None
     )
-    period_delta = abs(
-        float(windows_observation["analytical_period_s"])
-        - float(linux_observation["analytical_period_s"])
+    linux_final = _mapping(linux_observation.get("final_state")) if linux_observation else None
+    windows_angle = _finite_number(windows_final.get("angle_rad")) if windows_final else None
+    linux_angle = _finite_number(linux_final.get("angle_rad")) if linux_final else None
+    windows_velocity = (
+        _finite_number(windows_final.get("angular_velocity_rad_s")) if windows_final else None
     )
+    linux_velocity = (
+        _finite_number(linux_final.get("angular_velocity_rad_s")) if linux_final else None
+    )
+    angle_delta = (
+        abs(windows_angle - linux_angle)
+        if windows_angle is not None and linux_angle is not None
+        else None
+    )
+    velocity_delta = (
+        abs(windows_velocity - linux_velocity)
+        if windows_velocity is not None and linux_velocity is not None
+        else None
+    )
+    # Cross-platform period agreement is about the periods the two platforms actually
+    # measured. The analytical reference is identical by construction and comparing it would
+    # always pass, hiding a materially different observation.
+    windows_observed_period = (
+        _finite_positive(windows_observation.get("observed_period_s"))
+        if windows_observation
+        else None
+    )
+    linux_observed_period = (
+        _finite_positive(linux_observation.get("observed_period_s")) if linux_observation else None
+    )
+    period_delta = (
+        abs(windows_observed_period - linux_observed_period)
+        if windows_observed_period is not None and linux_observed_period is not None
+        else None
+    )
+    windows_trajectory = (
+        windows_observation.get("trajectory_sha256") if windows_observation else None
+    )
+    linux_trajectory = linux_observation.get("trajectory_sha256") if linux_observation else None
     trajectory_equal = (
-        windows_observation["trajectory_sha256"] == linux_observation["trajectory_sha256"]
+        isinstance(windows_trajectory, str)
+        and isinstance(linux_trajectory, str)
+        and bool(windows_trajectory)
+        and windows_trajectory == linux_trajectory
     )
     checks = [
         _check(
@@ -578,20 +705,23 @@ def _cross_platform_checks(
         ),
         _check(
             "cross_platform_final_angle",
-            angle_delta <= qualification_criteria.CROSS_PLATFORM_FINAL_ANGLE_DIVERGENCE_RAD,
+            angle_delta is not None
+            and angle_delta <= qualification_criteria.CROSS_PLATFORM_FINAL_ANGLE_DIVERGENCE_RAD,
             angle_delta,
             qualification_criteria.CROSS_PLATFORM_FINAL_ANGLE_DIVERGENCE_RAD,
         ),
         _check(
             "cross_platform_final_angular_velocity",
-            velocity_delta
+            velocity_delta is not None
+            and velocity_delta
             <= qualification_criteria.CROSS_PLATFORM_FINAL_ANGULAR_VELOCITY_DIVERGENCE_RAD_S,
             velocity_delta,
             qualification_criteria.CROSS_PLATFORM_FINAL_ANGULAR_VELOCITY_DIVERGENCE_RAD_S,
         ),
         _check(
             "cross_platform_period",
-            period_delta <= qualification_criteria.CROSS_PLATFORM_PERIOD_DIVERGENCE_S,
+            period_delta is not None
+            and period_delta <= qualification_criteria.CROSS_PLATFORM_PERIOD_DIVERGENCE_S,
             period_delta,
             qualification_criteria.CROSS_PLATFORM_PERIOD_DIVERGENCE_S,
         ),
@@ -601,7 +731,9 @@ def _cross_platform_checks(
         "bitwise_equality_required": False,
         "final_angle_delta_rad": angle_delta,
         "final_angular_velocity_delta_rad_s": velocity_delta,
-        "analytical_period_delta_s": period_delta,
+        "windows_observed_period_s": windows_observed_period,
+        "linux_observed_period_s": linux_observed_period,
+        "observed_period_delta_s": period_delta,
     }
     return checks, divergence
 

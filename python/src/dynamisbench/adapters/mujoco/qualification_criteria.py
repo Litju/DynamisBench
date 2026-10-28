@@ -27,6 +27,15 @@ FINAL_TIME_TOLERANCE_S: Final = 1e-9
 REFINEMENT_MIN_RATIO: Final = 8.0
 REFINEMENT_FINAL_TOLERANCE_RAD: Final = 1e-8
 
+# Comparison-only criterion, not part of the platform tolerances declared in a receipt. A
+# receipt records its observed period, its analytical reference period and the error between
+# them; the independent comparator subtracts the first two itself and requires the recorded
+# error to agree. For an untampered receipt both are the same binary64 subtraction on the same
+# two values, so agreement is exact; 1e-12 s admits representation noise only. It is eight
+# orders below the 1e-4 s period acceptance and far above the roughly 2e-16 s spacing of
+# doubles near this two-second period.
+PERIOD_ERROR_REPORT_AGREEMENT_S: Final = 1e-12
+
 CROSS_PLATFORM_FINAL_ANGLE_DIVERGENCE_RAD: Final = 1e-9
 CROSS_PLATFORM_FINAL_ANGULAR_VELOCITY_DIVERGENCE_RAD_S: Final = 1e-8
 CROSS_PLATFORM_PERIOD_DIVERGENCE_S: Final = 1e-5
