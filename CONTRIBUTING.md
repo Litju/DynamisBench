@@ -83,7 +83,7 @@ waiting for review.
 A change is qualified only when, on both Windows and Linux:
 
 ```powershell
-Push-Location python; uv sync --frozen; uv sync --frozen --project worker-mujoco; uv run ruff check .; uv run ruff format --check .; uv run pyright; uv run pyright -p pyrightconfig.worker.json; $env:DYNAMISBENCH_MUJOCO_PYTHON = (Resolve-Path .\worker-mujoco\.venv\Scripts\python.exe); $env:DYNAMISBENCH_REQUIRE_MUJOCO = "1"; uv run pytest; Pop-Location
+Push-Location python; uv sync --frozen; uv sync --frozen --project worker-mujoco; uv run ruff check .; uv run ruff format --check .; uv run pyright; uv run pyright -p pyrightconfig.worker.json; $env:DYNAMISBENCH_MUJOCO_PYTHON = (Resolve-Path .\worker-mujoco\.venv\Scripts\python.exe); $env:DYNAMISBENCH_REQUIRE_MUJOCO = "1"; uv run pytest; uv run python tools/mujoco_reference_authority.py --check; uv run python tools/mujoco_dependency_closure.py --check; Pop-Location
 pnpm install --frozen-lockfile
 pnpm run typecheck
 pnpm run test
@@ -91,6 +91,16 @@ pnpm run build
 pnpm --filter @dynamisbench/workbench exec playwright install chromium
 pnpm --filter @dynamisbench/workbench run test:e2e
 ```
+
+The two `tools/` checks above prove that the pinned reference semantic digests still
+describe `reference_case.py`, and that the approved worker dependency closure still
+describes `worker-mujoco/uv.lock`. A changed pin is a reviewed change, never an automatic
+one.
+
+CI also generates `mujoco-qualification-<target>.json` receipts and compares them. Those
+receipts are numerical solution-verification artifacts, not `native/`, `canonical/`,
+`assessment.json` or sealed scientific evidence. The comparison job is deliberately not one
+of the eight required ADR-025 gates and cannot weaken them.
 
 The MuJoCo adapter is installed only in its own scientific environment,
 `python/worker-mujoco`. The application runtime never installs or imports it (ADR-001,

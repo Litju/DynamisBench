@@ -107,6 +107,11 @@ gate runs on both explicit GitHub-hosted images, `windows-2025` and `ubuntu-24.0
 | `frontend` | locked `pnpm install`, `tsc --noEmit`, Vitest, Vite build, pinned Chromium Playwright against a real secured sidecar |
 | `desktop` | Rust toolchain, Tauri Linux system deps, workbench build, `cargo build --locked` |
 
+Those four jobs on both images are the eight required ADR-025 qualification gates. The
+`python` job additionally publishes the Windows and Linux MuJoCo numerical qualification
+receipts, and the separate `mujoco-receipt-comparison` job compares them. That comparison is
+deliberately not one of the eight gates and cannot weaken them.
+
 Hosted runs are authoritative for portable software claims: repository code and
 deterministic behaviour, canonical identity, CLI/API/frontend behaviour, and desktop
 compilation. A claim that genuinely needs hardware, an accelerator, a proprietary or
@@ -132,6 +137,29 @@ boundary, and emits a bounded native diagnostic that is not sealed native eviden
 Execution-time engine-version admission supports exact, not-equal and ordered Semantic
 Versioning clauses; the `compatible` comparator has no accepted authority definition and is
 refused rather than guessed.
+
+The worker is bound to the **exact semantics** of the reference experiment, not only its
+identifiers and versions. The reviewed benchmark, scenario, realization, system-under-test
+and platform-environment semantic digests are pinned in
+`python/src/dynamisbench/adapters/mujoco/reference.py`; their canonical source is
+`reference_case.py`, and `tools/mujoco_reference_authority.py --check` reproduces them. The
+worker compares every request against those constants before it loads or advances physics, so
+a definition that keeps its ID and version but changes duration, initial conditions, solver
+configuration, asset digest, SUT or environment content is refused. The accepted seed, factor
+target and value, outcomes and capabilities are checked explicitly too.
+
+The adapter implementation identity also binds the **installed dependency closure**. The
+reviewed `worker-mujoco/uv.lock` hash and exact package versions are pinned in
+`dependencies.py`; the worker verifies the installed distribution versions at runtime and
+folds the closure into the existing `implementation_digest` (no new protocol field). The
+lockfile hash is attested by the repository/CI, not proven by the runtime check, and wheel
+file bytes are not authenticated — see that module for the exact limitation.
+
+`tools/mujoco_qualification_receipt.py` emits one bounded CI qualification receipt per
+platform. A receipt is a numerical solution-verification artifact, **not** `native/`,
+`canonical/`, `assessment.json` or sealed scientific evidence. `tools/mujoco_receipt_compare.py`
+independently checks identity consistency, numerical tolerance compliance and unexpected
+platform divergence; it does not require bitwise cross-platform equality.
 
 Explicitly not present yet: arbitrary model/asset materialization for a generic MuJoCo
 realization, native→canonical normalization, `assessment.json`, scientific benchmark

@@ -5,7 +5,9 @@ equation implied by the model's own declared mass, geometry and inertia; agreeme
 demonstrates that the adapter integrated the intended mechanical system. It says nothing
 about human biomechanics, DB-LCMJ20, or any scientific claim.
 
-Tolerances are declared here, before observations, from the numerical method:
+Tolerances are declared in
+:mod:`dynamisbench.adapters.mujoco.qualification_criteria`, before observations and shared
+with the durable CI receipt generator, from the numerical method:
 
 * MuJoCo RK4 at ``dt = 0.001 s`` over ``2 s`` has global truncation error of order four. For
   this smooth one-degree-of-freedom system the expected state error is on the order of
@@ -32,6 +34,15 @@ from scipy.special import ellipk
 
 from dynamisbench.adapters.mujoco import reference
 from dynamisbench.adapters.mujoco.diagnostics import ReferenceDiagnostic
+from dynamisbench.adapters.mujoco.qualification_criteria import (
+    ANGLE_TOLERANCE_RAD,
+    ANGULAR_VELOCITY_TOLERANCE_RAD_S,
+    ENERGY_RELATIVE_TOLERANCE,
+    PERIOD_TOLERANCE_S,
+    REFINEMENT_FINAL_TOLERANCE_RAD,
+    REFINEMENT_MIN_RATIO,
+    VELOCITY_CONSISTENCY_TOLERANCE_RAD_S,
+)
 from dynamisbench.execution import RunLifecycleState
 from tests.execution.mujoco.support import (
     COM_DISTANCE_M,
@@ -45,14 +56,6 @@ from tests.execution.mujoco.support import (
     execute_fixture,
     native_diagnostic,
 )
-
-ANGLE_TOLERANCE_RAD = 1e-8
-ANGULAR_VELOCITY_TOLERANCE_RAD_S = 1e-7
-ENERGY_RELATIVE_TOLERANCE = 1e-9
-PERIOD_TOLERANCE_S = 1e-4
-VELOCITY_CONSISTENCY_TOLERANCE_RAD_S = 1e-3
-REFINEMENT_MIN_RATIO = 8.0
-REFINEMENT_FINAL_TOLERANCE_RAD = 1e-8
 
 
 def _reference_solution(times: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

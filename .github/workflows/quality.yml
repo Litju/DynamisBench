@@ -191,6 +191,21 @@ jobs:
         run: uv run pytest --junitxml=evidence/pytest.xml
         env:
           HYPOTHESIS_PROFILE: ci
+      # A bounded CI qualification artifact, not native/canonical/assessment evidence. It
+      # records the real numerical observation, its independent comparison, the exact
+      # authority and dependency closure, and the predeclared tolerances for this platform.
+      - name: Generate the MuJoCo numerical qualification receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python tools/mujoco_qualification_receipt.py \
+            --target "${{ matrix.name }}" \
+            --tested-sha "${{ github.sha }}" \
+            --head-sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --ref "${{ github.ref }}" \
+            --image-os "${ImageOS:-unknown}" \
+            --image-version "${ImageVersion:-unknown}" \
+            --output "evidence/mujoco-qualification-${{ matrix.name }}.json"
       - name: Generate the M1 qualification report
         run: >
           uv run python tools/m1_qualification.py
@@ -204,6 +219,54 @@ jobs:
         with:
           name: m1-qualification-${{ matrix.name }}
           path: python/evidence/m1-qualification-${{ matrix.name }}.json
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mujoco-qualification-${{ matrix.name }}
+          path: python/evidence/mujoco-qualification-${{ matrix.name }}.json
+          if-no-files-found: error
+          retention-days: 90
+
+  # This job is deliberately NOT one of the eight required ADR-025 qualification gates.
+  # Those remain platform-identity, python, frontend and desktop on both pinned images. This
+  # job only compares the two receipts those gates publish; it cannot weaken or replace any
+  # of them, and it does not run on both platforms because its input is the pair.
+  mujoco-receipt-comparison:
+    name: mujoco-receipt-comparison
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: python
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --frozen
+      - uses: actions/download-artifact@v4
+        with:
+          name: mujoco-qualification-windows-x64
+          path: python/evidence/windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: mujoco-qualification-linux-x64
+          path: python/evidence/linux
+      - name: Compare the Windows and Linux qualification receipts
+        run: >
+          uv run --frozen python tools/mujoco_receipt_compare.py
+          --windows evidence/windows/mujoco-qualification-windows-x64.json
+          --linux evidence/linux/mujoco-qualification-linux-x64.json
+          --output evidence/mujoco-receipt-comparison.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mujoco-receipt-comparison
+          path: python/evidence/mujoco-receipt-comparison.json
           if-no-files-found: error
           retention-days: 90
 
