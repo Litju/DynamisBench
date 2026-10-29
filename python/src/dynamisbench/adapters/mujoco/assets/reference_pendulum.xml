@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DynamisBench RES-550 reference pendulum.
+
+  This is a deliberately minimal, self-contained MuJoCo model used to qualify the first
+  real adapter. It is not a human-movement model and it is not DB-LCMJ20 authority.
+
+  Physical interpretation:
+    * one rigid body on one frictionless hinge about +y;
+    * body centre of mass at (0, 0, -1) m from the hinge;
+    * mass 1 kg, centre-of-mass inertia diag(0.001, 0.001, 0.001) kg m^2;
+    * standard gravity 9.80665 m/s^2 along -z;
+    * no geoms (therefore no contacts), no actuators, no damping, no joint limits.
+
+  Conventions: radians, metres, kilograms, seconds; positive rotation about +y by the
+  right-hand rule; positive angular velocity in the same sense.
+-->
+<mujoco model="dynamisbench-reference-pendulum">
+  <compiler angle="radian" coordinate="local" inertiafromgeom="false"/>
+  <option
+    timestep="0.001"
+    integrator="RK4"
+    solver="Newton"
+    iterations="100"
+    tolerance="1e-12"
+    jacobian="auto"
+    cone="elliptic"
+    gravity="0 0 -9.80665"/>
+  <worldbody>
+    <body name="pendulum" pos="0 0 0">
+      <joint
+        name="hinge"
+        type="hinge"
+        axis="0 1 0"
+        pos="0 0 0"
+        limited="false"
+        damping="0"
+        armature="0"
+        frictionloss="0"/>
+      <inertial pos="0 0 -1" mass="1" diaginertia="0.001 0.001 0.001"/>
+      <site name="bob" pos="0 0 -1" size="0.02" rgba="0.9 0.35 0.1 1"/>
+    </body>
+  </worldbody>
+</mujoco>

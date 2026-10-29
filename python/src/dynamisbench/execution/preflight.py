@@ -35,7 +35,8 @@ from dataclasses import dataclass
 from pydantic import ValidationError as PydanticValidationError
 
 from dynamisbench.domain.spec.capability import Capability
-from dynamisbench.domain.spec.environment import EnvironmentDefinition
+from dynamisbench.domain.spec.environment import ComponentKind, EnvironmentDefinition
+from dynamisbench.domain.spec.identifiers import VersionSpecifier
 from dynamisbench.domain.spec.realizations import RealizationDefinition
 from dynamisbench.evidence.bundle import RunId, parse_run_id
 from dynamisbench.execution.contracts import (
@@ -53,6 +54,13 @@ from dynamisbench.execution.environment import (
     WorkerEnvironmentError,
     WorkerEnvironmentManifest,
     resolved_worker_program,
+)
+from dynamisbench.execution.versions import (
+    InvalidVersionError,
+    SpecifierEvaluationError,
+    UnsatisfiableSpecifierError,
+    UnsupportedComparatorError,
+    satisfies,
 )
 from dynamisbench.identity import (
     AssetAccessError,
@@ -136,6 +144,105 @@ def required_capabilities_of(planned_run: PlannedRun) -> tuple[Capability, ...]:
     )
 
 
+def _engine_version_refusals(
+    realization: RealizationDefinition,
+    environment: EnvironmentDefinition,
+    manifest: WorkerEnvironmentManifest,
+) -> list[Refusal]:
+    """Require the actual adapter version to satisfy every accepted engine constraint.
+
+    Two independently authored constraints apply to one adapter identity: the realization
+    binds the engine version it was implemented against, and the selected environment
+    declares the engine version it provides. Admission requires both, because satisfying
+    one says nothing about the other. The environment must also actually declare the
+    realization's engine at all; a version match against an environment that never names
+    the engine would be an accidental agreement rather than evidence.
+
+    ``COMPATIBLE`` and malformed clause versions are refused as unresolvable authority, not
+    coerced into a guessed range. The refusal codes are the existing closed vocabulary:
+    a specifier the execution boundary cannot evaluate is ``INVALID_RUN_SPEC``, while a
+    resolvable specifier the adapter fails is ``ADAPTER_ENGINE_MISMATCH``.
+    """
+    adapter = manifest.adapter
+    engine_name = realization.engine.engine
+    if adapter.engine != engine_name:
+        return [
+            refusal(
+                RefusalCode.ADAPTER_ENGINE_MISMATCH,
+                "the selected worker adapter is for a different engine than the realization binds",
+            )
+        ]
+
+    refusals: list[Refusal] = []
+
+    def check(specifier: VersionSpecifier, description: str) -> None:
+        try:
+            admitted = satisfies(str(adapter.engine_version), specifier)
+        except UnsupportedComparatorError:
+            refusals.append(
+                refusal(
+                    RefusalCode.INVALID_RUN_SPEC,
+                    f"{description} uses the 'compatible' comparator, whose semantics the "
+                    "accepted authority does not define; version admission is refused",
+                )
+            )
+        except InvalidVersionError:
+            refusals.append(
+                refusal(
+                    RefusalCode.INVALID_RUN_SPEC,
+                    f"{description} contains a version token that is not a Semantic "
+                    "Versioning 2.0.0 version",
+                )
+            )
+        except UnsatisfiableSpecifierError:
+            refusals.append(
+                refusal(
+                    RefusalCode.INVALID_RUN_SPEC,
+                    f"{description} contains contradictory version constraints that no "
+                    "version can satisfy",
+                )
+            )
+        except SpecifierEvaluationError:
+            refusals.append(
+                refusal(
+                    RefusalCode.INVALID_RUN_SPEC,
+                    f"{description} cannot be evaluated by the execution boundary",
+                )
+            )
+        else:
+            if not admitted:
+                refusals.append(
+                    refusal(
+                        RefusalCode.ADAPTER_ENGINE_MISMATCH,
+                        f"the selected adapter engine version {adapter.engine_version!r} does "
+                        f"not satisfy {description}",
+                    )
+                )
+
+    check(realization.engine.specifier, "the realization's engine specifier")
+
+    matching = tuple(
+        requirement
+        for requirement in environment.requirements
+        if requirement.kind is ComponentKind.ENGINE and requirement.component == engine_name
+    )
+    if not matching:
+        refusals.append(
+            refusal(
+                RefusalCode.ENVIRONMENT_IDENTITY_MISMATCH,
+                f"the selected environment declares no ENGINE requirement for "
+                f"{engine_name!r}, so it does not identify the execution it provides",
+            )
+        )
+    else:
+        for requirement in matching:
+            check(
+                requirement.specifier,
+                f"the environment's ENGINE requirement for {engine_name!r}",
+            )
+    return refusals
+
+
 def _identity_refusals(
     run_spec: RunSpec,
     realization: RealizationDefinition,
@@ -177,11 +284,13 @@ def _identity_refusals(
                 "RunSpec resolved",
             )
         )
-    if manifest.adapter.engine != realization.engine.engine:
+    refusals.extend(_engine_version_refusals(realization, environment, manifest))
+    if realization.assets and manifest.adapter.implementation_digest is None:
         refusals.append(
             refusal(
                 RefusalCode.ADAPTER_ENGINE_MISMATCH,
-                "the selected worker adapter is for a different engine than the realization binds",
+                "the realization declares assets but the selected adapter does not identify "
+                "its implementation, so the bytes it will execute are not bound",
             )
         )
     return refusals

@@ -329,32 +329,33 @@ class WorkerEnvironmentManifest(DomainModel):
 
 
 def resolved_worker_program(manifest: WorkerEnvironmentManifest) -> Path:
-    """Return the real path of the manifest's program, or refuse to launch anything.
+    """Return the declared worker program after proving it is an executable file.
 
-    Resolution is the operational step that turns the declared absolute program into the
-    file the operating system will execute. It is deliberately separate from model
-    construction: an environment manifest is a value that can be authored and reviewed on
-    a machine where the program is not installed, while a launch must prove the file is
-    there now.
+    The declared path is deliberately **not** symlink-resolved. On POSIX a virtual
+    environment's interpreter is a symlink to the base CPython installation, and resolving
+    it would launch the base interpreter without the environment's ``pyvenv.cfg`` and
+    site-packages. The symlink path is part of the selected environment, not an incidental
+    alias for its target. The declared path is still checked to be an absolute, existing
+    regular file, and on POSIX it must be executable; no fallback to ``PATH`` is attempted.
 
-    :raises WorkerEnvironmentError: if the program is missing, is not a regular file, or
-        cannot be resolved. No fallback to ``PATH`` is attempted.
+    :raises WorkerEnvironmentError: if the program is missing, is not a regular file, or is
+        not executable on POSIX.
     """
     declared = Path(manifest.command.program)
     try:
-        resolved = declared.resolve()
-    except (OSError, RuntimeError) as error:
+        is_file = declared.is_file()
+    except OSError as error:
         raise WorkerEnvironmentError(
-            f"the selected worker program cannot be resolved: {error}"
+            f"the selected worker program cannot be inspected: {error}"
         ) from error
-    if not resolved.is_file():
+    if not is_file:
         raise WorkerEnvironmentError(
             "the selected worker program is not an existing regular file; a worker is never "
             "resolved through PATH or replaced by a fallback"
         )
-    if os.name != "nt" and not os.access(resolved, os.X_OK):
+    if os.name != "nt" and not os.access(declared, os.X_OK):
         raise WorkerEnvironmentError("the selected worker program exists but is not executable")
-    return resolved
+    return declared
 
 
 def worker_environment(

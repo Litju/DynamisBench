@@ -1,0 +1,9 @@
+{
+  "include": ["src/dynamisbench/adapters/mujoco"],
+  "exclude": ["**/__pycache__"],
+  "venvPath": "worker-mujoco",
+  "venv": ".venv",
+  "stubPath": "worker-mujoco/stubs",
+  "pythonVersion": "3.12",
+  "typeCheckingMode": "standard"
+}

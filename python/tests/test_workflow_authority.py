@@ -34,6 +34,17 @@ WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 QUALIFICATION_WORKFLOW = "quality.yml"
 IDENTITY_JOB = "platform-identity"
 
+# The eight required ADR-025 gates are these four jobs, each on both pinned images.
+# Additional jobs (for example the MuJoCo receipt comparator) are explicitly not gates and
+# must not be counted as one of the eight.
+REQUIRED_ADR025_GATES = (
+    "platform-identity",
+    "python",
+    "frontend",
+    "desktop",
+)
+ADDITIONAL_NON_GATE_JOBS = ("mujoco-receipt-comparison",)
+
 # Pinned images, deliberately never ``-latest``: a qualification result has to be
 # interpretable against a named runner image. ``self-hosted`` is not a portable
 # target under ADR-025, so it cannot be added to this set.
@@ -147,14 +158,29 @@ def test_every_gate_runs_on_an_approved_explicit_hosted_image() -> None:
     )
 
 
-def test_every_gate_qualifies_on_windows_x64_and_linux_x64() -> None:
-    """Cross-platform claims need both platforms, in every gate, not somewhere."""
+def test_the_eight_required_adr025_gates_are_preserved() -> None:
+    """The accepted M1-M3 qualification matrix is exactly the four two-platform jobs."""
+    gates = _gates()
+    missing = [job_id for job_id in REQUIRED_ADR025_GATES if job_id not in gates]
+    assert not missing, f"the required ADR-025 gates are missing: {missing}"
+
     partial = {
-        job_id: sorted(set(_resolved_images(job)))
-        for job_id, job in _gates().items()
-        if set(_resolved_images(job)) != PORTABLE_TARGETS
+        job_id: sorted(set(_resolved_images(gates[job_id])))
+        for job_id in REQUIRED_ADR025_GATES
+        if set(_resolved_images(gates[job_id])) != PORTABLE_TARGETS
     }
-    assert not partial, f"each portable gate must run on {sorted(PORTABLE_TARGETS)}: {partial}"
+    assert not partial, (
+        f"each required ADR-025 gate must run on {sorted(PORTABLE_TARGETS)}: {partial}"
+    )
+
+
+def test_the_receipt_comparator_is_an_additional_non_gate_job() -> None:
+    """The comparison is useful evidence but is not one of the eight required gates."""
+    job = _gates()["mujoco-receipt-comparison"]
+    assert job["name"] == "mujoco-receipt-comparison"
+    assert job["needs"] == "python"
+    assert set(_resolved_images(job)) <= APPROVED_HOSTED_IMAGES
+    assert set(_resolved_images(job)) != PORTABLE_TARGETS
 
 
 PYTHON_VERSION_FILE = REPO_ROOT / "python" / ".python-version"
@@ -268,32 +294,54 @@ def test_platform_identity_publishes_image_and_toolchain_evidence() -> None:
 # Runner-local state is not scientific authority. Each job publishes exactly the
 # artifact it is entitled to, by exact name and path - never a prefix-shaped surface
 # that a later step could widen without this failing.
-EXPECTED_ARTIFACTS: dict[str, dict[str, object]] = {
-    IDENTITY_JOB: {
-        "name": "platform-identity-${{ matrix.name }}",
-        "path": "evidence/platform-identity.json",
-        "if-no-files-found": "error",
-        "retention-days": 90,
-    },
-    "python": {
-        "name": "m1-qualification-${{ matrix.name }}",
-        "path": "python/evidence/m1-qualification-${{ matrix.name }}.json",
-        "if-no-files-found": "error",
-        "retention-days": 90,
-    },
+EXPECTED_ARTIFACTS: dict[str, tuple[dict[str, object], ...]] = {
+    IDENTITY_JOB: (
+        {
+            "name": "platform-identity-${{ matrix.name }}",
+            "path": "evidence/platform-identity.json",
+            "if-no-files-found": "error",
+            "retention-days": 90,
+        },
+    ),
+    "python": (
+        {
+            "name": "m1-qualification-${{ matrix.name }}",
+            "path": "python/evidence/m1-qualification-${{ matrix.name }}.json",
+            "if-no-files-found": "error",
+            "retention-days": 90,
+        },
+        {
+            "name": "mujoco-qualification-${{ matrix.name }}",
+            "path": "python/evidence/mujoco-qualification-${{ matrix.name }}.json",
+            "if-no-files-found": "error",
+            "retention-days": 90,
+        },
+    ),
+    "mujoco-receipt-comparison": (
+        {
+            "name": "mujoco-receipt-comparison",
+            "path": "python/evidence/mujoco-receipt-comparison.json",
+            "if-no-files-found": "error",
+            "retention-days": 90,
+        },
+    ),
 }
 
 NO_ARTIFACT_JOBS = ("frontend", "desktop")
 
 
 def test_qualification_artifacts_publish_exactly_their_intended_surface() -> None:
-    """Exactly one upload step per entitled job, with exact names and paths.
+    """Each entitled job publishes exactly its reviewed, exact-name artifacts.
 
     A same-prefix allowance admits any number of artifacts under that prefix, which
-    is a publication surface rather than an authority. The identity record and the
-    M1 report are the whole of it; frontend and desktop publish none.
+    is a publication surface rather than an authority. The identity record, the M1
+    report, the two platform MuJoCo receipts and their comparison are the whole of
+    it; frontend and desktop publish none.
     """
-    for job_id, job in _gates().items():
+    gates = _gates()
+    unexpected = set(gates) - set(EXPECTED_ARTIFACTS) - set(NO_ARTIFACT_JOBS)
+    assert not unexpected, f"unreviewed qualification job(s): {sorted(unexpected)}"
+    for job_id, job in gates.items():
         uploads = [
             step
             for step in job["steps"]
@@ -304,10 +352,11 @@ def test_qualification_artifacts_publish_exactly_their_intended_surface() -> Non
             assert job_id in NO_ARTIFACT_JOBS, f"unreviewed qualification job: {job_id}"
             assert not uploads, f"{job_id} must publish no qualification artifact: {uploads}"
             continue
-        assert len(uploads) == 1, (
-            f"{job_id} must publish exactly one qualification artifact, found {len(uploads)}"
+        assert len(uploads) == len(expected), (
+            f"{job_id} must publish exactly {len(expected)} qualification artifact(s), "
+            f"found {len(uploads)}"
         )
-        published = dict(uploads[0].get("with") or {})
+        published = tuple(dict(upload.get("with") or {}) for upload in uploads)
         assert published == expected, (
             f"{job_id} artifact publication drifted from its exact authority: {published!r}"
         )

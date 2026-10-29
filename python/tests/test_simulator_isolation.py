@@ -28,6 +28,13 @@ from hypothesis import strategies as st
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src" / "dynamisbench"
 PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
+ADAPTER_PACKAGE = PACKAGE_ROOT / "adapters" / "mujoco"
+"""The one authorized engine-adapter ownership boundary (ADR-001).
+
+It is importable without MuJoCo because its ``__init__`` and pure reference/identity modules
+do not import the engine. Only ``physics.py`` inside this package may import MuJoCo, and it
+is imported only by the isolated worker entry point.
+"""
 
 BOUNDARIES = (
     "domain.spec",
@@ -121,6 +128,10 @@ def test_import_probe_covers_every_required_boundary() -> None:
     assert "dynamisbench" in loaded
     missing = [boundary for boundary in BOUNDARIES if f"dynamisbench.{boundary}" not in loaded]
     assert not missing
+    # Importing the adapters package must not reach the engine-specific module. The engine
+    # is loaded only when the isolated worker imports physics explicitly.
+    assert "dynamisbench.adapters.mujoco" not in loaded
+    assert "dynamisbench.adapters.mujoco.physics" not in loaded
 
 
 def test_import_probe_covers_every_domain_module() -> None:
@@ -136,20 +147,42 @@ def test_importing_the_core_never_loads_a_simulator_library(module_name: str) ->
     assert module_name not in loaded_modules_after_core_import()
 
 
-def test_source_files_contain_no_simulator_import_statements() -> None:
+def _simulator_imports(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            roots.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            roots.add(node.module.split(".")[0])
+    return roots & FORBIDDEN_SIMULATOR_MODULES
+
+
+def test_source_files_outside_the_adapter_contain_no_simulator_import_statements() -> None:
+    """No engine-independent boundary may even *name* a simulator import.
+
+    The authorized MuJoCo adapter is the sole exception. This scan is deliberately
+    file-by-file rather than package-by-package: a new module in the domain, planning,
+    execution, evidence, query or API package is covered without editing the gate.
+    """
     offenders: dict[str, set[str]] = {}
     for path in sorted(PACKAGE_ROOT.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        roots: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                roots.update(alias.name.split(".")[0] for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                roots.add(node.module.split(".")[0])
-        forbidden = roots & FORBIDDEN_SIMULATOR_MODULES
+        if path.is_relative_to(ADAPTER_PACKAGE):
+            continue
+        forbidden = _simulator_imports(path)
         if forbidden:
-            offenders[path.name] = forbidden
+            offenders[path.relative_to(PACKAGE_ROOT).as_posix()] = forbidden
     assert not offenders
+
+
+def test_only_the_mujoco_adapter_physics_module_imports_the_engine() -> None:
+    """The engine import is a single reviewed file, not a family of convenient escapes."""
+    importers = {
+        path.relative_to(ADAPTER_PACKAGE).as_posix(): _simulator_imports(path)
+        for path in sorted(ADAPTER_PACKAGE.rglob("*.py"))
+        if _simulator_imports(path)
+    }
+    assert importers == {"physics.py": {"mujoco"}}
 
 
 def test_declared_dependencies_exclude_simulators_and_control_plane_services() -> None:

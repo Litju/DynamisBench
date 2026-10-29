@@ -18,6 +18,7 @@ from dynamisbench.domain.spec.benchmark import BenchmarkRelease
 from dynamisbench.domain.spec.capability import Capability
 from dynamisbench.domain.spec.environment import ComponentKind, EnvironmentDefinition
 from dynamisbench.domain.spec.identifiers import (
+    Comparator,
     EnvironmentId,
     EnvironmentRef,
     RealizationId,
@@ -114,7 +115,10 @@ def control_environment(**overrides) -> EnvironmentDefinition:
         "description": "The isolated process contract itself; no simulator is installed.",
         "requirements": (
             domain.environment_requirement(
-                CONTROL_ENGINE, ComponentKind.TOOLCHAIN, CONTROL_ENGINE_VERSION
+                CONTROL_ENGINE,
+                ComponentKind.ENGINE,
+                CONTROL_ENGINE_VERSION,
+                comparator=Comparator.EXACT,
             ),
             domain.environment_requirement("python", ComponentKind.RUNTIME, "3.12"),
         ),
@@ -192,6 +196,15 @@ def build_fixture(
     )
 
 
+CONTROL_IMPLEMENTATION_DIGEST = hashlib.sha256(CONTROL_WORKER.read_bytes()).hexdigest()
+"""The control worker's own source identity.
+
+The control worker is not a simulator adapter, but it is a real executable file. Giving it
+a content identity keeps the admission rule honest: a realization that declares assets is
+only admitted with an adapter identity that names the implementation that will run.
+"""
+
+
 def adapter_identity(
     capabilities: tuple[Capability, ...],
     *,
@@ -199,6 +212,7 @@ def adapter_identity(
     engine_version: str = CONTROL_ENGINE_VERSION,
     adapter_id: str = CONTROL_ADAPTER_ID,
     adapter_version: str = "1.0.0",
+    implementation_digest: str | None = CONTROL_IMPLEMENTATION_DIGEST,
 ) -> WorkerAdapterIdentity:
     return WorkerAdapterIdentity(
         adapter_id=adapter_id,
@@ -206,6 +220,7 @@ def adapter_identity(
         engine=engine,
         engine_version=engine_version,
         capabilities=capabilities,
+        implementation_digest=implementation_digest,
     )
 
 
