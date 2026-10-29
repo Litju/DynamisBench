@@ -725,6 +725,39 @@ from what the current baseline can prove.
 
 Every acceptance record must name the level. A1 is not A2. A sealed artifact is not A3.
 
+### 5.6 Candidate OS-enforced mode (not authorized, not implemented)
+
+This subsection exists so decision D3 option B is reviewable. It is **not** a claim that
+these mechanisms are available on the supported targets. Each must be probed in the target
+job and recorded.
+
+| Mechanism | Platform | Required privilege | Availability to verify | Residual | Claim if it passes |
+|---|---|---|---|---|---|
+| Dedicated standard user for the worker; supervisor-owned input root ACL denies write to that user | Windows | Administrator to create the account and set ACLs | `CreateProcessWithLogonW` / `CreateProcessAsUser`; account provisioning | Supervisor/owner can still change ACLs; account lifecycle; desktop product prerequisite | Worker cannot write inputs under its own identity; process runs as a different principal |
+| AppContainer with a capability SID limited to the input root | Windows | Administrator to create the profile; `CreateAppContainerProfile` | Win32 API; not Python stdlib; would need a reviewed native/Rust helper | AppContainer compatibility with Python/MuJoCo; filesystem virtualization; profile cleanup | Worker reads only brokered paths; writes denied outside its container |
+| Restricted token / job object | Windows | None for a restricted token; job object already used | `CreateRestrictedToken`; job object does not restrict file reads | File ACLs still govern access; a restricted token is not a filesystem sandbox by itself | Process-tree containment only; not a read/write claim |
+| User namespace + mount namespace with read-only bind mount of `inputs/` | Linux | Unprivileged user namespaces if enabled; otherwise root/CAP_SYS_ADMIN | `unshare` with `CLONE_NEWUSER` and `CLONE_NEWNS`; `mount` with `MS_BIND` and `MS_RDONLY`; `pivot_root`; probe needed | Ubuntu AppArmor restrictions; kernel config; nested containers | Worker sees a read-only input view and no host paths |
+| Landlock ruleset restricting read/write to the input view | Linux | Unprivileged | Landlock ABI ≥1, kernel ≥5.13; `landlock_create_ruleset`/`add_rule`/`restrict_self` via ctypes | ABI feature gaps; path-beneath rules; no Windows equivalent | Worker FS access restricted to the ruleset; deny outside |
+| `openat2` with `RESOLVE_BENEATH`, `RESOLVE_NO_SYMLINKS`, `RESOLVE_NO_MAGICLINKS` | Linux | Unprivileged | Kernel ≥5.6; syscall via ctypes | Parent rename before open; fd identity still needed | No symlink/beneath escape on the opened path |
+| `NtCreateFile` with `OBJECT_ATTRIBUTES.RootDirectory` and `FILE_OPEN_REPARSE_POINT` | Windows | Unprivileged (ntdll) | Not exposed by Python stdlib; ctypes/native helper; security review required | Handle inheritance/lifetime; ntdll ABI stability | Handle-relative open below a verified root handle |
+| Read-only filesystem / `chattr +i` | Linux | `chattr +i` needs CAP_LINUX_IMMUTABLE; read-only mount needs mount privilege | Varies | Owner/root can change; not portable | Only if provisioned and probed; not a default claim |
+
+A candidate `os-enforced` design would use:
+
+* Windows: a dedicated worker principal plus a supervisor-owned input root whose ACL denies
+  write to that principal; open files with `CreateFileW` (`FILE_SHARE_READ`,
+  `FILE_FLAG_OPEN_REPARSE_POINT` where applicable), verify `GetFinalPathNameByHandleW` and
+  `FILE_ID_INFO`, and optionally AppContainer for read restriction. This requires
+  provisioning and a reviewed native helper; it is not a Python-stdlib-only change.
+* Linux: `unshare(CLONE_NEWUSER|CLONE_NEWNS)`, bind-mount `inputs/` read-only, `pivot_root`,
+  then `openat2` + `fstat` inside the namespace; or Landlock for read/write restriction if
+  the kernel ABI is available. This can be unprivileged only when user namespaces are
+  enabled; otherwise it requires root/provisioning.
+
+If the probe fails, `containment_mode: os-enforced` must not be recorded, and no claim may
+depend on it. The implementation must fall back to `verified-content` **only if the owner
+has approved that fallback**; it must not silently downgrade a security claim.
+
 ---
 
 ## 6. Source-asset TOCTOU closure strategy
