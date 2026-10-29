@@ -29,6 +29,7 @@
 | PR #20 merge commit | `2a3ef6016e904de5b218e657f15793dd230250bb` | `gh pr view 20` |
 | PR #20 reviews recorded on GitHub | none (`reviews: []`) | `gh pr view 20` |
 | RES-550 Linear completion | `2026-10-29T02:45:42.007Z` | `get_issue RES-550` |
+| RES-550 post-merge acceptance comment | `2026-10-29T02:53:10.298Z` | Linear comments |
 | PR #20 merge time | `2026-10-29T02:45:39Z` | `gh pr view 20` |
 | Protected-main ruleset | `DynamisBench main qualification` (id `24680388`), active | `gh api …/rulesets` |
 | Ruleset required checks | the eight ADR-025 names | ruleset detail |
@@ -179,7 +180,7 @@ DEFINED where the code is ahead of authority. The matrix records each separately
 |---|---|---|---|---|---|---|
 | R-33 | Eight required ADR-025 gates remain mandatory on pinned `windows-2025` and `ubuntu-24.04`; additional jobs do not replace them | A6 ADR-025; A7; `test_workflow_authority.py` | Yes | Yes | Yes (run `40808263238`) | New RES-555 jobs must be declared additional and must not be counted as the eight |
 | R-34 | An issue is Done only after all required evidence exists; merge is not acceptance | A7 Issue quality / Milestone closure; RES-549, RES-550, RES-555 | Yes | **No** | No | Ruleset requires zero approvals and permits a bypass actor; RES-550 was marked Done before post-merge CI |
-| R-35 | Independent scientific/security/runtime review before acceptance | RES-555; A7 | Yes | **No** | No | PR #20 records no GitHub review; review may exist elsewhere, but it is not a durable merge gate |
+| R-35 | Independent scientific/security/runtime review before acceptance | RES-555; A7 | Yes | **No** | No | PR #20 has no GitHub review object or approval; review may exist elsewhere, but it is not a durable merge gate |
 
 ---
 
@@ -221,12 +222,14 @@ in 1 MiB chunks but has no size ceiling.
 
 ### G5 — The source-asset TOCTOU is not closed
 
-Preflight hashes a source asset; the supervisor re-hashes it before staging and again
-before launch. The worker never reads it. The supervisor's second check occurs after the
-staging bundle is created and after a working directory and request bytes are prepared,
-so the window between the last check and process start is not tested. More importantly,
-the source root remains mutable and the worker's execution is not causally tied to the
-materialized source bytes.
+RES-549's post-merge acceptance record explicitly lists "source-asset launch/read TOCTOU"
+among its remaining limits, and RES-550's acceptance record repeats "Source-asset TOCTOU
+and the RES-549 process-containment limitations remain." In code, preflight hashes a source
+asset; the supervisor re-hashes it before staging and again before launch. The worker never
+reads it. The supervisor's second check occurs after the staging bundle is created and
+after a working directory and request bytes are prepared, so the window between the last
+check and process start is not tested. More importantly, the source root remains mutable
+and the worker's execution is not causally tied to the materialized source bytes.
 
 ### G6 — No worker read-time verification
 
@@ -286,13 +289,20 @@ the installed source files and the supervisor binds that digest, so a changed so
 is normally refused at worker identity verification. But execution is not from a
 content-addressed snapshot, and there is no supervisor-side `--identity` probe immediately
 before launch. This is the residual source dependency RES-555 requires to remove or bound.
+The RES-550 acceptance record also states that runtime dependency verification covers
+installed distribution versions, not wheel bytes or the interpreter binary; the lockfile
+hash is a repository/CI attestation.
 
 ### G13 — Governance can close an issue before qualification
 
 The ruleset requires zero approvals, allows one user to bypass via pull request, and has
-no post-merge acceptance hold. PR #20 has no recorded GitHub review. RES-550 was marked
-Done three seconds after merge. The post-merge run later succeeded, but the ordering was
-wrong.
+no post-merge acceptance hold. PR #20 has no GitHub review object or approval. Linear
+transitioned RES-550 to Done at `2026-10-29T02:45:42Z`, three seconds after the
+`02:45:39Z` merge. The
+post-merge acceptance comment was added at `02:53:10Z`, after protected-main run
+`40808263238` completed. That acceptance record itself states that no human approval was
+required by the ruleset and none is claimed. The post-merge run later succeeded, but the
+Done transition preceded its evidence.
 
 ### G14 — CI has no RES-555 gate
 
