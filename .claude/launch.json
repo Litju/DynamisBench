@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "workbench-prototype",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "design-prototypes", "dev"],
+      "port": 5178
+    }
+  ]
+}
