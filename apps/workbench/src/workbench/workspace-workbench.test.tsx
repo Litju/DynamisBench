@@ -362,3 +362,64 @@ describe("the workspace workbench", () => {
     expect(activity.textContent).toContain("Discovery completed");
   });
 });
+
+it("distinguishes cached Explorer status from pending, failed and recovered reinspection", async () => {
+  const source = readySource();
+  const user = userEvent.setup();
+  let next: () => Response | Promise<Response> = () => jsonResponse(INSPECTION);
+  await renderWorkspace(
+    discoveryHandler({ [BENCHMARK_ARTIFACT_PATH]: () => next() }),
+    source,
+  );
+  const option = screen.getByRole("option", {
+    name: new RegExp(ARTIFACT.identifier!),
+  });
+  await user.click(option);
+  await screen.findByTestId("artifact-content");
+  let release!: (response: Response) => void;
+  next = () =>
+    new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+  await user.click(screen.getByRole("button", { name: "Re-read" }));
+  expect(
+    within(option).queryByText("valid", { exact: true }),
+  ).not.toBeInTheDocument();
+  expect(within(option).getByText("Revalidating")).toBeInTheDocument();
+  expect(screen.getByText("Last successful source reads")).toBeInTheDocument();
+  await act(async () =>
+    release(errorResponse(500, "internal_error", "Inspection unavailable")),
+  );
+  await waitFor(() =>
+    expect(within(option).getByText("Unavailable")).toBeInTheDocument(),
+  );
+  expect(
+    within(option).queryByText("valid", { exact: true }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByTestId("artifact-content")).not.toBeInTheDocument();
+  next = () => jsonResponse(INSPECTION);
+  await user.click(screen.getByRole("button", { name: "Re-read" }));
+  await screen.findByTestId("artifact-content");
+  expect(
+    within(option).getByText("valid", { exact: true }),
+  ).toBeInTheDocument();
+  next = () =>
+    jsonResponse({
+      ...INSPECTION,
+      validation_status: "invalid",
+      content: null,
+      identifier: null,
+      version: null,
+      semantic_digest: null,
+    });
+  await user.click(screen.getByRole("button", { name: "Re-read" }));
+  await screen.findByText(
+    "No validated content is published for this artifact.",
+  );
+  await waitFor(() =>
+    expect(
+      within(screen.getByLabelText("Artifact counts")).getByText("2 invalid"),
+    ).toBeInTheDocument(),
+  );
+  expect(within(option).getByLabelText("Invalid")).toBeInTheDocument();
+});

@@ -10,10 +10,17 @@ import { describe, expect, it } from "vitest";
 import { useUiStore } from "./ui";
 
 describe("the UI store", () => {
-  it("holds exactly one interface concern", () => {
+  it("holds presentation preferences only", () => {
     const state = useUiStore.getState();
 
-    expect(Object.keys(state).sort()).toEqual(["sidebarCollapsed", "toggleSidebar"]);
+    expect(Object.keys(state).sort()).toEqual([
+      "mode",
+      "setMode",
+      "sidebarCollapsed",
+      "theme",
+      "toggleSidebar",
+      "toggleTheme",
+    ]);
     expect(typeof state.sidebarCollapsed).toBe("boolean");
     expect(typeof state.toggleSidebar).toBe("function");
   });

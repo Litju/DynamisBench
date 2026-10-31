@@ -26,7 +26,7 @@ export const rootRoute = createRootRouteWithContext<RouterContext>()({
 function RootLayout() {
   return (
     <AppShell>
-      <div className="flex flex-col gap-4">
+      <div className="flex min-h-0 flex-1 flex-col">
         <Outlet />
         <ActivityPanel />
       </div>
