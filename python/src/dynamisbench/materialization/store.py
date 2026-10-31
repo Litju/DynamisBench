@@ -6,6 +6,8 @@ The store lives under the workspace's disposable ``CACHE`` class at ``inputs/``:
 <evidence>/cache/inputs/
   objects/sha256/<64 hex>       immutable object bytes
   manifests/<64 hex>.json       canonical InputManifest bytes
+  quarantine/<digest>.<nonce>   preserved corrupt bytes, never authoritative
+  locks/<digest>.lock           cross-process digest publication lock
   tmp/                          private temporaries, never authoritative
 ```
 
@@ -34,6 +36,8 @@ import os
 import secrets
 import stat
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO, Literal
 
@@ -243,6 +247,7 @@ class MaterializationStore:
         self._manifests = self._root / "manifests"
         self._tmp = self._root / "tmp"
         self._quarantine = self._root / "quarantine"
+        self._locks = self._root / "locks"
 
     @property
     def root(self) -> Path:
@@ -268,6 +273,7 @@ class MaterializationStore:
         _ensure_directory(self._manifests, label="manifest directory")
         _ensure_directory(self._tmp, label="temporary directory")
         _ensure_directory(self._quarantine, label="quarantine directory")
+        _ensure_directory(self._locks, label="lock directory")
 
     def _require_existing_layout(self) -> None:
         """Verify the read-side layout without creating or repairing anything.
@@ -283,6 +289,56 @@ class MaterializationStore:
         _require_directory(self._objects, label="object directory")
         _require_directory(self._manifests, label="manifest directory")
         _require_directory(self._tmp, label="temporary directory")
+
+    @contextmanager
+    def _digest_lock(self, digest_hex: str) -> Iterator[None]:
+        """Hold an exclusive cross-process lock for one content-addressed digest.
+
+        Publication and quarantine both mutate the canonical name. Serializing them
+        per digest is what prevents a quarantiner from unlinking an object another
+        publisher installed after the first quarantiner removed the old one. The lock
+        is an operating-system advisory lock on a private lock file, not an in-memory
+        mutex, so it coordinates separate processes using the same store.
+        """
+        self._require_sha256_hex(digest_hex)
+        self.ensure_layout()
+        path = self._locks / f"{digest_hex}.lock"
+        if _is_link(path):
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_LINK_REFUSED,
+                "a content-addressed lock file is a link",
+            )
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(path, flags, 0o600)
+        except OSError as error:
+            raise MaterializationError(
+                MaterializationRefusalCode.STORE_PUBLICATION_FAILED,
+                "the content-addressed publication lock could not be opened",
+            ) from error
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                if os.fstat(descriptor).st_size == 0:
+                    os.write(descriptor, b"\0")
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
+                try:
+                    yield
+                finally:
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(descriptor, fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
 
     def object_path(self, digest_hex: str) -> Path:
         """Resolve one object path inside the store.
@@ -329,63 +385,99 @@ class MaterializationStore:
         expected_size: int,
         kind: PublicationKind,
     ) -> str:
-        """Publish one complete temporary with create-if-absent semantics."""
-        final = self.object_path(digest_hex) if kind == "object" else self.manifest_path(digest_hex)
-        try:
-            if os.name == "nt":
-                # Windows rename fails rather than replacing an existing destination.
-                os.rename(temporary, final)
-            else:
-                # POSIX rename would replace; link creates the final name only if absent.
-                os.link(temporary, final)
-                temporary.unlink()
-        except FileExistsError:
-            self._verify_existing(final, digest_hex=digest_hex, expected_size=expected_size)
-            temporary.unlink(missing_ok=True)
-        except OSError as error:
-            temporary.unlink(missing_ok=True)
-            raise MaterializationError(
-                MaterializationRefusalCode.STORE_PUBLICATION_FAILED,
-                "the content-addressed object could not be published without replacing an "
-                "existing name",
-            ) from error
-        else:
-            self._verify_existing(final, digest_hex=digest_hex, expected_size=expected_size)
-            self._fsync_parent(final)
+        """Publish one complete temporary with create-if-absent semantics.
 
+        Publication and quarantine share one per-digest cross-process lock. If the
+        existing canonical object is corrupt, this publisher quarantines it under the
+        lock and refuses; a later publisher can install healthy bytes. A concurrent
+        publisher either sees the healthy object and reuses it, or waits for the
+        quarantine and publishes next; it never unlinks a newer object.
+        """
+        final = self.object_path(digest_hex) if kind == "object" else self.manifest_path(digest_hex)
+        with self._digest_lock(digest_hex):
+            try:
+                if os.name == "nt":
+                    # Windows rename fails rather than replacing an existing destination.
+                    os.rename(temporary, final)
+                else:
+                    # POSIX rename would replace; link creates the final name only if absent.
+                    os.link(temporary, final)
+            except FileExistsError:
+                try:
+                    self._verify_existing(final, digest_hex=digest_hex, expected_size=expected_size)
+                except MaterializationError as error:
+                    if error.code is not MaterializationRefusalCode.INPUT_OBJECT_CORRUPT:
+                        raise
+                    self._quarantine_corrupt(final, digest_hex)
+                    raise
+                temporary.unlink(missing_ok=True)
+                return self._publication_key(digest_hex, kind)
+            except OSError as error:
+                temporary.unlink(missing_ok=True)
+                raise MaterializationError(
+                    MaterializationRefusalCode.STORE_PUBLICATION_FAILED,
+                    "the content-addressed object could not be published without replacing an "
+                    "existing name",
+                ) from error
+            else:
+                if os.name != "nt":
+                    try:
+                        temporary.unlink()
+                    except OSError:
+                        # The final name is already published and verified; a leftover
+                        # private temporary is harmless.
+                        pass
+                self._verify_existing(final, digest_hex=digest_hex, expected_size=expected_size)
+                self._fsync_parent(final)
+                return self._publication_key(digest_hex, kind)
+
+    @staticmethod
+    def _publication_key(digest_hex: str, kind: PublicationKind) -> str:
         return f"sha256/{digest_hex}" if kind == "object" else f"manifests/{digest_hex}.json"
 
     def _verify_existing(self, path: Path, *, digest_hex: str, expected_size: int) -> None:
-        try:
-            observed, size = _hash_file(path, expected_size)
-        except MaterializationError as error:
-            if error.code is MaterializationRefusalCode.INPUT_OBJECT_CORRUPT:
-                self._quarantine_corrupt(path, digest_hex)
-            raise
+        """Verify an existing final name, refusing mismatch without mutating it.
+
+        Quarantine is the caller's decision and is performed under the digest lock.
+        """
+        observed, size = _hash_file(path, expected_size)
         if observed != digest_hex or size != expected_size:
-            self._quarantine_corrupt(path, digest_hex)
             raise MaterializationError(
                 MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
-                "an existing content-addressed object has different bytes or size; it was "
-                "quarantined and not overwritten",
+                "an existing content-addressed object has different bytes or size",
             )
 
     def _quarantine_corrupt(self, path: Path, digest_hex: str) -> None:
         """Move one regular corrupt object into ``quarantine/`` without deleting bytes.
 
-        The move preserves the corrupt bytes for diagnosis, removes the canonical
-        name so a later correct publication is possible, and never overwrites an
-        existing quarantine entry. A link, directory or unreadable path is left in
-        place and refused; DB-3.3A does not delete or follow it.
+        The caller must hold the digest lock. The move preserves the corrupt bytes for
+        diagnosis, removes the canonical name only when it still names the same file,
+        and never overwrites an existing quarantine entry. A link, directory or
+        unreadable path is left in place and refused; DB-3.3A does not delete, follow
+        or silently repair it.
         """
         if _is_link(path):
-            return
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_LINK_REFUSED,
+                "a corrupt store object is a link and cannot be quarantined",
+            )
         try:
-            info = path.lstat()
-        except OSError:
-            return
-        if not stat.S_ISREG(info.st_mode):
-            return
+            before = path.lstat()
+        except FileNotFoundError as error:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_OBJECT_MISSING,
+                "a corrupt store object disappeared before quarantine",
+            ) from error
+        except OSError as error:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+                "a corrupt store object could not be inspected for quarantine",
+            ) from error
+        if not stat.S_ISREG(before.st_mode):
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+                "a corrupt store object is not a regular file and cannot be quarantined",
+            )
         _ensure_directory(self._quarantine, label="quarantine directory")
         for _ in range(8):
             destination = self._quarantine / f"{digest_hex}.{secrets.token_hex(8)}"
@@ -399,8 +491,18 @@ class MaterializationStore:
                     "a corrupt store object could not be quarantined",
                 ) from error
             try:
+                after = path.lstat()
+                if (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino):
+                    destination.unlink(missing_ok=True)
+                    raise MaterializationError(
+                        MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+                        "the canonical store object changed during quarantine; it was not removed",
+                    )
                 path.unlink()
+            except MaterializationError:
+                raise
             except OSError as error:
+                destination.unlink(missing_ok=True)
                 raise MaterializationError(
                     MaterializationRefusalCode.STORE_PUBLICATION_FAILED,
                     "a corrupt store object was copied to quarantine but its canonical name "

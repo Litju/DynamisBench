@@ -9,7 +9,7 @@ import shutil
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -22,6 +22,29 @@ from dynamisbench.materialization import (
 from dynamisbench.materialization.schema import MAX_DEFINITION_BYTES
 from tests.materialization.conftest import ReferenceBundle
 from tests.workspace.links import make_directory_link, require_directory_link
+
+
+def _publish_worker(
+    source_root: str,
+    evidence_root: str,
+    payload: bytes,
+    digest: str,
+    barrier: Any,
+    results: Any,
+) -> None:
+    """Cross-process publisher used by the quarantine interleaving regression."""
+    from dynamisbench.materialization import MaterializationStore
+    from dynamisbench.workspace import open_workspace
+
+    store = MaterializationStore(open_workspace(source_root, evidence_root))
+    barrier.wait(timeout=30)
+    try:
+        key = store.publish_bytes(payload, expected_sha256=digest, max_bytes=1024)
+        results.put(("ok", key))
+    except MaterializationError as error:
+        results.put(("refused", error.code.value))
+    except BaseException as error:  # noqa: BLE001 - the child reports any unexpected failure
+        results.put(("error", repr(error)))
 
 
 def _manifest_files(store: MaterializationStore) -> list[Path]:
@@ -351,3 +374,48 @@ def test_verify_manifest_bounds_realization_reread_after_verification(
         MaterializationRefusalCode.INPUT_LIMIT_EXCEEDED,
         MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
     }
+
+
+def test_three_process_quarantine_recovery_never_removes_new_object(
+    reference_bundle: ReferenceBundle,
+    materialization_store: MaterializationStore,
+) -> None:
+    import multiprocessing
+
+    payload = b"healthy replacement"
+    digest = hashlib.sha256(payload).hexdigest()
+    materialization_store.ensure_layout()
+    canonical = materialization_store.object_path(digest)
+    canonical.write_bytes(b"corrupt old object")
+
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(3)
+    results = context.Queue()
+    processes = [
+        context.Process(
+            target=_publish_worker,
+            args=(
+                str(reference_bundle.workspace.source_root),
+                str(reference_bundle.workspace.evidence_root),
+                payload,
+                digest,
+                barrier,
+                results,
+            ),
+        )
+        for _ in range(3)
+    ]
+    for process in processes:
+        process.start()
+    outcomes = [results.get(timeout=60) for _ in processes]
+    for process in processes:
+        process.join(timeout=60)
+
+    assert all(process.exitcode == 0 for process in processes)
+    assert canonical.read_bytes() == payload
+    assert any(outcome[0] == "ok" for outcome in outcomes)
+    assert not any(outcome[0] == "error" for outcome in outcomes)
+    quarantine = materialization_store.root / "quarantine"
+    preserved = list(quarantine.glob(f"{digest}.*"))
+    assert len(preserved) >= 1
+    assert preserved[0].read_bytes() == b"corrupt old object"
