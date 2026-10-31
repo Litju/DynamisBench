@@ -1,0 +1,470 @@
+"""Create-if-absent content-addressed store for DB-3.3A execution inputs.
+
+The store lives under the workspace's disposable ``CACHE`` class at ``inputs/``:
+
+```text
+<evidence>/cache/inputs/
+  objects/sha256/<64 hex>       immutable object bytes
+  manifests/<64 hex>.json       canonical InputManifest bytes
+  tmp/                          private temporaries, never authoritative
+```
+
+Publication is **create-if-absent**, never replace. On POSIX the final name is
+created with ``os.link`` and on Windows with a non-replacing ``os.rename``. A
+concurrent publisher that loses the race verifies the winner's bytes and reuses
+them; an existing object with different bytes is refused and left in place. This is
+the difference between a content-addressed store and a last-writer-wins directory.
+
+Visibility, durability and recovery are separate facts:
+
+* a reader sees either no final name or the complete published bytes;
+* on POSIX the file and its parent directory are flushed; Windows file flush is
+  available but directory fsync is not, so its directory-entry durability is
+  explicitly weaker;
+* recovery ignores temporaries and re-verifies every final object before reuse.
+
+The store is disposable. Deleting it can never destroy sealed evidence, because
+ADR-026 requires the exact inputs to be embedded in the sealed bundle at seal time.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import stat
+import tempfile
+from pathlib import Path
+from typing import BinaryIO, Literal
+
+from dynamisbench.identity import READ_CHUNK_BYTES
+from dynamisbench.materialization.errors import (
+    MaterializationError,
+    MaterializationRefusalCode,
+)
+from dynamisbench.materialization.manifest import (
+    InputManifestDigest,
+    canonical_input_manifest_bytes,
+    input_manifest_digest,
+    parse_input_manifest,
+)
+from dynamisbench.materialization.schema import (
+    MAX_MANIFEST_BYTES,
+    InputManifest,
+)
+from dynamisbench.workspace import PersistenceClass, Workspace
+
+PublicationKind = Literal["object", "manifest"]
+
+
+def _is_link(path: Path) -> bool:
+    """Whether a path is a symlink or a Windows junction/reparse point."""
+    if path.is_symlink():
+        return True
+    try:
+        return path.is_junction()
+    except (AttributeError, OSError):
+        return False
+
+
+def _require_directory(path: Path, *, label: str) -> None:
+    """Require an existing real directory, never a link to one."""
+    if _is_link(path):
+        raise MaterializationError(
+            MaterializationRefusalCode.INPUT_LINK_REFUSED,
+            f"the materialization store {label} is a link, not a real directory",
+        )
+    if not path.is_dir():
+        raise MaterializationError(
+            MaterializationRefusalCode.STORE_PUBLICATION_FAILED,
+            f"the materialization store {label} is not a directory",
+        )
+
+
+def _ensure_directory(path: Path, *, label: str) -> None:
+    """Create a store directory if absent, refusing links and non-directories."""
+    if path.exists() or _is_link(path):
+        _require_directory(path, label=label)
+        return
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise MaterializationError(
+            MaterializationRefusalCode.STORE_PUBLICATION_FAILED,
+            f"the materialization store {label} could not be created",
+        ) from error
+    _require_directory(path, label=label)
+
+
+def _hash_file(path: Path) -> tuple[str, int]:
+    """Return the SHA-256 and size of a regular file, refusing links."""
+    if _is_link(path):
+        raise MaterializationError(
+            MaterializationRefusalCode.INPUT_LINK_REFUSED,
+            "a store object is a link, not a regular file",
+        )
+    try:
+        info = path.lstat()
+    except FileNotFoundError as error:
+        raise MaterializationError(
+            MaterializationRefusalCode.INPUT_OBJECT_MISSING,
+            "a required store object is missing",
+        ) from error
+    except OSError as error:
+        raise MaterializationError(
+            MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+            "a store object could not be inspected",
+        ) from error
+    if not stat.S_ISREG(info.st_mode):
+        raise MaterializationError(
+            MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+            "a store object is not a regular file",
+        )
+    hasher = hashlib.sha256()
+    total = 0
+    try:
+        with path.open("rb") as handle:
+            while chunk := handle.read(READ_CHUNK_BYTES):
+                hasher.update(chunk)
+                total += len(chunk)
+    except OSError as error:
+        raise MaterializationError(
+            MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+            "a store object could not be read",
+        ) from error
+    if total != info.st_size:
+        raise MaterializationError(
+            MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+            "a store object changed size while it was being verified",
+        )
+    return hasher.hexdigest(), total
+
+
+class MaterializationStore:
+    """The disposable content-addressed input store of one workspace."""
+
+    def __init__(self, workspace: Workspace) -> None:
+        self._workspace = workspace
+        self._cache = workspace.location(PersistenceClass.CACHE).path
+        self._root = self._cache / "inputs"
+        self._objects = self._root / "objects" / "sha256"
+        self._manifests = self._root / "manifests"
+        self._tmp = self._root / "tmp"
+
+    @property
+    def root(self) -> Path:
+        """The absolute, operational store root. It never enters a manifest."""
+        return self._root
+
+    def ensure_layout(self) -> None:
+        """Create the declared store layout, refusing link substitutions."""
+        if self._cache.exists() or _is_link(self._cache):
+            _require_directory(self._cache, label="cache location")
+        else:
+            try:
+                self._cache.mkdir(parents=True, exist_ok=True)
+            except OSError as error:
+                raise MaterializationError(
+                    MaterializationRefusalCode.STORE_PUBLICATION_FAILED,
+                    "the workspace cache location could not be created",
+                ) from error
+            _require_directory(self._cache, label="cache location")
+        _ensure_directory(self._root, label="root")
+        _ensure_directory(self._objects, label="object directory")
+        _ensure_directory(self._manifests, label="manifest directory")
+        _ensure_directory(self._tmp, label="temporary directory")
+
+    def object_path(self, digest_hex: str) -> Path:
+        """Resolve one object path inside the store.
+
+        The digest is a lowercase SHA-256 hex string. The path is operational; it is
+        never stored in a manifest, which records only ``sha256/<hex>``.
+        """
+        self._require_sha256_hex(digest_hex)
+        return self._objects / digest_hex
+
+    def manifest_path(self, digest_hex: str) -> Path:
+        """Resolve one manifest path inside the store."""
+        self._require_sha256_hex(digest_hex)
+        return self._manifests / f"{digest_hex}.json"
+
+    def manifest_locator(self, digest: InputManifestDigest) -> str:
+        """The store-relative locator of a manifest, for admission and read models."""
+        return f"manifests/{digest.hex}.json"
+
+    @staticmethod
+    def _require_sha256_hex(value: str) -> None:
+        if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+            raise ValueError("a store digest must be 64 lowercase hexadecimal characters")
+
+    def _write_temporary(self, data: bytes) -> Path:
+        self.ensure_layout()
+        descriptor, name = tempfile.mkstemp(prefix=".part-", dir=self._tmp)
+        path = Path(name)
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+        return path
+
+    def _publish_temporary(
+        self,
+        temporary: Path,
+        *,
+        digest_hex: str,
+        expected_size: int,
+        kind: PublicationKind,
+    ) -> str:
+        """Publish one complete temporary with create-if-absent semantics."""
+        final = self.object_path(digest_hex) if kind == "object" else self.manifest_path(digest_hex)
+        try:
+            if os.name == "nt":
+                # Windows rename fails rather than replacing an existing destination.
+                os.rename(temporary, final)
+            else:
+                # POSIX rename would replace; link creates the final name only if absent.
+                os.link(temporary, final)
+                temporary.unlink()
+        except FileExistsError:
+            self._verify_existing(final, digest_hex=digest_hex, expected_size=expected_size)
+            temporary.unlink(missing_ok=True)
+        except OSError as error:
+            temporary.unlink(missing_ok=True)
+            raise MaterializationError(
+                MaterializationRefusalCode.STORE_PUBLICATION_FAILED,
+                "the content-addressed object could not be published without replacing an "
+                "existing name",
+            ) from error
+        else:
+            self._verify_existing(final, digest_hex=digest_hex, expected_size=expected_size)
+            self._fsync_parent(final)
+
+        return f"sha256/{digest_hex}" if kind == "object" else f"manifests/{digest_hex}.json"
+
+    def _verify_existing(self, path: Path, *, digest_hex: str, expected_size: int) -> None:
+        observed, size = _hash_file(path)
+        if observed != digest_hex or size != expected_size:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+                "an existing content-addressed object has different bytes or size; it was "
+                "not overwritten",
+            )
+
+    @staticmethod
+    def _fsync_parent(path: Path) -> None:
+        """Flush a POSIX parent directory; Windows directory fsync is unavailable."""
+        if os.name == "nt":
+            return
+        try:
+            descriptor = os.open(path.parent, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(descriptor)
+        except OSError:
+            # The object is already visible and verified. A directory flush failure is
+            # a durability caveat, not permission to claim a different object identity.
+            pass
+        finally:
+            os.close(descriptor)
+
+    def publish_bytes(
+        self,
+        data: bytes,
+        *,
+        expected_sha256: str,
+        max_bytes: int,
+        kind: PublicationKind = "object",
+        mismatch_code: MaterializationRefusalCode = MaterializationRefusalCode.INPUT_SOURCE_CHANGED,
+    ) -> str:
+        """Publish bytes whose digest is already known, refusing mismatch or oversize.
+
+        The returned value is the store-relative key: ``sha256/<hex>`` for an object
+        and ``manifests/<hex>.json`` for a manifest.
+        """
+        self._require_sha256_hex(expected_sha256)
+        if len(data) > max_bytes:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_LIMIT_EXCEEDED,
+                f"content is larger than the {max_bytes}-byte limit",
+            )
+        observed = hashlib.sha256(data).hexdigest()
+        if observed != expected_sha256:
+            raise MaterializationError(
+                mismatch_code,
+                "the supplied content does not match the expected SHA-256",
+            )
+        temporary = self._write_temporary(data)
+        try:
+            return self._publish_temporary(
+                temporary,
+                digest_hex=expected_sha256,
+                expected_size=len(data),
+                kind=kind,
+            )
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+
+    def publish_stream(
+        self,
+        source: BinaryIO,
+        *,
+        expected_sha256: str,
+        max_bytes: int,
+        mismatch_code: MaterializationRefusalCode = MaterializationRefusalCode.INPUT_SOURCE_CHANGED,
+    ) -> tuple[str, int]:
+        """Copy a stream into a private temporary, hash it, then publish it.
+
+        The source is read once and the **copy** is hashed. There is no
+        hash-then-reopen-the-source step: the published bytes are the bytes that were
+        hashed, so a source replacement after the read cannot change the object.
+
+        :raises MaterializationError: for an unreadable source, an oversized stream, a
+            digest mismatch, or a failed publication.
+        """
+        self._require_sha256_hex(expected_sha256)
+        self.ensure_layout()
+        descriptor, name = tempfile.mkstemp(prefix=".part-", dir=self._tmp)
+        temporary = Path(name)
+        hasher = hashlib.sha256()
+        total = 0
+        try:
+            with os.fdopen(descriptor, "wb") as destination:
+                while True:
+                    try:
+                        chunk = source.read(READ_CHUNK_BYTES)
+                    except OSError as error:
+                        raise MaterializationError(
+                            mismatch_code,
+                            "the source content could not be read",
+                        ) from error
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise MaterializationError(
+                            MaterializationRefusalCode.INPUT_LIMIT_EXCEEDED,
+                            f"content is larger than the {max_bytes}-byte limit",
+                        )
+                    hasher.update(chunk)
+                    try:
+                        destination.write(chunk)
+                    except OSError as error:
+                        raise MaterializationError(
+                            MaterializationRefusalCode.STORE_PUBLICATION_FAILED,
+                            "the copied content could not be written to the store",
+                        ) from error
+                try:
+                    destination.flush()
+                    os.fsync(destination.fileno())
+                except OSError as error:
+                    raise MaterializationError(
+                        MaterializationRefusalCode.STORE_PUBLICATION_FAILED,
+                        "the copied content could not be flushed to the store",
+                    ) from error
+            observed = hasher.hexdigest()
+            if observed != expected_sha256:
+                raise MaterializationError(
+                    mismatch_code,
+                    "the source content does not match the declared SHA-256",
+                )
+            key = self._publish_temporary(
+                temporary,
+                digest_hex=observed,
+                expected_size=total,
+                kind="object",
+            )
+            return key, total
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def publish_manifest(self, manifest: InputManifest) -> tuple[InputManifestDigest, str]:
+        """Publish a canonical manifest and return its digest and store locator."""
+        digest = input_manifest_digest(manifest)
+        data = canonical_input_manifest_bytes(manifest)
+        key = self.publish_bytes(
+            data,
+            expected_sha256=digest.hex,
+            max_bytes=MAX_MANIFEST_BYTES,
+            kind="manifest",
+            mismatch_code=MaterializationRefusalCode.INPUT_MANIFEST_MISMATCH,
+        )
+        return digest, key
+
+    def read_manifest(self, digest: InputManifestDigest) -> InputManifest:
+        """Read, parse, canonicality-check and fully verify one stored manifest."""
+        path = self.manifest_path(digest.hex)
+        if _is_link(path):
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_LINK_REFUSED,
+                "the requested input manifest is a link, not a regular file",
+            )
+        try:
+            size = path.stat().st_size
+        except OSError as error:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_OBJECT_MISSING,
+                "the requested input manifest is missing",
+            ) from error
+        if size > MAX_MANIFEST_BYTES:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_LIMIT_EXCEEDED,
+                "the requested input manifest exceeds the manifest-byte limit",
+            )
+        try:
+            data = path.read_bytes()
+        except FileNotFoundError as error:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_OBJECT_MISSING,
+                "the requested input manifest is missing",
+            ) from error
+        except OSError as error:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+                "the requested input manifest could not be read",
+            ) from error
+        manifest = parse_input_manifest(data)
+        observed = input_manifest_digest(manifest)
+        if observed != digest:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_MANIFEST_MISMATCH,
+                "the stored manifest digest is not the digest of its canonical bytes",
+            )
+        self.verify_manifest(manifest)
+        return manifest
+
+    def verify_manifest(self, manifest: InputManifest) -> None:
+        """Re-hash every definition and asset object the manifest names.
+
+        A valid manifest does not prove its objects are present or unchanged. This is
+        the read-side counterpart of publication: every final name is re-verified
+        before reuse, and a missing or corrupt object is refused.
+        """
+        for definition in manifest.definitions:
+            self._verify_object(definition.object, definition.size_bytes)
+        for asset in manifest.assets:
+            self._verify_object(asset.object, asset.size_bytes)
+
+    def _verify_object(self, object_key: str, expected_size: int) -> None:
+        prefix = "sha256/"
+        if not object_key.startswith(prefix):
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_MANIFEST_MISMATCH,
+                "a manifest names an object with a non-sha256 key",
+            )
+        digest_hex = object_key[len(prefix) :]
+        self._require_sha256_hex(digest_hex)
+        path = self.object_path(digest_hex)
+        observed, size = _hash_file(path)
+        if observed != digest_hex or size != expected_size:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+                "a materialized object does not match its manifest digest or size",
+            )
+
+
+__all__ = ["MaterializationStore", "PublicationKind"]
