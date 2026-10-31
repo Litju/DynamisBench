@@ -129,13 +129,15 @@ export function WorkbenchLayout({
                   Layout{" "}
                   <select
                     aria-label="Laboratory layout"
+                    aria-describedby="laboratory-layout-availability"
                     value={layout}
                     onChange={(e) => setLayout(e.target.value)}
                   >
                     <option value="bottom">Bottom</option>
                     <option value="side">Side</option>
-                    <option value="scene">Scene only</option>
+                    <option value="scene" disabled>Scene only</option>
                   </select>
+                  <span id="laboratory-layout-availability" className="sr-only">Scene only is unavailable until a supported scientific scene exists.</span>
                 </label>
               </div>
 

@@ -18,10 +18,12 @@ import { artifactCounts, groupArtifacts } from "./grouping";
 export function ExplorerPane({
   discovery,
   selectedId,
+  inspectionState,
   onSelect,
 }: {
   discovery: WorkspaceDiscoveryResponse;
   selectedId: string | null;
+  inspectionState: "pending" | "failed" | "available";
   onSelect(artifactId: string): void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
@@ -46,11 +48,26 @@ export function ExplorerPane({
       </div>
 
       <div className="flex flex-wrap gap-1.5" aria-label="Artifact counts">
-        <Badge tone="ready">{counts.valid} valid</Badge>
+        <span className="w-full text-xs text-slate-500">
+          Last successful source reads
+        </span>
+        <Badge tone={inspectionState === "available" ? "ready" : "neutral"}>
+          {counts.valid} valid
+        </Badge>
         <Badge tone={counts.invalid > 0 ? "danger" : "neutral"}>
           {counts.invalid} invalid
         </Badge>
       </div>
+
+      {selectedId !== null && inspectionState !== "available" && (
+        <p role="status" className="text-xs text-slate-500">
+          {inspectionState === "pending"
+            ? "Revalidating selected source."
+            : "Current inspection unavailable."}{" "}
+          Counts retain the last successful reads; they do not confirm current
+          validation.
+        </p>
+      )}
 
       {discovery.issues.length > 0 && (
         <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
@@ -122,6 +139,11 @@ export function ExplorerPane({
                   <li key={artifact.artifact_id} role="presentation">
                     <ArtifactOption
                       artifact={artifact}
+                      inspectionState={
+                        artifact.artifact_id === selectedId
+                          ? inspectionState
+                          : "available"
+                      }
                       tabIndex={
                         artifact.artifact_id ===
                         (selectedId ?? groups[0]?.artifacts[0]?.artifact_id)
@@ -144,11 +166,13 @@ export function ExplorerPane({
 
 function ArtifactOption({
   artifact,
+  inspectionState,
   tabIndex,
   selected,
   onSelect,
 }: {
   artifact: ArtifactSummary;
+  inspectionState: "pending" | "failed" | "available";
   tabIndex: number;
   selected: boolean;
   onSelect(artifactId: string): void;
@@ -178,7 +202,11 @@ function ArtifactOption({
           {artifact.logical_reference}
         </span>
       </span>
-      {artifact.validation_status === "invalid" ? (
+      {inspectionState !== "available" ? (
+        <span className="mt-0.5 text-xs text-slate-500">
+          {inspectionState === "pending" ? "Revalidating" : "Unavailable"}
+        </span>
+      ) : artifact.validation_status === "invalid" ? (
         <AlertTriangle
           aria-label="Invalid"
           className="mt-0.5 h-4 w-4 shrink-0 text-rose-600"

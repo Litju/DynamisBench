@@ -181,6 +181,13 @@ function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
             <ExplorerPane
               discovery={discovery.data}
               selectedId={selectedId}
+              inspectionState={
+                inspection.isFetching
+                  ? "pending"
+                  : inspection.isError
+                    ? "failed"
+                    : "available"
+              }
               onSelect={setSelectedId}
             />
           }

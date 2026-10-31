@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 
-import { Activity, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Activity } from "lucide-react";
 
 import type { ReactNode } from "react";
 
@@ -16,8 +16,7 @@ const modes: [WorkbenchMode, string][] = [
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { sidebarCollapsed, toggleSidebar, mode, setMode, theme, toggleTheme } =
-    useUiStore();
+  const { mode, setMode, theme, toggleTheme } = useUiStore();
 
   return (
     <div className="wb-shell" data-theme={theme}>
@@ -31,22 +30,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </span>
         </div>
 
-        <nav aria-label="Workbench" data-collapsed={sidebarCollapsed}>
-          <button
-            type="button"
-            onClick={toggleSidebar}
-            aria-expanded={!sidebarCollapsed}
-            aria-label={
-              sidebarCollapsed ? "Expand navigation" : "Collapse navigation"
-            }
-          >
-            {sidebarCollapsed ? (
-              <PanelLeftOpen size={16} />
-            ) : (
-              <PanelLeftClose size={16} />
-            )}
-          </button>
-
+        <nav aria-label="Workbench">
           <Link to="/" activeProps={{ "data-active": "true" }}>
             Overview
           </Link>

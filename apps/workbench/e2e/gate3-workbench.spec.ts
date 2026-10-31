@@ -114,10 +114,11 @@ test("gate3: the explicit form and Explorer are keyboard operable", async ({ pag
   await page.keyboard.press("Space");
   await expect(first).toHaveAttribute("aria-selected", "true");
 
-  const collapse = page.getByRole("button", { name: "Collapse navigation" });
+  const collapse = page.getByRole("button", { name: "Collapse Navigator", exact: true });
   await expect(collapse).toHaveAttribute("aria-expanded", "true");
-  await collapse.click();
-  await expect(page.getByRole("button", { name: "Expand navigation" })).toHaveAttribute(
+  await collapse.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Expand Navigator", exact: true })).toHaveAttribute(
     "aria-expanded",
     "false",
   );

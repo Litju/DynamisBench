@@ -64,9 +64,23 @@ test("approved shell preserves selection, pane controls and latest source status
       .getByRole("option")
       .first(),
   ).toBeFocused();
+  await expect(
+    page.getByRole("option", { name: "Scene only", exact: true }),
+  ).toHaveAttribute("disabled", "");
+  await page.getByLabel("Laboratory layout").focus();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await expect(page.getByLabel("Laboratory layout")).not.toHaveValue("scene");
+  await expect(
+    page.getByRole("button", { name: "Re-read", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByTestId("artifact-content")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Collapse navigation" }),
+  ).toHaveCount(0);
   for (const width of [1024, 1280, 1600]) {
     await page.setViewportSize({ width, height: 900 });
-    for (const layout of ["bottom", "side", "scene"]) {
+    for (const layout of ["bottom", "side"]) {
       await page.getByLabel("Laboratory layout").selectOption(layout);
       expect(
         await page.evaluate(
@@ -78,8 +92,16 @@ test("approved shell preserves selection, pane controls and latest source status
   await page.getByLabel("Laboratory layout").selectOption("bottom");
   await page.setViewportSize({ width: 1280, height: 900 });
   // The E2E entry has a different Vite root; ensure it includes production utility styles.
-  expect(await page.locator("main > div").evaluate((element) => getComputedStyle(element).display)).toBe("flex");
-  expect(await page.getByRole("heading", { name: "Workspace", exact: true }).evaluate((element) => getComputedStyle(element).position)).toBe("absolute");
+  expect(
+    await page
+      .locator("main > div")
+      .evaluate((element) => getComputedStyle(element).display),
+  ).toBe("flex");
+  expect(
+    await page
+      .getByRole("heading", { name: "Workspace", exact: true })
+      .evaluate((element) => getComputedStyle(element).position),
+  ).toBe("absolute");
   // Opt-in screenshots contain no roots or credential; capture pixels only, no trace or DOM dump.
   if (process.env.DYNAMISBENCH_UX_SCREENSHOTS) {
     const directory = process.env.DYNAMISBENCH_UX_SCREENSHOTS;
@@ -98,6 +120,23 @@ test("approved shell preserves selection, pane controls and latest source status
       path: path.join(directory, "production-lab-dark.png"),
     });
   }
+  // Hold then fail a real inspection request; cached Explorer facts must be explicit.
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/artifacts/*", async (route) => { await gate; await route.abort("failed"); });
+  await page.getByRole("button", { name: "Re-read", exact: true }).click();
+  await expect(source.getByText("Revalidating", { exact: true })).toBeVisible();
+  await expect(source.getByText("valid", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Last successful source reads", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Counts retain the last successful reads/)).toBeVisible();
+  release();
+  await expect(source.getByText("Unavailable", { exact: true })).toBeVisible();
+  await expect(source.getByText("valid", { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("artifact-content")).toHaveCount(0);
+  await page.unroute("**/artifacts/*");
+  await page.getByRole("button", { name: "Re-read", exact: true }).click();
+  await expect(page.getByTestId("artifact-content")).toContainText("Loaded countermovement jump");
+  await expect(source.getByText("valid", { exact: true })).toBeVisible();
   // Actual file mutation: the next inspection must supersede the discovery snapshot everywhere.
   await writeFile(
     path.join(harness.workspace.sourceRoot, harness.workspace.validReference),

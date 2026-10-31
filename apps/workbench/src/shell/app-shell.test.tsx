@@ -26,7 +26,9 @@ describe("the workbench shell", () => {
     renderApplication("/");
 
     expect(await screen.findByText("DynamisBench")).toBeInTheDocument();
-    expect(screen.getByText("Human-movement VVUQ workbench")).toBeInTheDocument();
+    expect(
+      screen.getByText("Human-movement VVUQ workbench"),
+    ).toBeInTheDocument();
   });
 
   it("carries the runtime status in the header", async () => {
@@ -43,24 +45,16 @@ describe("the workbench shell", () => {
     );
   });
 
-  it("collapses and expands the navigation rail", async () => {
+  it("keeps header links keyboard accessible without a redundant Navigator control", async () => {
     const user = userEvent.setup();
     renderApplication("/");
-
-    const rail = await screen.findByRole("navigation", { name: "Workbench" });
-    expect(rail).toHaveAttribute("data-collapsed", "false");
-
-    await user.click(screen.getByRole("button", { name: "Collapse navigation" }));
-
-    expect(rail).toHaveAttribute("data-collapsed", "true");
-    expect(screen.getByRole("button", { name: "Expand navigation" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-
-    await user.click(screen.getByRole("button", { name: "Expand navigation" }));
-
-    expect(rail).toHaveAttribute("data-collapsed", "false");
+    const overview = await screen.findByRole("link", { name: "Overview" });
+    overview.focus();
+    await user.tab();
+    expect(screen.getByRole("link", { name: "Open workspace" })).toHaveFocus();
+    expect(
+      screen.queryByRole("button", { name: "Collapse navigation" }),
+    ).not.toBeInTheDocument();
   });
 
   it("offers the explicit open-workspace flow from the navigation rail", async () => {
