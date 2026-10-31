@@ -185,7 +185,11 @@ concurrency, and verification. No worker, protocol, native evidence, or UI chang
 
 ### Positive tests
 
-* Same inputs in two different workspace roots produce the same manifest digest.
+* Two materializations with the **same full `RunSpec` and identical five definitions and
+  assets** in different workspace roots produce the same manifest digest. When the
+  environment definitions differ by platform, the full fingerprints and manifest digests
+  differ; compare the shared benchmark/scenario/realization/SUT/asset content digests
+  separately.
 * Same asset bytes at two logical paths produce one store object and two manifest entries.
 * Re-running materialization reuses verified objects without rewriting them.
 * A manifest read back from disk validates and matches its digest.
@@ -214,7 +218,11 @@ concurrency, and verification. No worker, protocol, native evidence, or UI chang
 
 ### Acceptance criteria
 
-* Canonical manifest digest is reproducible across roots and platforms.
+* Canonical manifest digest is reproducible across relocated roots **for the same full
+  `RunSpec` and identical definitions/assets**. It is not expected to match across differing
+  environment definitions. Platform-differing runs are accepted by their shared
+  benchmark/scenario/realization/SUT/asset content digests, not by full manifest or
+  fingerprint equality.
 * Every asset byte is verified against its declaration.
 * No absolute path appears in the manifest.
 * Duplicate/collision/concurrency cases fail closed or reuse correctly.
