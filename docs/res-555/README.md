@@ -1,7 +1,8 @@
 # RES-555 — Design Review Package
 
-**Status:** Revision 2 (RES-561 design repair), draft for independent architecture, scientific,
-and security review. **Not authority. Not an ADR. Not implementation authorization.**
+**Status:** Revision 2.2 (RES-561 design repair; D1-B/D2-B/D9-A owner-approved;
+ADR-026 accepted). Draft design package for independent review. **These repository documents
+are not authority.** The accepted authority is Linear, including ADR-026.
 **Revision date:** 2026-10-31.
 **Code baseline audited:** protected `main` `2a3ef6016e904de5b218e657f15793dd230250bb`,
 tree `51e4b366d0cce3cddfba56e6e0fc1720e0fec421`.
@@ -20,9 +21,10 @@ cite that authority and propose bounded changes; they do not replace it. See
 
 ## Revision 2 — RES-561 repair
 
-Revision 2 corrects the design defects recorded in RES-561. It is documentation only. It
-adds no production code, no ADR amendment, no accepted protocol, and no owner approval.
-The design verdict is still `BLOCKED_AUTHORITY` for implementation.
+Revision 2 corrects the design defects recorded in RES-561. It is documentation only and
+added no production code or protocol change. On 2026-10-31 the owner explicitly approved
+**D1-B, D2-B and D9-A** and accepted **ADR-026**, authorizing DB-3.3A only. All other
+decisions remain unapproved; DB-3.3B–D remain blocked on D3/D4/D5/D6/D13.
 
 | RES-561 finding | Correction in this revision |
 |---|---|
@@ -35,7 +37,7 @@ The design verdict is still `BLOCKED_AUTHORITY` for implementation.
 | SEC-08 native scratch verify/copy race and worker binary ownership | Native bytes are copied first and the **copy** is validated and sealed; scratch bytes are never validated then copied. Worker program/interpreter identity is an operational detection record, not a sealed runtime snapshot. |
 | Identity: platform-specific environment | Full `RunSpec` fingerprints and `InputManifest` digests differ when environment semantic digests differ. Cross-platform comparison uses shared scientific content, not full fingerprints. |
 | Paths: 256 vs 1024 | `WorkspaceRelativePath` is 256 characters. 1024 is the workspace logical-reference bound and is not reused for authority or native payload paths. |
-| D1–D13 hard/soft and ADR proposals | The decision packet marks each decision's authority class and blocking level, keeps ADR-026/027 as proposals, and separates scientific inputs from runtime/library dependencies. |
+| D1–D13 hard/soft and ADR proposals | The decision packet marks each decision's authority class and blocking level. ADR-026 is now accepted; ADR-027 remains proposed. Scientific inputs are separated from runtime/library dependencies. |
 | D3 literal immutability conflict | D3 now states that option A changes the acceptance wording only with owner approval; otherwise DB-3.3B is blocked. No silent downgrade. |
 
 Detailed finding-to-decision closure and executable counterexamples are in
@@ -52,8 +54,9 @@ boundary is in `RES-555_EXECUTION_PLAN.md` §14.
 | Protected main after PR #23 | `4e5aff1636ec6e7a45b730847a997054d72eb25b` (apps/workbench only) |
 | Post-merge qualification | run `41166834210`, nine successful jobs |
 | Design branch base | `origin/main` at the audited commit; not rebased |
-| RES-555 Linear state at revision 2 | `Todo` |
-| RES-561 Linear state at revision 2 | design repair submitted for review |
+| Approved decisions | D1-B, D2-B, D9-A; ADR-026 accepted 2026-10-31 |
+| RES-555 Linear state at revision 2.2 | `In Progress` (DB-3.3A authorized; implementation not complete) |
+| RES-561 Linear state at revision 2.2 | `Done` (design-repair finding closed; no implementation authority implied) |
 
 ## Documents
 
@@ -66,17 +69,18 @@ boundary is in `RES-555_EXECUTION_PLAN.md` §14.
 
 ## Verdict requested
 
-The design findings are closed **as design corrections**, not as accepted authority.
-Implementation is still **blocked on authority** for the hard decisions in the packet:
+The design findings are closed **as design corrections**. D1-B, D2-B and D9-A are approved
+and ADR-026 is accepted; **DB-3.3A is authorized but not yet qualified**. Implementation
+remains blocked for the later slices by these decisions:
 
-* materialization manifest/store authority (D1);
-* fingerprint and platform/environment identity treatment (D2);
-* immutability/containment claim and its literal-acceptance conflict (D3);
-* native evidence channel (D4);
-* native artifact schema (D5);
-* native verification vs scientific assessment (D6);
-* sealed-bundle self-containment and retention (D9);
+* immutability/containment claim and its literal-acceptance conflict (D3 — DB-3.3B);
+* native evidence channel (D4 — DB-3.3C);
+* native artifact schema and decoded bounds (D5 — DB-3.3C);
+* native verification vs scientific assessment (D6 — DB-3.3C);
 * subprocess SUT executable closure, if any subprocess SUT is ever claimed (D13).
+
+D7, D8, D10, D11 and D12 remain soft process/clarification decisions. No native evidence,
+canonicalization, assessment or scientific VVUQ claim is authorized.
 
 The audit's conclusion remains `BLOCKED_AUTHORITY` for implementation, not because the
 design is missing, but because the accepted authority does not authorize the native channel,

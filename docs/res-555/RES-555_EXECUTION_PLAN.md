@@ -1,7 +1,8 @@
 # RES-555 — Execution Plan
 
-**Status:** Proposed plan, revision 2 (RES-561 repair). Not authorized implementation. Not a
-commit schedule. **No owner decision is approved.**
+**Status:** Proposed plan, revision 2.2. D1-B, D2-B and D9-A were explicitly approved by the
+owner on 2026-10-31 and ADR-026 was accepted, authorizing **DB-3.3A only**. All other
+decisions remain proposed. Not a commit schedule for DB-3.3B–D.
 **Baseline:** `2a3ef6016e904de5b218e657f15793dd230250bb`, tree
 `51e4b366d0cce3cddfba56e6e0fc1720e0fec421`. Protected main at revision 2:
 `4e5aff1636ec6e7a45b730847a997054d72eb25b` (PR #23, `apps/workbench/` only).
@@ -157,10 +158,10 @@ concurrency, and verification. No worker, protocol, native evidence, or UI chang
 
 ### Preconditions
 
-* D1, D2, D9 approved; ADR-026 accepted.
+* **Met 2026-10-31:** D1-B, D2-B and D9-A approved; ADR-026 accepted. DB-3.3A is authorized.
 * A decision on whether `AssetReference.sha256` becomes required for materialized
   executions; recommended yes, enforced at materialization and preflight.
-* A decision on the store root's persistence class; recommended `CACHE`.
+* A decision on the store root's persistence class; recommended `CACHE` (approved by D1-B).
 
 ### Exact deliverables
 

@@ -421,10 +421,11 @@ wrong, the correction is identified here and in the trust-boundary design's clos
 
 ### 9.3 Authority status of the repair
 
-No owner decision is approved by revision 2. The decision packet's approval table remains
-empty. D1–D13 remain proposals. ADR-026 and ADR-027 remain proposed, not accepted. RES-555
-and RES-561 remain in review states until the owner records decisions and an independent
-reviewer accepts the exact revised head.
+No owner decision was approved by revision 2. Revision 2.2 records the explicit owner
+approval of **D1-B, D2-B and D9-A** on 2026-10-31 and the acceptance of **ADR-026**. All
+other decisions remain proposals. ADR-027 remains proposed, not accepted. RES-555 is
+`In Progress` for DB-3.3A only; RES-561 is `Done` for the design-repair scope. DB-3.3B–D
+remain blocked on D3/D4/D5/D6/D13.
 
 ### 9.4 Inspection limits unchanged
 

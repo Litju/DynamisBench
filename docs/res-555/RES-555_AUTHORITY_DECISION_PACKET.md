@@ -1,7 +1,8 @@
 # RES-555 — Authority Decision Packet
 
-**Status:** Approval request, revision 2 (RES-561 repair). Not authority. Not an ADR. Not an
-implementation authorization. **No decision is approved by revision 2.**
+**Status:** Approval request, revision 2.2. D1-B, D2-B and D9-A were explicitly approved by
+the owner on 2026-10-31 and ADR-026 was accepted. All other decisions remain proposed.
+Not an implementation authorization except for DB-3.3A.
 **Baseline:** `2a3ef6016e904de5b218e657f15793dd230250bb`, tree
 `51e4b366d0cce3cddfba56e6e0fc1720e0fec421`. Protected main at revision 2:
 `4e5aff1636ec6e7a45b730847a997054d72eb25b` (PR #23, `apps/workbench/` only).
@@ -67,9 +68,16 @@ inputs or part of the `InputManifest`.
 | D12 | Post-merge acceptance hold and independent review | Require independent approval; hold Done until post-merge main qualification | PROCESS | SOFT | RES-555 closure |
 | D13 | Subprocess SUT executable closure | Refuse `SUBPROCESS`/`BRIDGE` in v1; define a versioned closure before any support | OWNER | HARD for subprocess SUT support; not blocking the reference path | Future SUT slice |
 
+**Approved 2026-10-31:** D1 option **B**, D2 option **B**, D9 option **A**. **ADR-026**
+was accepted with that approval. Every other row remains proposed; D3/D4/D5/D6/D13 still
+block their named later slices.
+
 ---
 
 ## D1 — Materialization manifest and store authority
+
+**Status:** **APPROVED — option B** by explicit owner decision on 2026-10-31; ADR-026
+accepted. Applies to DB-3.3A only.
 
 ### Exact missing or conflicting authority
 
@@ -155,6 +163,9 @@ flag. No worker or protocol change.
 ---
 
 ## D2 — Does the input-set digest enter `ExecutionFingerprint`?
+
+**Status:** **APPROVED — option B** by explicit owner decision on 2026-10-31; ADR-026
+accepted. Applies to DB-3.3A only.
 
 ### Exact missing or conflicting authority
 
@@ -649,6 +660,9 @@ Failure-path tests and verification-record schema.
 
 ## D9 — Store retention/GC and sealed-bundle self-containment
 
+**Status:** **APPROVED — option A** by explicit owner decision on 2026-10-31; ADR-026
+accepted. Applies to DB-3.3A only.
+
 ### Exact missing or conflicting authority
 
 A3 says sealed bundles contain self-contained regular files/directories. A1 §11 separates
@@ -954,7 +968,8 @@ path. No subprocess SUT implementation.
 
 This packet does **not** request:
 
-* approval to implement DB-3.3A–D;
+* approval to implement DB-3.3B, DB-3.3C or DB-3.3D (DB-3.3A is separately authorized by
+  D1-B/D2-B/D9-A and ADR-026);
 * approval to modify `RunSpec`, the v1 worker protocol, or any accepted ADR;
 * approval to merge the design PR;
 * approval to mark RES-555 Done;
@@ -972,25 +987,25 @@ reviewable.
 
 ## 3. Approval record (to be completed by the owner)
 
-**No decision below is approved.** Revision 2 added D13 and corrected the design; it did not
-record an owner choice.
+**D1-B, D2-B and D9-A are approved; all other rows remain blank.** The owner explicitly
+approved them on 2026-10-31 and accepted ADR-026. This authorizes DB-3.3A only.
 
 | Decision | Chosen option | Approver | Date | Amendment reference |
 |---|---|---|---|---|
-| D1 | | | | |
-| D2 | | | | |
+| D1 | B | Owner (explicit approval in RES-555) | 2026-10-31 | ADR-026 |
+| D2 | B | Owner (explicit approval in RES-555) | 2026-10-31 | ADR-026 |
 | D3 | | | | |
 | D4 | | | | |
 | D5 | | | | |
 | D6 | | | | |
 | D7 | | | | |
 | D8 | | | | |
-| D9 | | | | |
+| D9 | A | Owner (explicit approval in RES-555) | 2026-10-31 | ADR-026 |
 | D10 | | | | |
 | D11 | | | | |
 | D12 | | | | |
 | D13 | | | | |
 
-Until this table is completed and the corresponding Linear authority is amended, the
-implementation slices in `RES-555_EXECUTION_PLAN.md` remain blocked at their stated
-boundaries. Writing this packet is not approval.
+Until the remaining rows are completed and the corresponding Linear authority is amended,
+the later implementation slices in `RES-555_EXECUTION_PLAN.md` remain blocked at their
+stated boundaries. DB-3.3A proceeds under the approved rows and ADR-026.
