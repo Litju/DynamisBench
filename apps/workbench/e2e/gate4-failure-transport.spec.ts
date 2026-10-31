@@ -30,7 +30,7 @@ async function openWorkspace(page: import("@playwright/test").Page, source: stri
   await page.getByLabel("Evidence root").fill(evidence);
   await page.getByRole("button", { name: "Open workspace" }).click();
   await page.waitForURL(/\/workspace\/[A-Za-z0-9_-]+$/);
-  await expect(page.getByRole("option")).toHaveCount(2);
+  await expect(page.getByRole("listbox", { name: "Workspace artifacts" }).getByRole("option")).toHaveCount(2);
   await expect(page.getByText("Events: live")).toBeVisible();
 }
 

@@ -1,8 +1,435 @@
-/*
- * The one global stylesheet.
- *
- * Tailwind v4 is configured by its source, not by a config file: this import is the whole
- * build, and `@tailwindcss/vite` scans the workbench source for the utility classes the
- * shell actually uses. There is no v3 `tailwind.config.js` and no PostCSS pipeline.
- */
 @import "tailwindcss";
+@source "./";
+@theme {
+  --font-sans:
+    "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono:
+    "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
+  --color-bg: #eceef2;
+  --color-panel: #ffffff;
+  --color-panel-2: #f7f8fa;
+  --color-sunk: #f0f2f5;
+  --color-hover: #f2f5f9;
+  --color-scene: #f3f4f6;
+  --color-line: #dde1e7;
+  --color-line-2: #c6ccd5;
+  --color-line-soft: #eef0f3;
+  --color-ink: #1b2129;
+  --color-ink-2: #414b58;
+  --color-ink-3: #5c6675;
+  --color-ink-4: #8a929d;
+  --color-accent: #1f57a8;
+  --color-accent-2: #164382;
+  --color-accent-soft: #e6eef9;
+  --color-sel: #9fb8de;
+  --color-ok: #23704a;
+  --color-ok-soft: #e5f2ea;
+  --color-ok-line: #bcdcc9;
+  --color-warn: #8a5800;
+  --color-warn-soft: #fbf1dc;
+  --color-err: #a3261d;
+  --color-err-soft: #f9e6e4;
+  --color-err-line: #e8c3bf;
+  --color-calc: #0c6670;
+  --color-calc-soft: #e2f1f2;
+  --color-calc-line: #bcdfe2;
+  --color-fix: #5f4596;
+  --color-fix-soft: #eeeaf6;
+  --color-fix-line: #d6cdea;
+  --color-design: #7a5a12;
+  --color-design-soft: #f6f0e1;
+  --color-design-line: #e3d3a8;
+  --color-ext: #2b6a86;
+  --color-ext-soft: #e3f0f5;
+  --color-ext-line: #b9d8e4;
+  --color-bone: #ddd5c4;
+  --color-auth: #24456f;
+  --color-auth-soft: #e9eff7;
+  --color-auth-line: #cbd7e8;
+  --color-s1: #1f57a8;
+  --color-s2: #0c6670;
+  --color-s3: #7a5a12;
+  --color-s4: #5f4596;
+  --color-s5: #a3261d;
+  --color-cand: #c0571b;
+  --color-grid: #eceef2;
+  --color-grid-2: #c6ccd5;
+  --color-cursor: #1b2129;
+}
+/* Dark theme for long sessions: same semantics, re-tuned for contrast on dark surfaces. */
+[data-theme="dark"] {
+  --color-bg: #111419;
+  --color-panel: #191d23;
+  --color-panel-2: #1e232a;
+  --color-sunk: #242a32;
+  --color-hover: #222831;
+  --color-scene: #15191e;
+  --color-line: #2c333c;
+  --color-line-2: #3a434e;
+  --color-line-soft: #232930;
+  --color-ink: #e3e7ed;
+  --color-ink-2: #b6bfca;
+  --color-ink-3: #8d97a4;
+  --color-ink-4: #6b7480;
+  --color-accent: #4f8ad8;
+  --color-accent-2: #8cb4ec;
+  --color-accent-soft: #1d2d44;
+  --color-sel: #3f6aa6;
+  --color-ok: #66c393;
+  --color-ok-soft: #17301f;
+  --color-ok-line: #2b5a3e;
+  --color-warn: #ddb055;
+  --color-warn-soft: #362a12;
+  --color-err: #ee8178;
+  --color-err-soft: #3a1f1d;
+  --color-err-line: #6a3430;
+  --color-calc: #62c3cc;
+  --color-calc-soft: #142f33;
+  --color-calc-line: #24575d;
+  --color-fix: #b19ce6;
+  --color-fix-soft: #261f3c;
+  --color-fix-line: #44386b;
+  --color-design: #dbbb72;
+  --color-design-soft: #2f2715;
+  --color-design-line: #5e4c22;
+  --color-ext: #7fbcd6;
+  --color-ext-soft: #15303b;
+  --color-ext-line: #2a5466;
+  --color-bone: #b9b09d;
+  --color-auth: #a9c3e6;
+  --color-auth-soft: #1b2738;
+  --color-auth-line: #2f4561;
+  --color-s1: #6fa3ea;
+  --color-s2: #4fc2c9;
+  --color-s3: #d8b25c;
+  --color-s4: #b19ce6;
+  --color-s5: #ee8178;
+  --color-cand: #f0915a;
+  --color-grid: #252b33;
+  --color-grid-2: #3a434e;
+  --color-cursor: #e3e7ed;
+  color-scheme: dark;
+}
+@theme inline {
+  --color-white: var(--color-panel);
+  --color-slate-50: var(--color-panel-2);
+  --color-slate-100: var(--color-sunk);
+  --color-slate-200: var(--color-line);
+  --color-slate-300: var(--color-line-2);
+  --color-slate-400: var(--color-ink-4);
+  --color-slate-500: var(--color-ink-3);
+  --color-slate-600: var(--color-ink-2);
+  --color-slate-700: var(--color-ink-2);
+  --color-slate-800: var(--color-ink);
+  --color-slate-900: var(--color-ink);
+  --color-emerald-50: var(--color-ok-soft);
+  --color-emerald-200: var(--color-ok-line);
+  --color-emerald-700: var(--color-ok);
+  --color-emerald-800: var(--color-ok);
+  --color-rose-50: var(--color-err-soft);
+  --color-rose-200: var(--color-err-line);
+  --color-rose-600: var(--color-err);
+  --color-rose-700: var(--color-err);
+  --color-rose-900: var(--color-err);
+  --color-amber-50: var(--color-warn-soft);
+  --color-amber-200: var(--color-design-line);
+  --color-amber-800: var(--color-warn);
+  --color-amber-900: var(--color-warn);
+}
+html,
+body,
+#root {
+  min-height: 100%;
+}
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+}
+button,
+a,
+input,
+select {
+  outline-offset: 3px;
+}
+button:not(:disabled),
+select {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.wb-shell {
+  min-height: 100vh;
+  background: var(--color-bg);
+  color: var(--color-ink);
+}
+.wb-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 46px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-panel);
+}
+.wb-header nav {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.wb-header a {
+  font-size: 12px;
+  color: var(--color-ink-2);
+}
+.wb-modebar {
+  display: flex;
+  gap: 4px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-panel);
+  align-items: center;
+}
+.wb-modebar button {
+  padding: 10px 12px;
+  border-bottom: 2px solid transparent;
+  font-size: 12px;
+}
+.wb-modebar button[aria-pressed="true"] {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+  font-weight: 600;
+}
+.wb-modebar .wb-theme {
+  margin-left: auto;
+}
+.wb-context {
+  display: flex;
+  gap: 20px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-panel-2);
+  min-width: 0;
+}
+.wb-context div {
+  min-width: 0;
+  flex: 1;
+}
+.wb-context dt,
+.wb-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-ink-3);
+}
+.wb-context dd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-columns {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr) 280px;
+  gap: 6px;
+  padding: 6px;
+  min-height: 620px;
+}
+.wb-pane {
+  min-width: 0;
+  border: 1px solid var(--color-line);
+  background: var(--color-panel);
+  overflow: auto;
+}
+.wb-pane-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 7px 9px;
+  background: var(--color-panel-2);
+  border-bottom: 1px solid var(--color-line);
+  font-size: 11px;
+  font-weight: 600;
+}
+.wb-pane-body {
+  padding: 10px;
+}
+.wb-rail {
+  writing-mode: vertical-rl;
+  padding: 10px 4px;
+  font-size: 11px;
+  color: var(--color-ink-3);
+}
+.wb-lab {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.wb-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-line);
+  font-size: 11px;
+}
+.wb-toolbar button,
+.wb-toolbar select {
+  padding: 3px 7px;
+  border: 1px solid var(--color-line-2);
+  border-radius: 3px;
+}
+.wb-lab-content {
+  display: grid;
+  gap: 6px;
+  flex: 1;
+}
+.wb-scene {
+  display: flex;
+  flex-direction: column;
+  min-height: 285px;
+  background: var(--color-scene);
+}
+.wb-unavailable {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 9px;
+  padding: 24px;
+  flex: 1;
+  color: var(--color-ink-3);
+}
+.wb-unavailable p {
+  max-width: 380px;
+  font-size: 12px;
+}
+.wb-tag {
+  font-size: 10px;
+  border: 1px solid var(--color-line-2);
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.03em;
+  color: var(--color-ink-2);
+  background: var(--color-panel-2);
+}
+.wb-dock {
+  min-height: 240px;
+  max-height: 560px;
+  overflow: auto;
+  resize: vertical;
+}
+.wb-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 5px 12px;
+  font-size: 10px;
+  color: var(--color-ink-3);
+  border-top: 1px solid var(--color-line);
+}
+.wb-landing {
+  padding: 28px;
+}
+@media (max-width: 1100px) {
+  .wb-columns {
+    grid-template-columns: 200px minmax(0, 1fr) 240px;
+  }
+  .wb-header {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 800px) {
+  .wb-columns {
+    display: flex;
+    flex-direction: column;
+  }
+  .wb-context {
+    flex-wrap: wrap;
+  }
+  .wb-context div {
+    min-width: 120px;
+  }
+  .wb-modebar {
+    flex-wrap: wrap;
+  }
+}
+
+/* Keep the desktop instrument within its window; source panes own overflow. */
+.wb-shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.wb-shell > main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.wb-header,
+.wb-modebar,
+.wb-context,
+.wb-footer {
+  flex-shrink: 0;
+}
+.wb-columns {
+  min-height: 0;
+  flex: 1;
+}
+.wb-lab {
+  min-height: 0;
+}
+.wb-lab-content {
+  min-height: 0;
+  grid-template-rows: minmax(160px, 1fr) minmax(160px, 0.8fr);
+}
+.wb-lab-content[data-layout="side"],
+.wb-lab-content[data-layout="scene"] {
+  grid-template-rows: minmax(0, 1fr);
+}
+.wb-scene {
+  min-height: 0;
+}
+.wb-dock {
+  min-height: 160px;
+}
+.wb-pane-body {
+  overflow: auto;
+}
+.wb-landing {
+  overflow: auto;
+}
+section[aria-labelledby="activity-heading"] {
+  flex-shrink: 0;
+  max-height: 125px;
+  overflow: auto;
+  padding: 7px 12px;
+}
+section[aria-labelledby="activity-heading"] ol {
+  max-height: 55px;
+}
+@media (max-width: 800px) {
+  .wb-shell {
+    height: auto;
+    min-height: 100vh;
+  }
+  .wb-columns {
+    min-height: 600px;
+  }
+  .wb-lab {
+    min-height: 480px;
+  }
+}

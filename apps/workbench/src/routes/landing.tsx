@@ -24,7 +24,7 @@ function LandingPage() {
   const client = useApiClient();
 
   return (
-    <section className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+    <section className="wb-landing mx-auto flex w-full max-w-3xl flex-col gap-6">
       <div className="flex flex-col gap-1">
         <h1 className="text-lg font-semibold tracking-tight">Workbench overview</h1>
         <p className="text-sm text-slate-600">

@@ -28,11 +28,16 @@ import {
   artifactInspectionOptions,
   workspaceArtifactsOptions,
 } from "../api/queries";
-import type { ArtifactInspectionResponse, ArtifactSummary } from "../api/types";
+import type {
+  ArtifactInspectionResponse,
+  ArtifactSummary,
+  WorkspaceDiscoveryResponse,
+} from "../api/types";
 import { useApiClient, useSession } from "../session/provider";
 import { Badge } from "../ui/badge";
 import { ArtifactContent } from "../workbench/artifact-tree";
 import { ExplorerPane } from "../workbench/explorer";
+import { WorkbenchLayout } from "../workbench/laboratory";
 import { InspectorPane } from "../workbench/inspector";
 import { rootRoute } from "./root";
 
@@ -46,7 +51,7 @@ function WorkspacePage() {
   const { workspaceId } = workspaceRoute.useParams();
 
   return (
-    <div className="mx-auto flex w-full max-w-[110rem] flex-col gap-4">
+    <div className="flex min-h-0 flex-1 flex-col">
       <WorkspaceWorkbench workspaceId={workspaceId} />
     </div>
   );
@@ -66,7 +71,10 @@ function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 
   const discovery = useQuery({
     ...(client === null
-      ? { queryKey: apiQueryKeys.artifacts(workspaceId), queryFn: () => Promise.reject() }
+      ? {
+          queryKey: apiQueryKeys.artifacts(workspaceId),
+          queryFn: () => Promise.reject(),
+        }
       : workspaceArtifactsOptions(client, workspaceId)),
     enabled: client !== null,
   });
@@ -93,9 +101,33 @@ function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
   });
 
   const currentInspection =
-    inspection.data !== undefined && inspection.data.artifact_id === selectedId
+    !inspection.isFetching &&
+    !inspection.isError &&
+    inspection.data !== undefined &&
+    inspection.data.artifact_id === selectedId
       ? inspection.data
       : null;
+
+  useEffect(() => {
+    if (currentInspection === null) return;
+    const { content: _content, ...summary } = currentInspection;
+    queryClient.setQueryData<WorkspaceDiscoveryResponse>(
+      apiQueryKeys.artifacts(workspaceId),
+      (previous) =>
+        previous === undefined
+          ? previous
+          : {
+              ...previous,
+              artifacts: {
+                artifacts: previous.artifacts.artifacts.map((artifact) =>
+                  artifact.artifact_id === currentInspection.artifact_id
+                    ? summary
+                    : artifact,
+                ),
+              },
+            },
+    );
+  }, [currentInspection, queryClient, workspaceId]);
 
   if (session.phase !== "ready" || client === null) {
     return (
@@ -108,27 +140,20 @@ function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
             : "The workspace will become available when the session is ready again."}
         </p>
         <p className="mt-2 text-xs text-slate-500">
-          Opaque identifier <code className="rounded bg-slate-100 px-1 py-0.5">{workspaceId}</code>
+          Opaque identifier{" "}
+          <code className="rounded bg-slate-100 px-1 py-0.5">
+            {workspaceId}
+          </code>
         </p>
       </section>
     );
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <div className="flex flex-col gap-0.5">
-          <h1 className="text-lg font-semibold tracking-tight">Workspace</h1>
-          <p className="text-xs text-slate-500">
-            Opaque identifier <code className="rounded bg-slate-100 px-1 py-0.5">{workspaceId}</code>
-          </p>
-        </div>
-        <span className="text-xs text-slate-500">
-          Read-only source authority · inspection re-reads on every request
-        </span>
-      </div>
-
-      {discovery.isPending && <PaneMessage>Discovering workspace authority…</PaneMessage>}
+    <div className="flex min-h-0 flex-1 flex-col">
+      {discovery.isPending && (
+        <PaneMessage>Discovering workspace authority…</PaneMessage>
+      )}
 
       {discovery.isError && (
         <WorkspaceFailure
@@ -139,37 +164,54 @@ function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
       )}
 
       {discovery.data !== undefined && (
-        <div className="grid gap-4 lg:grid-cols-[minmax(15rem,0.85fr)_minmax(0,2fr)_minmax(16rem,1fr)]">
-          <Pane>
+        <WorkbenchLayout
+          workspaceId={workspaceId}
+          artifact={currentInspection ?? selectedSummary}
+          status={
+            selectedId === null
+              ? "No source selected"
+              : inspection.isFetching
+                ? "Revalidating"
+                : inspection.isError
+                  ? "Inspection unavailable"
+                  : ((currentInspection ?? selectedSummary)
+                      ?.validation_status ?? "Unavailable")
+          }
+          navigator={
             <ExplorerPane
               discovery={discovery.data}
               selectedId={selectedId}
               onSelect={setSelectedId}
             />
-          </Pane>
-
-          <Pane>
+          }
+          inspector={
+            inspection.isFetching || inspection.isError ? (
+              <p role="status">
+                {inspection.isFetching
+                  ? "Revalidating selected source…"
+                  : "Latest inspection unavailable. Re-read the source to obtain current identity and diagnostics."}
+              </p>
+            ) : (
+              <InspectorPane artifact={currentInspection ?? selectedSummary} />
+            )
+          }
+          content={
             <WorkspaceContentPane
               workspaceId={workspaceId}
-              selectedSummary={selectedSummary}
+              selectedSummary={currentInspection ?? selectedSummary}
               selectedId={selectedId}
               inspection={currentInspection}
-              inspectionPending={inspection.isPending && selectedId !== null}
+              inspectionPending={inspection.isFetching && selectedId !== null}
               inspectionError={inspection.error}
               onReRead={() => {
-                if (selectedId !== null) {
+                if (selectedId !== null)
                   void queryClient.invalidateQueries({
                     queryKey: apiQueryKeys.artifact(workspaceId, selectedId),
                   });
-                }
               }}
             />
-          </Pane>
-
-          <Pane>
-            <InspectorPane artifact={currentInspection ?? selectedSummary} />
-          </Pane>
-        </div>
+          }
+        />
       )}
     </div>
   );
@@ -193,17 +235,31 @@ function WorkspaceContentPane({
   onReRead(): void;
 }) {
   return (
-    <section aria-labelledby="workspace-content-heading" className="flex min-h-0 flex-col gap-3">
+    <section
+      aria-labelledby="workspace-content-heading"
+      className="flex min-h-0 flex-col gap-3"
+    >
       <div className="flex items-baseline justify-between gap-2">
-        <h2 id="workspace-content-heading" className="text-sm font-semibold text-slate-800">
+        <h2
+          id="workspace-content-heading"
+          className="text-sm font-semibold text-slate-800"
+        >
           Validated content
         </h2>
         <div className="flex items-center gap-2">
-          {selectedSummary !== null && (
-            <Badge tone={selectedSummary.validation_status === "valid" ? "ready" : "danger"}>
-              {selectedSummary.validation_status}
-            </Badge>
-          )}
+          {selectedSummary !== null &&
+            !inspectionPending &&
+            !inspectionError && (
+              <Badge
+                tone={
+                  selectedSummary.validation_status === "valid"
+                    ? "ready"
+                    : "danger"
+                }
+              >
+                {selectedSummary.validation_status}
+              </Badge>
+            )}
           {selectedId !== null && (
             <button
               type="button"
@@ -220,21 +276,26 @@ function WorkspaceContentPane({
 
       {selectedId === null ? (
         <p className="text-sm text-slate-500">
-          Select an artifact in the Explorer to inspect its validated content. Files are
-          re-read and revalidated by the application; this pane never reads them.
+          Select an artifact in the Explorer to inspect its validated content.
+          Files are re-read and revalidated by the application; this pane never
+          reads them.
         </p>
       ) : inspectionError !== null && inspectionError !== undefined ? (
         <InspectionFailure workspaceId={workspaceId} error={inspectionError} />
       ) : inspectionPending ? (
-        <p className="text-sm text-slate-500">Reading and validating the selected artifact…</p>
+        <p className="text-sm text-slate-500">
+          Reading and validating the selected artifact…
+        </p>
       ) : inspection === null ? (
         <p className="text-sm text-slate-500">
           This artifact is no longer part of the current discovery response.
         </p>
-      ) : inspection.validation_status === "valid" && inspection.content !== null ? (
+      ) : inspection.validation_status === "valid" &&
+        inspection.content !== null ? (
         <>
           <p className="text-xs text-slate-500">
-            Validated {inspection.kind} content, serialised from the domain model. Read-only.
+            Validated {inspection.kind} content, serialised from the domain
+            model. Read-only.
           </p>
           <div className="min-h-0 overflow-auto rounded-md border border-slate-200 bg-slate-50 p-3">
             <ArtifactContent content={inspection.content} />
@@ -242,10 +303,13 @@ function WorkspaceContentPane({
         </>
       ) : (
         <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">
-          <p className="font-medium">No validated content is published for this artifact.</p>
+          <p className="font-medium">
+            No validated content is published for this artifact.
+          </p>
           <p className="mt-1 text-xs">
-            The document did not produce a validated definition. Bounded diagnostics are in the
-            Inspector and in the artifact's Explorer entry.
+            The document did not produce a validated definition. Bounded
+            diagnostics are in the Inspector and in the artifact's Explorer
+            entry.
           </p>
         </div>
       )}
@@ -253,7 +317,13 @@ function WorkspaceContentPane({
   );
 }
 
-function InspectionFailure({ workspaceId, error }: { workspaceId: string; error: unknown }) {
+function InspectionFailure({
+  workspaceId,
+  error,
+}: {
+  workspaceId: string;
+  error: unknown;
+}) {
   if (isNotFound(error)) {
     return (
       <StaleIdentifier
@@ -265,7 +335,10 @@ function InspectionFailure({ workspaceId, error }: { workspaceId: string; error:
   }
 
   return (
-    <div role="alert" className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">
+    <div
+      role="alert"
+      className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900"
+    >
       <p className="flex items-center gap-1.5 font-medium">
         <AlertCircle aria-hidden className="h-4 w-4" />
         The artifact could not be inspected
@@ -295,7 +368,10 @@ function WorkspaceFailure({
   }
 
   return (
-    <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+    <div
+      role="alert"
+      className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900"
+    >
       <p className="flex items-center gap-1.5 font-medium">
         <AlertCircle aria-hidden className="h-4 w-4" />
         {title}
@@ -336,14 +412,6 @@ function StaleIdentifier({
   );
 }
 
-function Pane({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex min-h-[24rem] flex-col rounded-lg border border-slate-200 bg-white p-4">
-      {children}
-    </div>
-  );
-}
-
 function PaneMessage({ children }: { children: React.ReactNode }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-500">
@@ -353,7 +421,11 @@ function PaneMessage({ children }: { children: React.ReactNode }) {
 }
 
 function isNotFound(error: unknown): boolean {
-  return error instanceof ApiClientError && error.kind === "http" && error.status === 404;
+  return (
+    error instanceof ApiClientError &&
+    error.kind === "http" &&
+    error.status === 404
+  );
 }
 
 function failureText(error: unknown): string {

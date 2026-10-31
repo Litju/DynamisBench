@@ -1,123 +1,92 @@
-/**
- * The workbench shell: header, navigation rail, and the region routes render into.
- *
- * Restrained on purpose. This milestone establishes where things go and what the application
- * looks like while it decides whether it has an API; the three-pane authority UI, the
- * artifact inspector and every scientific view arrive with the milestone that owns them, and
- * a shell that guessed at their layout now would be a shell that had to be undone.
- *
- * The rail is the one piece of UI-local state ([`useUiStore`]) and Lucide is the one icon
- * set: the icons here are status and navigation glyphs, not scientific ones.
- */
-
 import { Link } from "@tanstack/react-router";
-import { Activity, FolderOpen, House, PanelLeftClose, PanelLeftOpen } from "lucide-react";
-import type { ComponentType, ReactNode } from "react";
 
-import { useUiStore } from "../store/ui";
-import { Button } from "../ui/button";
-import { cn } from "../ui/cn";
+import { Activity, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+
+import type { ReactNode } from "react";
+
+import { useUiStore, type WorkbenchMode } from "../store/ui";
+
 import { RuntimeStatus } from "./runtime-status";
 
+const modes: [WorkbenchMode, string][] = [
+  ["study", "Study & Model"],
+  ["lab", "Simulation Laboratory"],
+  ["analysis", "Analysis & VVUQ"],
+  ["evidence", "Evidence & Provenance"],
+];
+
 export function AppShell({ children }: { children: ReactNode }) {
+  const { sidebarCollapsed, toggleSidebar, mode, setMode, theme, toggleTheme } =
+    useUiStore();
+
   return (
-    <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900">
-      <header className="flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-3">
-        <Activity aria-hidden className="h-5 w-5 text-slate-400" />
-        <div className="min-w-0">
-          <span className="block text-sm font-semibold tracking-tight">DynamisBench</span>
-          <span className="block truncate text-xs text-slate-500">
+    <div className="wb-shell" data-theme={theme}>
+      <header className="wb-header">
+        <Activity aria-hidden size={22} className="text-accent" />
+
+        <div>
+          <strong className="block text-[13px]">DynamisBench</strong>
+          <span className="block text-[10px] text-ink-3">
             Human-movement VVUQ workbench
           </span>
         </div>
+
+        <nav aria-label="Workbench" data-collapsed={sidebarCollapsed}>
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            aria-expanded={!sidebarCollapsed}
+            aria-label={
+              sidebarCollapsed ? "Expand navigation" : "Collapse navigation"
+            }
+          >
+            {sidebarCollapsed ? (
+              <PanelLeftOpen size={16} />
+            ) : (
+              <PanelLeftClose size={16} />
+            )}
+          </button>
+
+          <Link to="/" activeProps={{ "data-active": "true" }}>
+            Overview
+          </Link>
+
+          <Link to="/" hash="open-workspace">
+            Open workspace
+          </Link>
+        </nav>
+
         <RuntimeStatus className="ml-auto" />
       </header>
-      <div className="flex flex-1 items-stretch">
-        <NavigationRail />
-        <main className="min-w-0 flex-1 p-6">{children}</main>
-      </div>
+
+      <nav className="wb-modebar" aria-label="Scientific contexts">
+        {modes.map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            aria-pressed={mode === id}
+            onClick={() => setMode(id)}
+          >
+            {label}
+          </button>
+        ))}
+
+        <button
+          className="wb-theme"
+          type="button"
+          onClick={toggleTheme}
+          aria-label="Toggle color theme"
+        >
+          {theme === "light" ? "Dark" : "Light"}
+        </button>
+      </nav>
+
+      <main>{children}</main>
+
+      <footer className="wb-footer">
+        <span>Read-only source authority</span>
+        <span>Simulation and scientific assessment unavailable</span>
+      </footer>
     </div>
-  );
-}
-
-function NavigationRail() {
-  const collapsed = useUiStore((state) => state.sidebarCollapsed);
-  const toggleSidebar = useUiStore((state) => state.toggleSidebar);
-
-  return (
-    <nav
-      aria-label="Workbench"
-      data-collapsed={collapsed}
-      className={cn(
-        "flex shrink-0 flex-col gap-1 border-r border-slate-200 bg-white p-2 transition-[width]",
-        collapsed ? "w-14" : "w-56",
-      )}
-    >
-      <Button
-        type="button"
-        size="icon"
-        onClick={toggleSidebar}
-        aria-expanded={!collapsed}
-        aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
-        className={cn("mb-1 text-slate-400", collapsed ? "self-center" : "self-end")}
-      >
-        {collapsed ? (
-          <PanelLeftOpen aria-hidden className="h-4 w-4" />
-        ) : (
-          <PanelLeftClose aria-hidden className="h-4 w-4" />
-        )}
-      </Button>
-
-      <RailItem to="/" icon={House} label="Overview" collapsed={collapsed} />
-      <RailItem
-        to="/"
-        hash="open-workspace"
-        icon={FolderOpen}
-        label="Open workspace"
-        collapsed={collapsed}
-      />
-    </nav>
-  );
-}
-
-/**
- * One rail entry: a real link, styled by the button primitive, carrying its own icon.
- *
- * The active state travels as a data attribute rather than as a second class list, so the
- * link never competes with the button's own sizing and one `data-[active=true]:` utility
- * decides the highlight.
- */
-function RailItem({
-  to,
-  hash,
-  icon: Icon,
-  label,
-  collapsed,
-}: {
-  to: string;
-  hash?: string;
-  icon: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
-  label: string;
-  collapsed: boolean;
-}) {
-  return (
-    <Button
-      asChild
-      size="nav"
-      className={cn(
-        "data-[active=true]:bg-slate-100 data-[active=true]:text-slate-900",
-        collapsed && "justify-center px-0",
-      )}
-    >
-      <Link
-        to={to}
-        hash={hash}
-        activeProps={{ "data-active": "true" }}
-        aria-label={collapsed ? label : undefined}
-      >
-        <Icon aria-hidden className="h-4 w-4 shrink-0" />
-        {!collapsed && <span className="truncate">{label}</span>}
-      </Link>
-    </Button>
   );
 }

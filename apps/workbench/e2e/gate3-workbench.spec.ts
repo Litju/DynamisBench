@@ -55,7 +55,7 @@ test("gate3: a real workspace is opened, discovered, selected, inspected and re-
   await expect(page.getByRole("heading", { name: "Explorer" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Validated content" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Inspector" })).toBeVisible();
-  await expect(page.getByRole("option")).toHaveCount(2);
+  await expect(page.getByRole("listbox", { name: "Workspace artifacts" }).getByRole("option")).toHaveCount(2);
   await expect(page.getByText("1 valid", { exact: true })).toBeVisible();
   await expect(page.getByText("1 invalid", { exact: true })).toBeVisible();
 
@@ -108,7 +108,7 @@ test("gate3: the explicit form and Explorer are keyboard operable", async ({ pag
   await page.keyboard.press("Enter");
   await page.waitForURL(/\/workspace\/[A-Za-z0-9_-]+$/);
 
-  const first = page.getByRole("option").first();
+  const first = page.getByRole("listbox", { name: "Workspace artifacts" }).getByRole("option").first();
   await first.focus();
   await expect(first).toBeFocused();
   await page.keyboard.press("Space");
