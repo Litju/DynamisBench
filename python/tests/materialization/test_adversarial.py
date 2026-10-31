@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -177,6 +178,61 @@ def test_traversal_path_is_refused_even_when_the_model_is_constructed_raw(
         _materialize(bundle)
 
     assert caught.value.code is MaterializationRefusalCode.INPUT_PATH_REFUSED
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        "models\\reference\\pendulum.xml",
+        "models/reference/file.txt:stream",
+        "models/reference/CON",
+        "models/reference/foo.",
+        "models/reference/a<b",
+        "/".join(["a"] * 33),
+    ),
+)
+def test_nonportable_materialized_paths_are_refused_before_publication(
+    reference_bundle: ReferenceBundle,
+    path: str,
+) -> None:
+    original = reference_bundle.realization.assets[0]
+    raw = AssetReference.model_construct(
+        asset_id=original.asset_id,
+        path=path,
+        description=original.description,
+        sha256=original.sha256,
+    )
+    realization = reference_bundle.realization.model_copy(update={"assets": (raw,)})
+    bundle = _with_realization(reference_bundle, realization)
+
+    with pytest.raises(MaterializationError) as caught:
+        _materialize(bundle)
+
+    assert caught.value.code is MaterializationRefusalCode.INPUT_PATH_REFUSED
+    assert not (reference_bundle.workspace.evidence_root / "cache" / "inputs" / "objects").exists()
+
+
+def test_asset_count_is_bounded_before_any_publication(
+    reference_bundle: ReferenceBundle,
+) -> None:
+    digest = hashlib.sha256(b"").hexdigest()
+    assets = tuple(
+        AssetReference(
+            asset_id=f"asset-{index}",
+            path=f"models/reference/asset-{index}.xml",
+            description="bounded asset",
+            sha256=digest,
+        )
+        for index in range(65)
+    )
+    realization = reference_bundle.realization.model_copy(update={"assets": assets})
+    bundle = _with_realization(reference_bundle, realization)
+
+    with pytest.raises(MaterializationError) as caught:
+        _materialize(bundle)
+
+    assert caught.value.code is MaterializationRefusalCode.INPUT_LIMIT_EXCEEDED
+    assert not (reference_bundle.workspace.evidence_root / "cache" / "inputs" / "objects").exists()
 
 
 def test_domain_path_bound_is_256_characters() -> None:

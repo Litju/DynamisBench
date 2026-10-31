@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from dynamisbench.domain.spec.identifiers import BenchmarkId, BenchmarkRef
 from dynamisbench.identity import semantic_sha256
 from dynamisbench.materialization import (
     InputManifest,
@@ -196,13 +197,46 @@ def test_scenario_must_be_embedded_in_the_selected_benchmark(
     reference_bundle: ReferenceBundle,
 ) -> None:
     other = reference_bundle.scenario.model_copy(update={"label": "another scenario"})
+    updated_spec = reference_bundle.run_spec.model_copy(
+        update={
+            "scenario": reference_bundle.run_spec.scenario.model_copy(
+                update={"semantic_digest": semantic_sha256(other)}
+            )
+        }
+    )
     with pytest.raises(MaterializationError) as caught:
         materialize_inputs(
             reference_bundle.workspace,
-            reference_bundle.run_spec,
+            updated_spec,
             benchmark=reference_bundle.benchmark,
             scenario=other,
             realization=reference_bundle.realization,
+            system_under_test=reference_bundle.system_under_test,
+            environment=reference_bundle.environment,
+        )
+    assert caught.value.code is MaterializationRefusalCode.INPUT_DEFINITION_MISMATCH
+
+
+def test_realization_must_name_the_runspec_benchmark(
+    reference_bundle: ReferenceBundle,
+) -> None:
+    changed = reference_bundle.realization.model_copy(
+        update={"benchmark": BenchmarkRef(identifier=BenchmarkId("db.other"), version="1.0.0")}
+    )
+    updated_spec = reference_bundle.run_spec.model_copy(
+        update={
+            "realization": reference_bundle.run_spec.realization.model_copy(
+                update={"semantic_digest": semantic_sha256(changed)}
+            )
+        }
+    )
+    with pytest.raises(MaterializationError) as caught:
+        materialize_inputs(
+            reference_bundle.workspace,
+            updated_spec,
+            benchmark=reference_bundle.benchmark,
+            scenario=reference_bundle.scenario,
+            realization=changed,
             system_under_test=reference_bundle.system_under_test,
             environment=reference_bundle.environment,
         )

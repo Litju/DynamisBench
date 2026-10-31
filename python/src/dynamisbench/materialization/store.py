@@ -36,6 +36,9 @@ import tempfile
 from pathlib import Path
 from typing import BinaryIO, Literal
 
+from pydantic import ValidationError
+
+from dynamisbench.domain.spec.realizations import RealizationDefinition
 from dynamisbench.identity import READ_CHUNK_BYTES
 from dynamisbench.materialization.errors import (
     MaterializationError,
@@ -48,7 +51,9 @@ from dynamisbench.materialization.manifest import (
     parse_input_manifest,
 )
 from dynamisbench.materialization.schema import (
+    MAX_DEFINITION_BYTES,
     MAX_MANIFEST_BYTES,
+    DefinitionKind,
     InputManifest,
 )
 from dynamisbench.workspace import PersistenceClass, Workspace
@@ -57,13 +62,21 @@ PublicationKind = Literal["object", "manifest"]
 
 
 def _is_link(path: Path) -> bool:
-    """Whether a path is a symlink or a Windows junction/reparse point."""
+    """Whether a path is a symlink, junction or other reparse point."""
     if path.is_symlink():
         return True
     try:
-        return path.is_junction()
+        if path.is_junction():
+            return True
     except (AttributeError, OSError):
+        pass
+    try:
+        info = path.lstat()
+    except OSError:
         return False
+    attributes = getattr(info, "st_file_attributes", 0)
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return bool(attributes & reparse)
 
 
 def _require_directory(path: Path, *, label: str) -> None:
@@ -95,7 +108,7 @@ def _ensure_directory(path: Path, *, label: str) -> None:
     _require_directory(path, label=label)
 
 
-def _hash_file(path: Path) -> tuple[str, int]:
+def _hash_file(path: Path, expected_size: int) -> tuple[str, int]:
     """Return the SHA-256 and size of a regular file, refusing links."""
     if _is_link(path):
         raise MaterializationError(
@@ -119,6 +132,11 @@ def _hash_file(path: Path) -> tuple[str, int]:
             MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
             "a store object is not a regular file",
         )
+    if info.st_size != expected_size:
+        raise MaterializationError(
+            MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+            "a store object has an unexpected size",
+        )
     hasher = hashlib.sha256()
     total = 0
     try:
@@ -126,6 +144,11 @@ def _hash_file(path: Path) -> tuple[str, int]:
             while chunk := handle.read(READ_CHUNK_BYTES):
                 hasher.update(chunk)
                 total += len(chunk)
+                if total > expected_size:
+                    raise MaterializationError(
+                        MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+                        "a store object grew during verification",
+                    )
     except OSError as error:
         raise MaterializationError(
             MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
@@ -169,6 +192,7 @@ class MaterializationStore:
                 ) from error
             _require_directory(self._cache, label="cache location")
         _ensure_directory(self._root, label="root")
+        _ensure_directory(self._root / "objects", label="objects parent")
         _ensure_directory(self._objects, label="object directory")
         _ensure_directory(self._manifests, label="manifest directory")
         _ensure_directory(self._tmp, label="temporary directory")
@@ -245,7 +269,7 @@ class MaterializationStore:
         return f"sha256/{digest_hex}" if kind == "object" else f"manifests/{digest_hex}.json"
 
     def _verify_existing(self, path: Path, *, digest_hex: str, expected_size: int) -> None:
-        observed, size = _hash_file(path)
+        observed, size = _hash_file(path, expected_size)
         if observed != digest_hex or size != expected_size:
             raise MaterializationError(
                 MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
@@ -396,27 +420,18 @@ class MaterializationStore:
         return digest, key
 
     def read_manifest(self, digest: InputManifestDigest) -> InputManifest:
-        """Read, parse, canonicality-check and fully verify one stored manifest."""
+        """Read, parse, canonicality-check and fully verify one stored manifest.
+
+        A manifest is evidence input, not an arbitrary file. It is opened with the
+        platform's no-follow flag where available, checked as a regular file before
+        and after open, and read through a hard byte ceiling so a FIFO, device or
+        growing file cannot block or exhaust the reader.
+        """
         path = self.manifest_path(digest.hex)
-        if _is_link(path):
-            raise MaterializationError(
-                MaterializationRefusalCode.INPUT_LINK_REFUSED,
-                "the requested input manifest is a link, not a regular file",
-            )
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        flags |= getattr(os, "O_NONBLOCK", 0)
         try:
-            size = path.stat().st_size
-        except OSError as error:
-            raise MaterializationError(
-                MaterializationRefusalCode.INPUT_OBJECT_MISSING,
-                "the requested input manifest is missing",
-            ) from error
-        if size > MAX_MANIFEST_BYTES:
-            raise MaterializationError(
-                MaterializationRefusalCode.INPUT_LIMIT_EXCEEDED,
-                "the requested input manifest exceeds the manifest-byte limit",
-            )
-        try:
-            data = path.read_bytes()
+            descriptor = os.open(path, flags)
         except FileNotFoundError as error:
             raise MaterializationError(
                 MaterializationRefusalCode.INPUT_OBJECT_MISSING,
@@ -425,8 +440,36 @@ class MaterializationStore:
         except OSError as error:
             raise MaterializationError(
                 MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+                "the requested input manifest could not be opened as a regular file",
+            ) from error
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode):
+                raise MaterializationError(
+                    MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+                    "the requested input manifest is not a regular file",
+                )
+            if info.st_size > MAX_MANIFEST_BYTES:
+                raise MaterializationError(
+                    MaterializationRefusalCode.INPUT_LIMIT_EXCEEDED,
+                    "the requested input manifest exceeds the manifest-byte limit",
+                )
+            with os.fdopen(descriptor, "rb") as handle:
+                descriptor = -1
+                data = handle.read(MAX_MANIFEST_BYTES + 1)
+        except OSError as error:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
                 "the requested input manifest could not be read",
             ) from error
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+        if len(data) > MAX_MANIFEST_BYTES:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_LIMIT_EXCEEDED,
+                "the requested input manifest exceeds the manifest-byte limit",
+            )
         manifest = parse_input_manifest(data)
         observed = input_manifest_digest(manifest)
         if observed != digest:
@@ -448,6 +491,40 @@ class MaterializationStore:
             self._verify_object(definition.object, definition.size_bytes)
         for asset in manifest.assets:
             self._verify_object(asset.object, asset.size_bytes)
+        realization_record = next(
+            item for item in manifest.definitions if item.kind is DefinitionKind.REALIZATION
+        )
+        try:
+            data = self.object_path(realization_record.semantic_digest.hex).read_bytes()
+        except OSError as error:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_OBJECT_MISSING,
+                "the materialized realization object is missing",
+            ) from error
+        if (
+            len(data) > MAX_DEFINITION_BYTES
+            or hashlib.sha256(data).hexdigest() != realization_record.semantic_digest.hex
+        ):
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+                "the materialized realization object changed after verification",
+            )
+        try:
+            realization = RealizationDefinition.model_validate_json(data)
+        except ValidationError as error:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_MANIFEST_MISMATCH,
+                "the materialized realization cannot be validated",
+            ) from error
+        declared = {(item.asset_id, item.path, item.sha256) for item in realization.assets}
+        observed = {
+            (item.asset_id, item.logical_path, item.declared_sha256) for item in manifest.assets
+        }
+        if declared != observed:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_MANIFEST_MISMATCH,
+                "the manifest asset set differs from the materialized realization",
+            )
 
     def _verify_object(self, object_key: str, expected_size: int) -> None:
         prefix = "sha256/"
@@ -459,7 +536,7 @@ class MaterializationStore:
         digest_hex = object_key[len(prefix) :]
         self._require_sha256_hex(digest_hex)
         path = self.object_path(digest_hex)
-        observed, size = _hash_file(path)
+        observed, size = _hash_file(path, expected_size)
         if observed != digest_hex or size != expected_size:
             raise MaterializationError(
                 MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,

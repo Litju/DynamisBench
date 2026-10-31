@@ -39,6 +39,8 @@ from dynamisbench.planning import (
     ResolvedScenarioRef,
     ResolvedSUTRef,
 )
+from dynamisbench.workspace import PathScopeError, PersistenceClass
+from dynamisbench.workspace.paths import validate_logical_reference
 
 INPUT_MANIFEST_SCHEMA_VERSION: Final = "dynamisbench.execution-input-manifest/1"
 
@@ -55,6 +57,31 @@ StoreObjectKey = Annotated[
     StringConstraints(pattern=r"^sha256/[0-9a-f]{64}$"),
 ]
 """A store-relative object key. It is never an absolute path or a store root."""
+
+
+def _validated_materialized_path(value: str) -> str:
+    """Apply the workspace path gate in addition to the domain path bound.
+
+    ``WorkspaceRelativePath`` already enforces 256 characters, ``/`` separators and
+    no whitespace. This second gate refuses Windows device names, alternate-data-stream
+    spellings, illegal characters, trailing dots/spaces and traversal forms, so a
+    manifest path and a producer path cannot be two different languages.
+    """
+    try:
+        segments = validate_logical_reference(
+            value, persistence_class=PersistenceClass.SOURCE_AUTHORITY
+        )
+    except PathScopeError as error:
+        raise ValueError(f"not a portable materialized asset path: {error}") from error
+    if len(segments) > MAX_PATH_SEGMENTS:
+        raise ValueError(f"a materialized asset path may have at most {MAX_PATH_SEGMENTS} segments")
+    return value
+
+
+MaterializedAssetPath = Annotated[
+    WorkspaceRelativePath, AfterValidator(_validated_materialized_path)
+]
+"""A materialized asset path: the domain path bound plus the workspace lexical gate."""
 
 
 class DefinitionKind(StrEnum):
@@ -92,7 +119,7 @@ class AssetInput(DomainModel):
 
     owner: AssetOwner
     asset_id: Annotated[str, StringConstraints(min_length=1, max_length=MAX_IDENTIFIER_LENGTH)]
-    logical_path: WorkspaceRelativePath
+    logical_path: MaterializedAssetPath
     declared_sha256: Sha256Hex
     observed_sha256: Sha256Hex
     size_bytes: Annotated[int, Field(ge=0, le=MAX_BYTES_PER_ASSET)]
@@ -292,5 +319,6 @@ __all__ = [
     "ExecutionInputRefs",
     "InputManifest",
     "ManifestLimits",
+    "MaterializedAssetPath",
     "StoreObjectKey",
 ]

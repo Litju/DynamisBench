@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Final
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from dynamisbench.domain.spec.base import DomainModel
 from dynamisbench.domain.spec.benchmark import BenchmarkRelease
@@ -46,6 +46,7 @@ from dynamisbench.materialization.manifest import (
     input_manifest_digest,
 )
 from dynamisbench.materialization.schema import (
+    MAX_ASSETS,
     MAX_BYTES_PER_ASSET,
     MAX_DEFINITION_BYTES,
     MAX_PATH_SEGMENTS,
@@ -57,6 +58,7 @@ from dynamisbench.materialization.schema import (
     ExecutionInputRefs,
     InputManifest,
     ManifestLimits,
+    MaterializedAssetPath,
 )
 from dynamisbench.materialization.store import MaterializationStore
 from dynamisbench.planning import RunSpec
@@ -64,15 +66,61 @@ from dynamisbench.workspace import PathScopeError, PersistenceClass, Workspace
 from dynamisbench.workspace.paths import resolve_within, validate_logical_reference
 
 _OPEN_BINARY_FLAGS: Final = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+_ASSET_PATH_ADAPTER: Final = TypeAdapter(MaterializedAssetPath)
+
+
+def _validate_asset_declarations(realization: RealizationDefinition) -> None:
+    """Refuse an impossible asset set before reading or publishing any bytes."""
+    if len(realization.assets) > MAX_ASSETS:
+        raise MaterializationError(
+            MaterializationRefusalCode.INPUT_LIMIT_EXCEEDED,
+            f"the realization declares more than {MAX_ASSETS} assets",
+        )
+    asset_ids: set[str] = set()
+    paths: set[str] = set()
+    for asset in realization.assets:
+        if asset.asset_id in asset_ids:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_SET_UNEXPECTED,
+                f"asset {asset.asset_id!r} is declared twice",
+            )
+        asset_ids.add(asset.asset_id)
+        try:
+            _ASSET_PATH_ADAPTER.validate_python(asset.path)
+        except ValidationError as error:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_PATH_REFUSED,
+                f"asset {asset.asset_id!r} has a non-portable materialized path",
+            ) from error
+        folded = asset.path.casefold()
+        if folded in paths:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_SET_UNEXPECTED,
+                f"asset path {asset.path!r} is duplicated or differs only by case",
+            )
+        paths.add(folded)
+        if asset.sha256 is None:
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_SET_INCOMPLETE,
+                f"asset {asset.asset_id!r} declares no SHA-256 content identity",
+            )
 
 
 def _is_link(path: Path) -> bool:
     if path.is_symlink():
         return True
     try:
-        return path.is_junction()
+        if path.is_junction():
+            return True
     except (AttributeError, OSError):
+        pass
+    try:
+        info = path.lstat()
+    except OSError:
         return False
+    attributes = getattr(info, "st_file_attributes", 0)
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return bool(attributes & reparse)
 
 
 def _require_match(
@@ -225,8 +273,14 @@ def _source_path(workspace: Workspace, logical_path: str) -> Path:
                 MaterializationRefusalCode.INPUT_SET_INCOMPLETE,
                 "an asset path contains a component that is not a directory",
             )
+    unresolved = workspace.source_root.joinpath(*segments)
+    if _is_link(unresolved):
+        raise MaterializationError(
+            MaterializationRefusalCode.INPUT_LINK_REFUSED,
+            "a declared realization asset is a link, not a regular file",
+        )
     try:
-        return resolve_within(
+        resolve_within(
             workspace.source_root,
             logical_path,
             authorized_roots=(workspace.source_root,),
@@ -237,6 +291,7 @@ def _source_path(workspace: Workspace, logical_path: str) -> Path:
             MaterializationRefusalCode.INPUT_PATH_REFUSED,
             "an asset path leaves the source root",
         ) from error
+    return unresolved
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,6 +326,7 @@ def materialize_inputs(
             "DB-3.3A materializes only in-process SUTs; a subprocess or bridge SUT has no "
             "enumerated executable closure",
         )
+    _validate_asset_declarations(realization)
 
     benchmark_digest = semantic_sha256(benchmark)
     scenario_digest = semantic_sha256(scenario)
@@ -395,11 +451,7 @@ def materialize_inputs(
     assets: list[AssetInput] = []
     total_asset_bytes = 0
     for asset in realization.assets:
-        if asset.sha256 is None:
-            raise MaterializationError(
-                MaterializationRefusalCode.INPUT_SET_INCOMPLETE,
-                f"asset {asset.asset_id!r} declares no SHA-256 content identity",
-            )
+        assert asset.sha256 is not None  # validated before any publication
         source = _source_path(workspace, asset.path)
         with _open_source(source, max_bytes=MAX_BYTES_PER_ASSET) as handle:
             key, size = materialization_store.publish_stream(
