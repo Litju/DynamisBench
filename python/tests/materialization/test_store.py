@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -18,7 +19,9 @@ from dynamisbench.materialization import (
     MaterializationStore,
     canonical_input_manifest_bytes,
 )
+from dynamisbench.materialization.schema import MAX_DEFINITION_BYTES
 from tests.materialization.conftest import ReferenceBundle
+from tests.workspace.links import make_directory_link, require_directory_link
 
 
 def _manifest_files(store: MaterializationStore) -> list[Path]:
@@ -69,7 +72,16 @@ def test_existing_corrupt_object_is_refused_not_overwritten(
         reference_bundle.materialize()
 
     assert caught.value.code is MaterializationRefusalCode.INPUT_OBJECT_CORRUPT
-    assert object_path.read_bytes() == b"different bytes"
+    assert not object_path.exists()
+    quarantined = list(
+        (materialization_store.root / "quarantine").glob(f"{asset.observed_sha256}.*")
+    )
+    assert len(quarantined) == 1
+    assert quarantined[0].read_bytes() == b"different bytes"
+
+    retried = reference_bundle.materialize()
+    assert retried.manifest_digest == first.manifest_digest
+    assert object_path.is_file()
 
 
 def test_interrupted_publication_leaves_no_manifest_and_is_retryable(
@@ -165,7 +177,18 @@ def test_publish_bytes_never_replaces_an_existing_final_name(
             max_bytes=1024,
         )
     assert caught.value.code is MaterializationRefusalCode.INPUT_OBJECT_CORRUPT
-    assert path.read_bytes() == b"corrupt"
+    assert not path.exists()
+    quarantined = list((materialization_store.root / "quarantine").glob(f"{digest}.*"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_bytes() == b"corrupt"
+
+    repeated = materialization_store.publish_bytes(
+        payload,
+        expected_sha256=digest,
+        max_bytes=1024,
+    )
+    assert repeated == key
+    assert path.read_bytes() == payload
 
 
 def test_manifest_bytes_are_the_only_manifest_identity(
@@ -225,3 +248,106 @@ def test_store_refuses_intermediate_objects_link(
             objects.rmdir()
         else:
             objects.unlink()
+
+
+def test_verify_manifest_refuses_objects_directory_link(
+    reference_bundle: ReferenceBundle,
+    materialization_store: MaterializationStore,
+    tmp_path: Path,
+) -> None:
+    result = reference_bundle.materialize()
+    objects = materialization_store.root / "objects"
+    moved = tmp_path / "real-objects"
+    shutil.move(str(objects), str(moved))
+    mechanism = make_directory_link(objects, moved)
+    require_directory_link(mechanism, "a linked objects directory is refused on read")
+
+    try:
+        with pytest.raises(MaterializationError) as caught:
+            materialization_store.verify_manifest(result.manifest)
+        assert caught.value.code is MaterializationRefusalCode.INPUT_LINK_REFUSED
+    finally:
+        if os.name == "nt":
+            objects.rmdir()
+        else:
+            objects.unlink()
+
+
+def test_read_manifest_refuses_manifests_directory_link(
+    reference_bundle: ReferenceBundle,
+    materialization_store: MaterializationStore,
+    tmp_path: Path,
+) -> None:
+    result = reference_bundle.materialize()
+    manifests = materialization_store.root / "manifests"
+    moved = tmp_path / "real-manifests"
+    shutil.move(str(manifests), str(moved))
+    mechanism = make_directory_link(manifests, moved)
+    require_directory_link(mechanism, "a linked manifests directory is refused on read")
+
+    try:
+        with pytest.raises(MaterializationError) as caught:
+            materialization_store.read_manifest(result.manifest_digest)
+        assert caught.value.code is MaterializationRefusalCode.INPUT_LINK_REFUSED
+    finally:
+        if os.name == "nt":
+            manifests.rmdir()
+        else:
+            manifests.unlink()
+
+
+def test_read_manifest_refuses_final_symlink_without_no_follow(
+    reference_bundle: ReferenceBundle,
+    materialization_store: MaterializationStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = reference_bundle.materialize()
+    path = materialization_store.manifest_path(result.manifest_digest.hex)
+    target = tmp_path / "manifest-copy.json"
+    shutil.move(str(path), str(target))
+    try:
+        os.symlink(target, path)
+    except OSError:
+        pytest.skip("this host does not permit a file symlink for the read-path probe")
+    monkeypatch.setattr(os, "O_NOFOLLOW", 0, raising=False)
+
+    try:
+        with pytest.raises(MaterializationError) as caught:
+            materialization_store.read_manifest(result.manifest_digest)
+        assert caught.value.code is MaterializationRefusalCode.INPUT_LINK_REFUSED
+    finally:
+        path.unlink()
+
+
+def test_verify_manifest_bounds_realization_reread_after_verification(
+    reference_bundle: ReferenceBundle,
+    materialization_store: MaterializationStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = reference_bundle.materialize()
+    realization = next(
+        item for item in result.manifest.definitions if item.kind.value == "realization"
+    )
+    path = materialization_store.object_path(realization.semantic_digest.hex)
+    original_verify = MaterializationStore._verify_object
+
+    def verified_then_mutated(
+        self: MaterializationStore, object_key: str, expected_size: int
+    ) -> None:
+        original_verify(self, object_key, expected_size)
+        if object_key == realization.object:
+            path.write_bytes(b"x" * (MAX_DEFINITION_BYTES + 1))
+
+    monkeypatch.setattr(MaterializationStore, "_verify_object", verified_then_mutated)
+    monkeypatch.setattr(
+        Path,
+        "read_bytes",
+        lambda self: (_ for _ in ()).throw(AssertionError("unbounded realization read")),
+    )
+    with pytest.raises(MaterializationError) as caught:
+        materialization_store.verify_manifest(result.manifest)
+    assert caught.value.code in {
+        MaterializationRefusalCode.INPUT_LIMIT_EXCEEDED,
+        MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+    }

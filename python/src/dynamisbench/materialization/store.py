@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import secrets
 import stat
 import tempfile
 from pathlib import Path
@@ -162,6 +163,75 @@ def _hash_file(path: Path, expected_size: int) -> tuple[str, int]:
     return hasher.hexdigest(), total
 
 
+def _read_bounded_regular_file(path: Path, *, max_bytes: int, label: str) -> bytes:
+    """Read one regular file through a bounded, no-follow handle.
+
+    The file is inspected before open, opened with the platform's no-follow and
+    non-blocking flags where available, checked again by handle, and read at most
+    ``max_bytes + 1`` bytes. A FIFO, device, symlink, junction or growing file is
+    therefore refused rather than followed or streamed indefinitely.
+    """
+    if _is_link(path):
+        raise MaterializationError(
+            MaterializationRefusalCode.INPUT_LINK_REFUSED,
+            f"{label} is a link, not a regular file",
+        )
+    try:
+        before = path.lstat()
+    except OSError as error:
+        raise MaterializationError(
+            MaterializationRefusalCode.INPUT_OBJECT_MISSING,
+            f"{label} is missing",
+        ) from error
+    if not stat.S_ISREG(before.st_mode):
+        raise MaterializationError(
+            MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+            f"{label} is not a regular file",
+        )
+    if before.st_size > max_bytes:
+        raise MaterializationError(
+            MaterializationRefusalCode.INPUT_LIMIT_EXCEEDED,
+            f"{label} exceeds the {max_bytes}-byte limit",
+        )
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise MaterializationError(
+            MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+            f"{label} could not be opened as a regular file",
+        ) from error
+    try:
+        after = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(after.st_mode)
+            or after.st_size != before.st_size
+            or (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)
+        ):
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+                f"{label} changed between inspection and open",
+            )
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = -1
+            data = handle.read(max_bytes + 1)
+    except OSError as error:
+        raise MaterializationError(
+            MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
+            f"{label} could not be read",
+        ) from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if len(data) > max_bytes:
+        raise MaterializationError(
+            MaterializationRefusalCode.INPUT_LIMIT_EXCEEDED,
+            f"{label} exceeds the {max_bytes}-byte limit",
+        )
+    return data
+
+
 class MaterializationStore:
     """The disposable content-addressed input store of one workspace."""
 
@@ -172,6 +242,7 @@ class MaterializationStore:
         self._objects = self._root / "objects" / "sha256"
         self._manifests = self._root / "manifests"
         self._tmp = self._root / "tmp"
+        self._quarantine = self._root / "quarantine"
 
     @property
     def root(self) -> Path:
@@ -196,6 +267,22 @@ class MaterializationStore:
         _ensure_directory(self._objects, label="object directory")
         _ensure_directory(self._manifests, label="manifest directory")
         _ensure_directory(self._tmp, label="temporary directory")
+        _ensure_directory(self._quarantine, label="quarantine directory")
+
+    def _require_existing_layout(self) -> None:
+        """Verify the read-side layout without creating or repairing anything.
+
+        A read must not make a workspace look initialized, and a linked intermediate
+        directory must not redirect an object or manifest read outside
+        ``cache/inputs``. Every directory on the path is checked, not only the final
+        file.
+        """
+        _require_directory(self._cache, label="cache location")
+        _require_directory(self._root, label="root")
+        _require_directory(self._root / "objects", label="objects parent")
+        _require_directory(self._objects, label="object directory")
+        _require_directory(self._manifests, label="manifest directory")
+        _require_directory(self._tmp, label="temporary directory")
 
     def object_path(self, digest_hex: str) -> Path:
         """Resolve one object path inside the store.
@@ -269,13 +356,61 @@ class MaterializationStore:
         return f"sha256/{digest_hex}" if kind == "object" else f"manifests/{digest_hex}.json"
 
     def _verify_existing(self, path: Path, *, digest_hex: str, expected_size: int) -> None:
-        observed, size = _hash_file(path, expected_size)
+        try:
+            observed, size = _hash_file(path, expected_size)
+        except MaterializationError as error:
+            if error.code is MaterializationRefusalCode.INPUT_OBJECT_CORRUPT:
+                self._quarantine_corrupt(path, digest_hex)
+            raise
         if observed != digest_hex or size != expected_size:
+            self._quarantine_corrupt(path, digest_hex)
             raise MaterializationError(
                 MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
                 "an existing content-addressed object has different bytes or size; it was "
-                "not overwritten",
+                "quarantined and not overwritten",
             )
+
+    def _quarantine_corrupt(self, path: Path, digest_hex: str) -> None:
+        """Move one regular corrupt object into ``quarantine/`` without deleting bytes.
+
+        The move preserves the corrupt bytes for diagnosis, removes the canonical
+        name so a later correct publication is possible, and never overwrites an
+        existing quarantine entry. A link, directory or unreadable path is left in
+        place and refused; DB-3.3A does not delete or follow it.
+        """
+        if _is_link(path):
+            return
+        try:
+            info = path.lstat()
+        except OSError:
+            return
+        if not stat.S_ISREG(info.st_mode):
+            return
+        _ensure_directory(self._quarantine, label="quarantine directory")
+        for _ in range(8):
+            destination = self._quarantine / f"{digest_hex}.{secrets.token_hex(8)}"
+            try:
+                os.link(path, destination)
+            except FileExistsError:
+                continue
+            except OSError as error:
+                raise MaterializationError(
+                    MaterializationRefusalCode.STORE_PUBLICATION_FAILED,
+                    "a corrupt store object could not be quarantined",
+                ) from error
+            try:
+                path.unlink()
+            except OSError as error:
+                raise MaterializationError(
+                    MaterializationRefusalCode.STORE_PUBLICATION_FAILED,
+                    "a corrupt store object was copied to quarantine but its canonical name "
+                    "could not be removed",
+                ) from error
+            return
+        raise MaterializationError(
+            MaterializationRefusalCode.STORE_PUBLICATION_FAILED,
+            "a corrupt store object could not be assigned a quarantine name",
+        )
 
     @staticmethod
     def _fsync_parent(path: Path) -> None:
@@ -430,6 +565,12 @@ class MaterializationStore:
         path = self.manifest_path(digest.hex)
         flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
         flags |= getattr(os, "O_NONBLOCK", 0)
+        self._require_existing_layout()
+        if _is_link(path):
+            raise MaterializationError(
+                MaterializationRefusalCode.INPUT_LINK_REFUSED,
+                "the requested input manifest is a link, not a regular file",
+            )
         try:
             descriptor = os.open(path, flags)
         except FileNotFoundError as error:
@@ -487,6 +628,7 @@ class MaterializationStore:
         the read-side counterpart of publication: every final name is re-verified
         before reuse, and a missing or corrupt object is refused.
         """
+        self._require_existing_layout()
         for definition in manifest.definitions:
             self._verify_object(definition.object, definition.size_bytes)
         for asset in manifest.assets:
@@ -494,17 +636,12 @@ class MaterializationStore:
         realization_record = next(
             item for item in manifest.definitions if item.kind is DefinitionKind.REALIZATION
         )
-        try:
-            data = self.object_path(realization_record.semantic_digest.hex).read_bytes()
-        except OSError as error:
-            raise MaterializationError(
-                MaterializationRefusalCode.INPUT_OBJECT_MISSING,
-                "the materialized realization object is missing",
-            ) from error
-        if (
-            len(data) > MAX_DEFINITION_BYTES
-            or hashlib.sha256(data).hexdigest() != realization_record.semantic_digest.hex
-        ):
+        data = _read_bounded_regular_file(
+            self.object_path(realization_record.semantic_digest.hex),
+            max_bytes=MAX_DEFINITION_BYTES,
+            label="the materialized realization object",
+        )
+        if hashlib.sha256(data).hexdigest() != realization_record.semantic_digest.hex:
             raise MaterializationError(
                 MaterializationRefusalCode.INPUT_OBJECT_CORRUPT,
                 "the materialized realization object changed after verification",
