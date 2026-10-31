@@ -2,11 +2,13 @@
 
 **Status:** Design-review artifact. Not architecture authority. Not an ADR. Not an implementation record.
 **Issue:** RES-555 — DB-3.3, M3 third engineering gate.
-**Audit date:** 2026-10-29.
+**Audit date:** 2026-10-29; revision 2 addendum 2026-10-31 (RES-561).
 **Repository:** `Litju/DynamisBench`.
 **Accepted protected main audited:** `2a3ef6016e904de5b218e657f15793dd230250bb`.
 **Accepted tree audited:** `51e4b366d0cce3cddfba56e6e0fc1720e0fec421`.
-**Design branch base:** `origin/main` at the same commit and tree.
+**Protected main at revision 2:** `4e5aff1636ec6e7a45b730847a997054d72eb25b` (PR #23,
+`apps/workbench/` only; no execution/evidence change).
+**Design branch base:** `origin/main` at the audited commit and tree; not rebased.
 
 > This document inventories authority and implementation coverage. It does not create
 > authority, amend an ADR, authorize implementation, or convert a repository document into
@@ -380,3 +382,53 @@ The gaps are not all of one kind:
 
 The authority decision packet (`RES-555_AUTHORITY_DECISION_PACKET.md`) records those
 decisions. Implementation is blocked until the hard decisions are approved.
+
+---
+
+## 9. Revision 2 addendum — RES-561 design repair (2026-10-31)
+
+This addendum records corrections to the Phase A design. It does **not** convert a design
+correction into accepted authority, implementation, or scientific acceptance. The audit
+above remains a statement of the accepted baseline; where an earlier design statement was
+wrong, the correction is identified here and in the trust-boundary design's closure matrix.
+
+### 9.1 Baseline advance
+
+| Fact | Value |
+|---|---|
+| Protected main after PR #23 | `4e5aff1636ec6e7a45b730847a997054d72eb25b` |
+| PR #23 merge commit | `4e5aff1636ec6e7a45b730847a997054d72eb25b` |
+| Parents | `2a3ef6016e904de5b218e657f15793dd230250bb`, `2edc18143f5bda1a1e206d97bac27329fa41ad83` |
+| Merge tree | `2b7782fed526fb49b86404663c141b0ed7ca79a5` (identical to PR head tree) |
+| Post-merge quality run | `41166834210`, nine successful jobs |
+| Scope | 14 files, all under `apps/workbench/` |
+| Execution/evidence impact | None; `RunSpec`, worker protocol, evidence, ADRs and CI unchanged |
+
+### 9.2 Findings that change the earlier audit's design conclusions
+
+| ID | Earlier design assumption | Correction | Consequence |
+|---|---|---|---|
+| F-01 | A final object could be published with check-then-`os.replace`. | `os.replace` can overwrite a concurrent winner and is not no-overwrite CAS. Publication must use an atomic create-if-absent primitive and never replace an existing final name. | DB-3.3A store contract corrected; concurrency tests required. |
+| F-02 | Compressed Parquet size plus sample count bounded validation. | Compressed bytes do not bound decoded allocation. Footer, metadata, row groups, rows, columns, dimensions, uncompressed bytes, decoded batches, decompression ratio, CPU and RSS need explicit bounds; hostile decoding must occur in a resource-limited child. | DB-3.3C verifier contract corrected; hostile fixtures required. |
+| F-03 | Realization assets were assumed to cover everything a SUT runs. | `SUTDefinition.interface.command` is a token tuple with no path, digest, argv closure or library closure. `RealizationDefinition.assets` does not enumerate a subprocess SUT executable. | Materialized v1 refuses `SUBPROCESS`/`BRIDGE` SUTs; D13 proposed. |
+| F-04 | A1 periodic verification was described close to immutability. | A1 is mutation **detection**, not same-user immutability. A replace-and-restore is undetected; outside-root reads are not prevented. | D3 must amend RES-555's literal wording or require A2; no unqualified "immutable". |
+| F-05 | Worker cwd / supervisor-owned staging was treated as denying staging writes. | A same-user worker can write staging by absolute path. `cwd` is not containment. | Native publication uses exclusive create and exact expected inventory; no OS-enforced claim. |
+| F-06 | A2 was described as available if a probe passed. | A2 requires a proven separate access boundary (principal/sandbox), and write and read containment are separate claims. Job Objects and restricted tokens are not filesystem boundaries. | A2-write and A2-read split; no fallback without owner approval. |
+| F-07 | Native scratch could be verified and then copied. | Verify-then-copy has a race; the sealed bytes may differ from the validated bytes. | Copy first, validate the copy, seal the validated copy; scratch is never authoritative. |
+| F-08 | The same input manifest and fingerprint were expected on Windows and Linux. | `EnvironmentDefinition` semantic digests differ when platform/runtime requirements differ; full fingerprints and manifest digests then differ too. | Compare shared scientific content separately; never compare full fingerprints across differing environments. |
+| F-09 | Native/asset paths could reuse the 1024 workspace reference bound. | `WorkspaceRelativePath` is 256 characters; 1024 is the workspace logical-reference bound. `BundleRelativePath` has no numeric cap at this baseline. | Authority paths use 256; operational refs use 1024; native payload paths get an explicit 256 bound. |
+| F-10 | Runtime/library dependencies were implicitly part of "inputs". | The interpreter, MuJoCo wheel/native libraries, pyarrow, OS libraries and editable adapter source are not content-addressed scientific inputs; they are operational runtime selection with incomplete byte closure. | Separate scientific inputs from runtime selection; do not claim a sealed runtime closure. |
+
+### 9.3 Authority status of the repair
+
+No owner decision is approved by revision 2. The decision packet's approval table remains
+empty. D1–D13 remain proposals. ADR-026 and ADR-027 remain proposed, not accepted. RES-555
+and RES-561 remain in review states until the owner records decisions and an independent
+reviewer accepts the exact revised head.
+
+### 9.4 Inspection limits unchanged
+
+The revision was prepared on Windows 11 x64. Linux primitives were not executed locally.
+Every OS-specific primitive named in the design must be probed in the target CI job before
+any claim depends on it. GitHub-hosted runner privilege is not an ordinary product-user
+privilege.

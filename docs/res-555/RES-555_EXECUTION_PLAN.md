@@ -1,14 +1,23 @@
 # RES-555 — Execution Plan
 
-**Status:** Proposed plan for review. Not authorized implementation. Not a commit schedule.
+**Status:** Proposed plan, revision 2 (RES-561 repair). Not authorized implementation. Not a
+commit schedule. **No owner decision is approved.**
 **Baseline:** `2a3ef6016e904de5b218e657f15793dd230250bb`, tree
-`51e4b366d0cce3cddfba56e6e0fc1720e0fec421`.
+`51e4b366d0cce3cddfba56e6e0fc1720e0fec421`. Protected main at revision 2:
+`4e5aff1636ec6e7a45b730847a997054d72eb25b` (PR #23, `apps/workbench/` only).
 **Companion artifacts:** `RES-555_AUTHORITY_AUDIT.md`,
 `RES-555_TRUST_BOUNDARY_DESIGN.md`, `RES-555_AUTHORITY_DECISION_PACKET.md`.
 
 > This plan assumes the owner approves the hard decisions in the packet. Until then only
 > documentation, test scaffolding, and non-authoritative prototypes are permitted. No
 > slice may merge before its authority precondition is met.
+
+**Revision 2 changes:** DB-3.3A publication now uses create-if-absent CAS; DB-3.3C bounds
+decoded Parquet and decodes in a capped validator child; DB-3.3B/D distinguish platform
+environment identity and do not compare full fingerprints across platforms; subprocess SUTs
+are refused; native scratch is copied before validation; path bounds are corrected to 256
+for authority/native payload paths. Section 14 records the first proposed Laboratory
+execution API boundary. None of this is implemented or authorized.
 
 ---
 
@@ -159,15 +168,20 @@ concurrency, and verification. No worker, protocol, native evidence, or UI chang
 2. `InputManifestDigest` type or documented `SemanticDigest` reuse.
 3. Definition canonicalization for all five kinds.
 4. Asset enumeration, declared-digest requirement, copy-then-hash snapshot, bounds.
-5. Content-addressed store with atomic publication, duplicate reuse, collision/inconsistent
-   object refusal, and post-publication verification.
-6. Materialization orchestration that rejects a mismatched/duplicate/missing definition.
+5. Content-addressed store with **create-if-absent** atomic publication (no `os.replace` over
+   a final name), duplicate reuse, collision/inconsistent object refusal, and
+   post-publication verification. Visibility, durability and recovery are reported
+   separately.
+6. Materialization orchestration that rejects a mismatched/duplicate/missing definition and
+   refuses `SUBPROCESS`/`BRIDGE` SUTs with `SUT_EXECUTABLE_CLOSURE_UNSUPPORTED`.
 7. A verification function that re-enumerates the manifest and re-hashes every object.
 8. Tests: schema, determinism, relocation invariance, duplicate content, collision,
-   concurrent publication, source mutation during copy, oversized asset, missing asset,
-   extra file, path escape, link/hardlink source, power-loss simulation.
+   concurrent publication (one winner, loser verifies, no replacement), pre-existing
+   corrupt object refusal, source mutation during copy, oversized asset, missing asset,
+   extra file, path escape, link/hardlink source, power-loss simulation, and the 256/1024
+   path-boundary cases.
 9. A short design note in the code docstring explaining why no absolute path enters the
-   manifest or fingerprint.
+   manifest or fingerprint and why publication is no-overwrite.
 
 ### Positive tests
 
@@ -256,10 +270,15 @@ mode. No native evidence publication yet.
 ### Positive tests
 
 * A real worker loads the materialized model from `inputs/` and completes.
-* The same input manifest works on Windows and Linux with the same fingerprint.
+* Two executions with the **same environment definition** and the same scientific inputs
+  produce the same full fingerprint and manifest digest. Two executions with different
+  environment semantic digests produce the same benchmark/scenario/realization/SUT/asset
+  content digests but different full fingerprints and manifest digests; the receipt reports
+  both layers and does not call the difference a failure.
 * A relaunch with the same manifest reuses the store but creates a new run input view.
 * The worker's read-time hash equals the supervisor's manifest digest.
 * `containment_mode` is recorded truthfully.
+* A `SUBPROCESS`/`BRIDGE` SUT is refused before materialization or process start.
 
 ### Adversarial tests
 
@@ -273,8 +292,15 @@ mode. No native evidence publication yet.
 * Absolute path/includes in MJCF -> refused.
 * Worker attempts `../` or an absolute path -> adapter refusal; if `os-enforced`, OS denial
   recorded; if `verified-content`, the record says logical only.
+* Worker writes an unexpected file into staging -> exact expected-inventory refusal; no
+  seal includes it.
+* Worker pre-creates a supervisor target -> exclusive-create refusal; no overwrite.
 * v1 request to v2 worker and v2 request to v1 supervisor -> protocol refusal.
 * Source tree mutated between preflight and launch -> identity probe refuses.
+* Worker program replaced between the preflight hash and launch -> launch re-hash/identity
+  probe refuses; the residual window is recorded, not hidden.
+* A claimed A2-write or A2-read without a separate principal/sandbox and inside-worker
+  denial probe is refused as an unsupported claim.
 
 ### Required CI
 
@@ -328,15 +354,24 @@ do not perform scientific assessment.
 1. `dynamisbench.native.mujoco-state/1` descriptor model and canonical serializer.
 2. Parquet schema/writer/reader with deterministic settings and metadata.
 3. Worker native writer: `native-out/descriptor.json` last, atomic; no absolute paths.
-4. Supervisor native verifier: file set, links, sizes, digests, schema, bindings, sample
-   count/time/finite/dimensions, bounds.
-5. `native/verification.json` with per-check records and a verdict.
-6. Staging/seal integration: verified native payload only; `SUCCEEDED` requires it;
-   `FAILED` may retain `native/partial/` with a refused verdict.
-7. Tests: valid, missing descriptor, missing file, extra file, truncated file, wrong
-   digest, wrong binding, non-finite, non-monotonic time, wrong sample count, oversized,
-   malicious path, link, hardlink, partial write, crash, substitution from another run.
-8. A control-worker fixture that produces a valid native artifact without MuJoCo, so the
+4. Supervisor native verifier: copy scratch into quarantine first; then validate the copy
+   for file set, links, sizes, digests, schema, bindings, metadata bounds, row groups, rows,
+   columns, dimensions, uncompressed bytes, batch/cumulative decoded bytes, decompression
+   ratio, sample count, time and finite values.
+5. A capped validator child (Windows Job Object memory limit; Linux `RLIMIT_AS`/cgroup and
+   process group) that decodes only via `iter_batches`, with hard wall/CPU and RSS limits;
+   decoder crash/OOM/timeout is a refusal.
+6. `native/verification.json` with per-check records and a verdict.
+7. Staging/seal integration: verified native payload only; `SUCCEEDED` requires it;
+   `FAILED` may retain `native/partial/` with a refused verdict; publication uses
+   create-if-absent and never overwrites.
+8. Tests: valid, missing descriptor, missing file, extra file, truncated file, wrong
+   digest, wrong binding, non-finite, non-monotonic time, wrong sample count, oversized
+   compressed file, hostile footer, too many row groups/rows, extra/nested columns,
+   dimension over 64, unsupported codec, high decompression ratio, decoded-memory and
+   decode-time caps, malicious path, link, hardlink, partial write, crash, substitution
+   from another run, and scratch mutation during copy.
+9. A control-worker fixture that produces a valid native artifact without MuJoCo, so the
    supervisor verifier is testable independently of the engine.
 
 ### Positive tests
@@ -357,6 +392,15 @@ do not perform scientific assessment.
 * Worker writes a symlink/junction/hardlink -> refused.
 * Worker writes 65 MiB -> refused without unbounded allocation.
 * Worker writes 1,000,001 samples -> refused.
+* Worker writes a small compressed file that declares a huge uncompressed size -> refused
+  from metadata before decode.
+* Worker writes a Parquet file with 10,000 row groups, a 65-element dimension, a nested
+  struct column, an unsupported codec, or a high decompression ratio -> refused.
+* The validator child is killed at its RSS or time cap; no native file is published.
+* Worker mutates a scratch file during the supervisor copy -> copied digest mismatch;
+  refused; no partial publication.
+* A pre-existing file at a supervisor publication target -> exclusive-create refusal; no
+  overwrite.
 * Worker writes NaN/Inf -> refused.
 * Worker writes non-monotonic time -> refused.
 * Worker writes a plausible artifact but the input changed -> `FAILED`.
@@ -437,8 +481,13 @@ No scientific acceptance.
 * The native artifact verifies and seals on both platforms.
 * The numerical comparison passes within the accepted RES-550 tolerance, or the
   discrepancy is reported without changing the criterion.
-* The same inputs across platforms produce the same fingerprint and manifest digest;
-  environment digests may differ by platform as accepted.
+* The same benchmark/scenario/realization/SUT/asset **content** digests are identical
+  across platforms when those definitions and bytes are identical.
+* Where the environment definitions differ by platform, the full fingerprints and input
+  manifest digests differ; the receipt reports the shared content layer and the
+  platform-specific execution layer separately. It never asserts cross-platform equality of
+  the full fingerprint or manifest digest.
+* A `SUBPROCESS`/`BRIDGE` SUT is refused; the reference `IN_PROCESS` model is admitted.
 
 ### Adversarial tests
 
@@ -491,8 +540,9 @@ input path can be bypassed.
 |---|---|---|---|---|
 | Canonical identity / manifest determinism | Yes | Yes | 3.3A | Python + materialization |
 | Relocation invariance (no path in manifest/fingerprint) | Yes | Yes | 3.3A | Python + materialization |
-| Duplicate content / concurrent publication | Yes | Yes | 3.3A | Materialization |
-| Collision / inconsistent object | Yes | Yes | 3.3A | Materialization |
+| Duplicate content / concurrent no-overwrite publication | Yes | Yes | 3.3A | Materialization |
+| Collision / inconsistent existing object | Yes | Yes | 3.3A | Materialization |
+| 256/1024 path-boundary cases | Yes | Yes | 3.3A/B | Materialization + containment |
 | Source mutation during copy | Yes | Yes | 3.3A | Materialization |
 | Path traversal / absolute / UNC / device / ADS | Yes | Yes | 3.3A/B | Materialization + containment |
 | Symlink/junction/reparse escape | Junction/symlink | Symlink | 3.3B | Containment |
@@ -506,8 +556,12 @@ input path can be bypassed.
 | Native valid artifact | Yes | Yes | 3.3C | Native |
 | Native missing/partial/truncated/extra | Yes | Yes | 3.3C | Native |
 | Native malformed/oversized/non-finite | Yes | Yes | 3.3C | Native |
+| Native decoded-format / decompression-bomb bounds | Yes | Yes | 3.3C | Native |
+| Native scratch-mutation-during-copy refusal | Yes | Yes | 3.3C | Native |
 | Native substitution from another run | Yes | Yes | 3.3C | Native |
 | Failure-to-success seal refusal | Yes | Yes | 3.3C | Native + evidence |
+| Subprocess/bridge SUT refusal | Yes | Yes | 3.3A/B | Materialization + containment |
+| Cross-platform shared content vs environment identity | Yes | Yes | 3.3D | Integrated + comparison |
 | Real MuJoCo materialized run | Yes | Yes | 3.3D | Integrated |
 | Numerical reference comparison | Yes | Yes | 3.3D | Integrated + comparison |
 | RES-549/550 regression | Yes | Yes | 3.3D | Python |
@@ -534,7 +588,7 @@ integrity and numerical correctness have separate tests and verdicts.
 
 | Checkpoint | Required evidence | Reviewer | Consequence if failed |
 |---|---|---|---|
-| C0 — design approval | This packet + D1–D12 decisions | Owner + independent architecture/security | No implementation |
+| C0 — design approval | This packet + D1–D13 decisions | Owner + independent architecture/security | No implementation |
 | C1 — 3.3A contract freeze | Manifest schema, store invariants, tests | Architecture + security | 3.3B cannot start |
 | C2 — v2 protocol freeze | v2 request/response, v1 refusal tests | Runtime + science | 3.3B/C cannot share a protocol |
 | C3 — containment claim | Probe record, mode decision, residual register | Security | 3.3B not accepted |
@@ -688,15 +742,19 @@ No rollback may modify, delete, or rewrite a sealed evidence bundle.
 
 RES-555 may be considered for Done only when:
 
-1. All hard decisions D1–D6, D9 are approved and the corresponding authority is amended.
+1. All hard decisions D1–D6, D9 are approved and the corresponding authority is amended;
+   D13 is approved if any subprocess SUT is claimed.
 2. DB-3.3A–D are implemented, independently reviewed, and accepted.
-3. The materialized input manifest is reproducible and path-independent.
-4. The worker consumes only verified materialized inputs and refuses mutation/substitution.
-5. The native artifact is produced, structurally verified, sealed, and bound to the
-   execution and input manifest.
-6. Failure, cancellation, timeout, partial output, and substitution cannot produce a
-   successful native seal.
-7. The real MuJoCo integrated run passes on Windows x64 and Linux x64.
+3. The materialized input manifest is reproducible, path-independent and published with
+   no-overwrite semantics; concurrent publishers cannot replace a winner.
+4. The worker consumes only verified materialized inputs and refuses mutation/substitution;
+   the acceptance record names A1 detection or a separately probed A2 claim.
+5. The native artifact is produced, copied, decoded within declared resource bounds,
+   structurally verified, sealed, and bound to the execution and input manifest.
+6. Failure, cancellation, timeout, partial output, decoded-bound violation and substitution
+   cannot produce a successful native seal.
+7. The real MuJoCo integrated run passes on Windows x64 and Linux x64, with shared scientific
+   content and platform-specific environment identity reported separately.
 8. Native integrity and numerical reference verdicts are separate; no VVUQ PASS is claimed.
 9. All eight ADR-025 gates pass on the exact PR head, first attempt; additional RES-555
    checks pass; post-merge protected-main qualification passes on the merge commit.
@@ -704,3 +762,107 @@ RES-555 may be considered for Done only when:
 11. The issue is moved to Done only after the post-merge acceptance record exists.
 
 Until then, the correct status is `In Review`, `Blocked`, or `Todo` — never Done.
+
+---
+
+## 14. First production Laboratory execution boundary (proposed, not implemented)
+
+This section specifies the smallest legitimate path from the accepted fixed MuJoCo
+reference to the production Laboratory. It is an interface contract for a later slice, not
+an implementation and not a UI route. It deliberately introduces no scheduler, no queue, no
+remote control plane, no arbitrary model loading, no OpenSim, and no mock execution.
+
+### 14.1 What exists at the accepted baseline
+
+The accepted execution package already provides the lower-level pieces:
+
+| Existing primitive | What it establishes | What it does not establish |
+|---|---|---|
+| `reference_case.run_spec(platform_tag=...)` | The exact pinned reference `RunSpec` for a supported platform tag | A production-facing selection service or arbitrary RunSpec support |
+| `reference_case.benchmark_release()`, `scenario()`, `realization()`, `system_under_test()`, `environment()` | The reviewed reference definitions | Content-addressed materialization or byte closure |
+| `planning` resolution | A deterministic `PlannedRun` and execution fingerprint | Materialization or native evidence |
+| `preflight_run(...)` | Genuine read-only admission, bounded refusals, request digest, staging locator | A process start, cancellation handle or UI |
+| `execute_preflighted(...)` | One supervised isolated worker, cancel event, lifecycle observer, bounded diagnostics, staging bundle | A production service handle, native evidence or sealing decision |
+| `SupervisedExecution.finalize(...)` | Explicit seal of the observed outcome | Automatic sealing or scientific assessment |
+
+There is **no** production Laboratory run/preflight/cancel API at this baseline. A UI must
+not fake one.
+
+### 14.2 Proposed boundary
+
+```text
+LaboratoryExecutionService (proposed; not implemented)
+  supported_selection(host_platform) -> ReferenceSelection | Unsupported
+      Only the pinned fixed MuJoCo reference is selectable.
+      host_platform must be a supported tag; no arbitrary path, model or RunSpec.
+      Returns the exact RunSpec, PlannedRun, five definitions and pinned worker manifest.
+
+  preflight(selection) -> PreflightReport
+      Calls the existing genuine preflight, not a simulation of it.
+      READY carries fingerprint, request digest and staging locator.
+      REFUSED carries bounded refusals and no request identity.
+      No process is started here.
+
+  start(preflight) -> ExecutionHandle
+      Requires decision == READY and the exact admitted request.
+      Creates a handle and dispatches execute_preflighted on a dedicated thread.
+      Returns only after the handle exists; it does not wait for completion.
+      No process starts before READY; no second start for one run id.
+
+  cancel(handle) -> LifecycleObservation
+      Sets the existing cancel event. The reported state is the supervisor's actual state.
+      CANCELED is reported only after the worker returns and the process tree is verified
+      empty. No optimistic or invented cancellation.
+
+  status(handle) -> LifecycleObservation
+      Reports the observed RunLifecycleState and terminal result.
+      STARTING/RUNNING are process facts; COMPLETED is not a scientific claim.
+
+  diagnostics(handle) -> BoundedDiagnostics
+      Returns the persisted diagnostics.json and bounded worker log references from the
+      actual ExecutionResult. No absolute paths, raw environment dump or invented signals.
+
+  finalize(handle, outcome) -> SealResult
+      Explicit evidence decision by the authorized caller; never automatic.
+      A failed/cancelled/timed-out run cannot be sealed SUCCEEDED.
+
+  native_evidence(handle) -> NativeEvidenceAvailability
+      Before RES-555 D4/D5/D6 are accepted and implemented:
+          UNAVAILABLE with reason NATIVE_EVIDENCE_NOT_AUTHORIZED.
+      Afterward, only for a finalized, sealed bundle with a verified native record:
+          descriptor path, verification path, sealed bundle locator, evidence digest.
+      Never returns a fabricated descriptor, verification or seal.
+```
+
+### 14.3 Rules the boundary must keep
+
+* **No mock execution.** A `start` either launches the real isolated worker or returns a
+  refusal. There is no synthetic trajectory, fake lifecycle or placeholder signal.
+* **No invented evidence.** `native_evidence` is `UNAVAILABLE` until the native contract is
+  accepted and implemented. The UI may show the reason; it may not show a seal.
+* **One run id, one execution.** The existing duplicate-run refusal is preserved.
+* **Cancellation is observed, not requested.** The handle reports the supervisor's terminal
+  state after process-tree cleanup.
+* **Diagnostics are bounded.** Only the existing bounded diagnostic/log references are
+  exposed; no raw environment, absolute root or unbounded stderr.
+* **Sealing is explicit.** The service does not auto-seal on completion; an authorized
+  caller decides the outcome. Merge, completion and sealing remain distinct.
+* **Selection is closed.** Only the pinned reference is selectable. Adding another RunSpec,
+  model, SUT or engine is a separate authority decision.
+* **No scientific assessment.** The boundary exposes native evidence availability only; it
+  does not score, normalize, compare or claim VVUQ.
+
+### 14.4 Authorization state
+
+| Capability | Current status | Precondition |
+|---|---|---|
+| Select the pinned reference RunSpec | Exists as reference builders, not as a production service | A later integration slice; no new authority for the fixed reference |
+| Genuine preflight | Exists (`preflight_run`) | None beyond the accepted baseline |
+| Start/cancel/status/diagnostics for one run | Exists as supervisor primitives; no production handle | A later integration slice; no scheduler |
+| Materialized inputs | Not implemented | D1/D2/D3/D9 and DB-3.3A/B accepted |
+| Native evidence locator | Not implemented | D4/D5/D6 and DB-3.3C accepted |
+| Production Laboratory UI run route | Not authorized | A separate UX/product slice after the execution boundary is accepted |
+
+This is the smallest legitimate path: one fixed reference, genuine preflight, one isolated
+worker, observed lifecycle, bounded diagnostics, explicit sealing, and an honest
+`UNAVAILABLE` native result until RES-555 supplies one.

@@ -1,8 +1,10 @@
 # RES-555 — Authority Decision Packet
 
-**Status:** Approval request. Not authority. Not an ADR. Not an implementation authorization.
+**Status:** Approval request, revision 2 (RES-561 repair). Not authority. Not an ADR. Not an
+implementation authorization. **No decision is approved by revision 2.**
 **Baseline:** `2a3ef6016e904de5b218e657f15793dd230250bb`, tree
-`51e4b366d0cce3cddfba56e6e0fc1720e0fec421`.
+`51e4b366d0cce3cddfba56e6e0fc1720e0fec421`. Protected main at revision 2:
+`4e5aff1636ec6e7a45b730847a997054d72eb25b` (PR #23, `apps/workbench/` only).
 **Companion artifacts:** `RES-555_AUTHORITY_AUDIT.md`,
 `RES-555_TRUST_BOUNDARY_DESIGN.md`, `RES-555_EXECUTION_PLAN.md`.
 
@@ -27,30 +29,43 @@ Each decision has:
 * **Work that can proceed independently**;
 * **Blocking level** — `HARD` means the named slice cannot be accepted without the
   decision; `SOFT` means the slice can proceed under a documented provisional choice but
-  the final claim needs the decision.
+  the final claim needs the decision;
+* **Authority class** — `OWNER` means the owner must amend or accept authority;
+  `CLARIFICATION` means the accepted authority already permits the documented reading and
+  the decision records that reading; `PROCESS` means a delivery/governance rule.
 
 Approval means: the owner accepts the recommended option, or chooses another, and records
 the amendment in Linear. It does **not** mean the implementation is accepted, the PR may
-be merged, or RES-555 may be marked Done.
+be merged, or RES-555 may be marked Done. Revision 2 records design corrections; it does
+not fill the approval table.
+
+**Scientific inputs versus runtime/library dependencies.** Throughout this packet,
+"scientific inputs" means the five definitions and the realization-declared assets whose
+semantic/asset digests bind the execution. The Python interpreter, MuJoCo wheel/native
+libraries, pyarrow, OS libraries and the editable adapter source are **runtime/library
+dependencies**, not content-addressed scientific inputs. They are recorded as operational
+provenance with incomplete byte closure. No decision below authorizes calling them sealed
+inputs or part of the `InputManifest`.
 
 ---
 
 ## 1. Decision summary
 
-| ID | Decision | Recommended option | Blocking | Blocks |
-|---|---|---|---|---|
-| D1 | Materialization manifest and store authority | New manifest schema; store as `CACHE`; sealed bundle embeds `inputs/` | HARD | DB-3.3A |
-| D2 | Does the input-set digest enter `ExecutionFingerprint`? | No; keep RunSpec 0.1.0; derive manifest from RunSpec; bind at admission | HARD | DB-3.3A/B |
-| D3 | What immutability/containment claim is authorized? | `verified-content` detection mode for 3.3B; OS-enforced mode is a separate future gate | HARD | DB-3.3B |
-| D4 | Native evidence channel | Supervisor-owned scratch + publication; protocol v2 | HARD | DB-3.3C |
-| D5 | Native artifact schema | JSON descriptor + Parquet samples, `dynamisbench.native.mujoco-state/1` | HARD | DB-3.3C |
-| D6 | Native verification vs scientific assessment | Structural verification gates successful sealing; numerical comparison is separate | HARD (clarification) | DB-3.3C/D |
-| D7 | Evidence lifecycle representation | Derived records; no new `RunLifecycleState`/`RunOutcome` values | SOFT | DB-3.3C |
-| D8 | Partial/failed native evidence retention | Retain only in a `FAILED` bundle under `native/partial/`; never in `SUCCEEDED` | SOFT | DB-3.3C |
-| D9 | Store retention/GC and sealed-bundle self-containment | Embed inputs in sealed bundle; cache is disposable | HARD | DB-3.3A |
-| D10 | Editable worker source dependency | Bound with launch identity probe for 3.3B; packaged snapshot before final acceptance | SOFT | DB-3.3B/D |
-| D11 | CI acceptance role of new jobs | Additional RES-555 checks; not renamed as ADR-025 gates; promote after two clean runs | SOFT | DB-3.3A-D |
-| D12 | Post-merge acceptance hold and independent review | Require independent approval; hold Done until post-merge main qualification | SOFT (process) | RES-555 closure |
+| ID | Decision | Recommended option | Authority class | Blocking | Blocks |
+|---|---|---|---|---|---|
+| D1 | Materialization manifest and store authority | New manifest schema; store as `CACHE`; sealed bundle embeds `inputs/` | OWNER | HARD | DB-3.3A |
+| D2 | Does the input-set digest enter `ExecutionFingerprint`, and how are platform-specific environments treated? | No input-set field; keep RunSpec 0.1.0; derive manifest from RunSpec + bound definitions; bind at admission; compare shared scientific content across platforms | OWNER + CLARIFICATION | HARD | DB-3.3A/B |
+| D3 | What immutability/containment claim is authorized? | `verified-content` detection mode for 3.3B **only if the owner amends the literal wording**; OS-enforced mode is a separate future gate | OWNER | HARD | DB-3.3B |
+| D4 | Native evidence channel | Supervisor-owned scratch + copy-then-validate publication; protocol v2 | OWNER | HARD | DB-3.3C |
+| D5 | Native artifact schema and decoded bounds | JSON descriptor + Parquet samples, `dynamisbench.native.mujoco-state/1`; bounded decoder | OWNER | HARD | DB-3.3C |
+| D6 | Native verification vs scientific assessment | Structural verification gates successful sealing; numerical comparison is separate | OWNER + CLARIFICATION | HARD | DB-3.3C/D |
+| D7 | Evidence lifecycle representation | Derived records; no new `RunLifecycleState`/`RunOutcome` values | CLARIFICATION | SOFT | DB-3.3C |
+| D8 | Partial/failed native evidence retention | Retain only in a `FAILED` bundle under `native/partial/`; never in `SUCCEEDED` | CLARIFICATION | SOFT | DB-3.3C |
+| D9 | Store retention/GC and sealed-bundle self-containment | Embed inputs in sealed bundle; cache is disposable | OWNER | HARD | DB-3.3A |
+| D10 | Editable worker source dependency | Bound with launch identity probe for 3.3B; packaged snapshot before final acceptance | OWNER | SOFT | DB-3.3B/D |
+| D11 | CI acceptance role of new jobs | Additional RES-555 checks; not renamed as ADR-025 gates; promote after two clean runs | PROCESS | SOFT | DB-3.3A-D |
+| D12 | Post-merge acceptance hold and independent review | Require independent approval; hold Done until post-merge main qualification | PROCESS | SOFT | RES-555 closure |
+| D13 | Subprocess SUT executable closure | Refuse `SUBPROCESS`/`BRIDGE` in v1; define a versioned closure before any support | OWNER | HARD for subprocess SUT support; not blocking the reference path | Future SUT slice |
 
 ---
 
@@ -100,6 +115,13 @@ schema and bundle layout.
 **B.** Add `dynamisbench.execution-input-manifest/1`, an `inputs/` sealed-bundle layout, and
 classify the store as `CACHE`. Do not add a new `PersistenceClass` in v1. Keep the manifest
 out of `RunSpec` under D2's recommended option.
+
+The manifest contains the five definitions and the realization-declared assets only. It
+does **not** contain the interpreter, engine wheel/native libraries, pyarrow, OS libraries
+or the editable adapter source; those are runtime/library dependencies recorded separately
+as operational provenance. Publication uses create-if-absent, never `os.replace` over an
+existing final name (trust-boundary design §3.5). A concurrency test and an
+inconsistent-existing-object test are part of the contract, not an implementation detail.
 
 ### Compatibility implications
 
@@ -181,6 +203,14 @@ request, not in `ExecutionFingerprint`. Add a property test: same RunSpec + same
 definitions/assets -> same manifest digest; changed asset bytes -> materialization refusal
 or changed realization digest -> changed fingerprint.
 
+**Platform rule.** Because `RunSpec` includes the environment semantic digest, two
+executions with different environment definitions — for example Windows and Linux
+platform requirements — legitimately have different full fingerprints and different
+`InputManifestDigest`s. The comparison receipt must compare the shared benchmark, scenario,
+realization, SUT and asset digests separately. It must never assert that the full
+fingerprint or manifest digest is equal across differing environments. An operational
+`runtime_selection_digest` is machine-specific and is never part of scientific identity.
+
 ### Compatibility implications
 
 * RES-550 fingerprints and sealed evidence remain valid.
@@ -261,6 +291,15 @@ qualification records, and a separate follow-up issue for **B** if the owner req
 literal immutability/containment claim. Do not use the word "immutable" unqualified in
 RES-555 acceptance. Use "content-verified input snapshot" and "logical containment".
 
+**This is an amendment, not a satisfaction.** Option A detects mutation; it does not make
+the input read-only to a same-user worker and does not prevent reads outside the input
+root. RES-555's literal text requires the latter. Approving A therefore means the owner
+explicitly replaces that acceptance wording for DB-3.3B. If the owner does not approve that
+replacement, DB-3.3B is blocked; an implementer may not downgrade the wording by choice.
+Under option B, A2-write and A2-read are separate claims. Each requires a proven separate
+principal/sandbox and an inside-worker denial probe. A Job Object, process group or
+restricted token alone does not establish either.
+
 If the owner requires B for RES-555, stop DB-3.3B at the design boundary and authorize a
 new OS-containment gate before implementation. DB-3.3A can still proceed.
 
@@ -311,10 +350,12 @@ the bounded protocol and the diagnostic/native distinction.
 ### Alternatives
 
 **A. Supervisor-owned scratch + supervisor publication (recommended).**
-Worker writes only `native-out/` under its existing supervisor-owned cwd; supervisor
-validates and copies into `staging/native/`. Consequences: worker cannot write the evidence
-root; partial/extra/missing files fail; no absolute path in the request; v2 descriptor
-needed. A compromised worker can still forge a consistent set.
+Worker writes only `native-out/` under its existing supervisor-owned cwd; supervisor copies
+and validates the copy, then publishes into `staging/native/`. Consequences: the adapter
+does not write the evidence root; partial/extra/missing files fail; no absolute path in the
+request; v2 descriptor needed. A same-user worker can still write staging by absolute path,
+so the claim is design convention plus detection, not OS denial. A compromised worker can
+still forge a consistent set.
 
 **B. Worker writes directly into `staging/native/`.**
 Consequences: simple; but the worker gets write access to evidence, and a failed/compromised
@@ -398,6 +439,11 @@ durable evidence format is Parquet. It would add a second dense format. Not reco
 `qacc`, and the descriptor fields in the trust-boundary design. Keep it explicitly
 native: no canonical units, no normalization, no assessment. Bound descriptor at 1 MiB,
 artifact at 64 MiB for the reference case, samples at 1,000,000, files at 8.
+
+The bound is not only compressed bytes. D5 also fixes footer/metadata, row-group, row,
+column, dimension, uncompressed, decoded-batch, decompression-ratio, CPU and RSS limits, and
+requires decoding in a resource-limited validator child (trust-boundary design §7.7). A
+sample-count check after an unbounded decode is not an acceptable implementation.
 
 ### Compatibility implications
 
@@ -694,6 +740,10 @@ Consequences: weakest; no launch probe; not acceptable for RES-555's stated gap.
 claim of a sealed execution environment. If the owner requires A for RES-555, DB-3.3D
 cannot be accepted without a packaging gate.
 
+The launch probe covers the adapter source digest. It does not create a sealed interpreter,
+wheel or native-library snapshot. Those remain runtime/library dependencies with
+version-only provenance; the acceptance record must say so.
+
 ### Compatibility implications
 
 * No protocol change; the identity probe is an operational launch step.
@@ -830,6 +880,76 @@ The design PR, review, and qualification can proceed. Only the Done transition i
 
 ---
 
+## D13 — Subprocess SUT executable closure
+
+### Exact missing or conflicting authority
+
+* `SUTDefinition` requires a resolved commit or build digest for provenance, but
+  `SUTInterface.command` is only a tuple of tokens. It carries no executable path, argv
+  closure, interpreter/loader closure, library closure or per-file digest.
+* `RealizationDefinition.assets[]` enumerates realization assets, not a subprocess SUT's
+  executable or shared libraries.
+* RES-555 requires exact materialized inputs for the SUT, but the accepted domain has no
+  closure to materialize.
+* A1/A2 describe SUT execution conceptually; A8 RES-549 v1 has no subprocess SUT closure.
+
+### Why implementation cannot safely choose
+
+If a worker launches a subprocess SUT whose executable and libraries are not enumerated,
+the run can execute different bytes than the SUT definition names. Hashing the command
+string or the resolved commit does not bind the executable that actually runs. Claiming a
+materialized subprocess SUT without a closure would be a false provenance claim.
+
+### Alternatives
+
+**A. Refuse subprocess and bridge SUTs in materialized v1 (recommended).**
+Only `IN_PROCESS` SUTs whose behavior is fully realized by the engine and enumerated assets
+are admitted. Consequences: honest and small; the reference pendulum qualifies; generic
+subprocess SUT support waits.
+
+**B. Versioned `SUTExecutableClosure`.**
+Enumerate every executable, interpreter/loader component, shared library and data file the
+SUT runs, with asset IDs, logical paths (≤256), declared/observed SHA-256 and sizes. Bind
+the closure to the SUT definition and the input manifest; launch only from the read-only
+input view with no PATH fallback. Explicitly exclude and version-bind OS-provided libraries.
+Consequences: supports subprocess SUTs; requires a new schema, authority amendment, and
+substantial security review.
+
+**C. Best-effort hashing of the command's resolved executable only.**
+Consequences: misses libraries, interpreter configuration, plugin loading and later
+replacement; not acceptable for a provenance claim.
+
+### Recommendation
+
+**A for DB-3.3 v1.** Refuse `SUBPROCESS` and `BRIDGE` SUTs with
+`SUT_EXECUTABLE_CLOSURE_UNSUPPORTED`. Add **B** only as a separately accepted future gate
+(D13). Do not treat the Python interpreter, MuJoCo wheel/native libraries, pyarrow, OS
+libraries or editable adapter source as scientific assets under this decision.
+
+### Compatibility implications
+
+* No change to `SUTDefinition`, the v1 protocol or the reference path.
+* A subprocess SUT is refused before materialization, not failed at launch.
+* A future closure is a new schema version and a new authority decision.
+
+### Required amendment
+
+* A2 SUT contract: the admissible SUT interfaces for materialized execution.
+* ADR-026/027 or a new SUT-closure ADR: the `SUTExecutableClosure` schema and its exclusion
+  rules, if option B is ever chosen.
+
+### Work that can proceed independently
+
+The refusal path, negative tests for `SUBPROCESS`/`BRIDGE`, and the reference `IN_PROCESS`
+path. No subprocess SUT implementation.
+
+### Blocking level
+
+**HARD for any subprocess SUT support; not blocking the reference path.** The reference
+`IN_PROCESS` model SUT can proceed under D1/D2/D9 once they are approved.
+
+---
+
 ## 2. What is not being requested
 
 This packet does **not** request:
@@ -842,6 +962,7 @@ This packet does **not** request:
 * approval to modify sealed evidence;
 * approval to add OpenSim, generic model loading, canonicalization, assessment, or a
   scientific VVUQ claim;
+* approval to support a subprocess SUT executable closure (D13);
 * approval to change repository automation, rulesets, or account settings.
 
 It requests only the authority decisions needed to make the design implementable and
@@ -850,6 +971,9 @@ reviewable.
 ---
 
 ## 3. Approval record (to be completed by the owner)
+
+**No decision below is approved.** Revision 2 added D13 and corrected the design; it did not
+record an owner choice.
 
 | Decision | Chosen option | Approver | Date | Amendment reference |
 |---|---|---|---|---|
@@ -865,6 +989,7 @@ reviewable.
 | D10 | | | | |
 | D11 | | | | |
 | D12 | | | | |
+| D13 | | | | |
 
 Until this table is completed and the corresponding Linear authority is amended, the
 implementation slices in `RES-555_EXECUTION_PLAN.md` remain blocked at their stated
