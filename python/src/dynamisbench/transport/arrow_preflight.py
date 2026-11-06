@@ -260,7 +260,7 @@ def _type_spec(fb: _FlatBuffer, field: _Table, type_code: int) -> _FieldSpec:
     if type_code == 7:  # Decimal
         precision = fb.scalar(data_type, 0, "<i")
         scale = fb.scalar(data_type, 1, "<i")
-        bit_width = fb.scalar(data_type, 2, "<i")
+        bit_width = fb.scalar(data_type, 2, "<i", 128)
         if (
             precision < 1
             or precision > 76
@@ -270,13 +270,13 @@ def _type_spec(fb: _FlatBuffer, field: _Table, type_code: int) -> _FieldSpec:
             raise ArrowPreflightError("unsupported_schema")
         return _FieldSpec(type_code, value_width=bit_width // 8, buffer_count=2)
     if type_code == 8:  # Date
-        unit = fb.scalar(data_type, 0, "<h")
+        unit = fb.scalar(data_type, 0, "<h", 1)  # DateUnit.MILLISECOND
         if unit not in (0, 1):
             raise ArrowPreflightError("unsupported_schema")
         return _FieldSpec(type_code, value_width=4 if unit == 0 else 8, buffer_count=2)
     if type_code == 9:  # Time
-        unit = fb.scalar(data_type, 0, "<h")
-        bit_width = fb.scalar(data_type, 1, "<i")
+        unit = fb.scalar(data_type, 0, "<h", 1)  # TimeUnit.MILLISECOND
+        bit_width = fb.scalar(data_type, 1, "<i", 32)
         if unit not in (0, 1, 2, 3) or bit_width not in (32, 64):
             raise ArrowPreflightError("unsupported_schema")
         return _FieldSpec(type_code, value_width=bit_width // 8, buffer_count=2)
@@ -298,7 +298,7 @@ def _type_spec(fb: _FlatBuffer, field: _Table, type_code: int) -> _FieldSpec:
             raise ArrowPreflightError("unsupported_schema")
         return _FieldSpec(type_code, value_width=width, buffer_count=2)
     if type_code == 18:  # Duration
-        unit = fb.scalar(data_type, 0, "<h")
+        unit = fb.scalar(data_type, 0, "<h", 1)  # TimeUnit.MILLISECOND
         if unit not in (0, 1, 2, 3):
             raise ArrowPreflightError("unsupported_schema")
         return _FieldSpec(type_code, value_width=8, buffer_count=2)

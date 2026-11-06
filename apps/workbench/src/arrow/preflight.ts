@@ -266,20 +266,20 @@ function fieldSpec(fb: FlatBufferView, field: TableRef, depth: number, total: Co
   if (typeCode === 7) {
     const precision = fb.scalar(type, 0, (p) => fb.i32(p), 4);
     const scale = fb.scalar(type, 1, (p) => fb.i32(p), 4);
-    const bitWidth = fb.scalar(type, 2, (p) => fb.i32(p), 4);
+    const bitWidth = fb.scalar(type, 2, (p) => fb.i32(p), 4, 128);
     if (precision < 1 || precision > 76 || Math.abs(scale) > 76 || ![32, 64, 128, 256].includes(bitWidth)) {
       throw new ArrowPreflightError("unsupported_schema");
     }
     return { typeCode, valueWidth: bitWidth / 8, offsetWidth: 0, bufferCount: 2 };
   }
   if (typeCode === 8) {
-    const unit = fb.scalar(type, 0, (p) => fb.i16(p), 2);
+    const unit = fb.scalar(type, 0, (p) => fb.i16(p), 2, 1);
     if (unit !== 0 && unit !== 1) throw new ArrowPreflightError("unsupported_schema");
     return { typeCode, valueWidth: unit === 0 ? 4 : 8, offsetWidth: 0, bufferCount: 2 };
   }
   if (typeCode === 9) {
-    const unit = fb.scalar(type, 0, (p) => fb.i16(p), 2);
-    const width = fb.scalar(type, 1, (p) => fb.i32(p), 4);
+    const unit = fb.scalar(type, 0, (p) => fb.i16(p), 2, 1);
+    const width = fb.scalar(type, 1, (p) => fb.i32(p), 4, 32);
     if (![0, 1, 2, 3].includes(unit) || (width !== 32 && width !== 64)) {
       throw new ArrowPreflightError("unsupported_schema");
     }
@@ -304,7 +304,7 @@ function fieldSpec(fb: FlatBufferView, field: TableRef, depth: number, total: Co
     return { typeCode, valueWidth: width, offsetWidth: 0, bufferCount: 2 };
   }
   if (typeCode === 18) {
-    const unit = fb.scalar(type, 0, (p) => fb.i16(p), 2);
+    const unit = fb.scalar(type, 0, (p) => fb.i16(p), 2, 1);
     if (![0, 1, 2, 3].includes(unit)) throw new ArrowPreflightError("unsupported_schema");
     return { typeCode, valueWidth: 8, offsetWidth: 0, bufferCount: 2 };
   }

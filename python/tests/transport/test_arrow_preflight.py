@@ -177,3 +177,46 @@ def test_forged_schema_vector_count_fails_before_reader_materialization(
         read_ipc_stream(bytes(payload))
 
     assert raised.value.reason is ArrowFailure.TOO_MANY_COLUMNS
+
+
+@pytest.mark.parametrize(
+    ("arrow_type", "values"),
+    [
+        pytest.param("decimal128", ["12.34", "-0.12"], id="decimal128-default-bit-width"),
+        pytest.param("date64", ["2024-01-01", "2024-01-02"], id="date64-default-unit"),
+        pytest.param("time32", ["01:02:03.004", "04:05:06.007"], id="time32-defaults"),
+        pytest.param("duration_ms", [123, -456], id="duration-default-unit"),
+    ],
+)
+def test_pyarrow_default_valued_flatbuffer_fields_remain_accepted(
+    arrow_type: str, values: list[str] | list[int]
+) -> None:
+    """Real writer output must preserve default-valued schema metadata through preflight."""
+    import datetime as dt
+    from decimal import Decimal
+
+    import pyarrow as pa
+
+    if arrow_type == "decimal128":
+        value_type = pa.decimal128(10, 2)
+        data = [Decimal(str(v)) for v in values]
+    elif arrow_type == "date64":
+        value_type = pa.date64()
+        data = [dt.date.fromisoformat(str(v)) for v in values]
+    elif arrow_type == "time32":
+        value_type = pa.time32("ms")
+        data = [dt.time.fromisoformat(str(v)) for v in values]
+    else:
+        value_type = pa.duration("ms")
+        data = [dt.timedelta(milliseconds=int(v)) for v in values]
+
+    table = pa.Table.from_arrays([pa.array(data, type=value_type)], names=["value"])
+    sink = pa.BufferOutputStream()
+    with pa.ipc.new_stream(sink, table.schema) as writer:
+        writer.write_table(table)
+    payload = sink.getvalue().to_pybytes()
+
+    report = preflight_ipc_stream(payload)
+    assert (report.row_count, report.column_count) == (2, 1)
+    assert report.decoded_buffer_bytes <= MAX_ARROW_DECODED_BYTES
+    assert read_ipc_stream(payload).rows == tuple(table.to_pylist())
