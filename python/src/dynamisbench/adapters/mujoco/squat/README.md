@@ -245,13 +245,19 @@ simulation (runs of the study go through the run routes and the isolated worker 
 | no dynamic internal model | 13 pass, 6 fail (plan vs GRF 10.6 % W, loaded contacts 6 of 10, lightest point 0 N, heel share 0 %, friction use 63 %, CoM 17.9 mm off the mid-foot), 3 not evaluated |
 | 15 ms sole friction | 17 pass, 2 fail (foot slip 9.4 mm, CoM 10.9 mm off the mid-foot), 3 not evaluated |
 
-## Scope in DynamisBench: a RunSpec-executable realization
+## Original VM RunSpec realization (integration held at the RES-555 boundary)
 
-The squat is executed through the accepted `RunSpec -> preflight -> supervisor -> worker`
-boundary, by its own reviewed worker entry point `python -I -m
-dynamisbench.adapters.mujoco.squat.worker` (protocol version 1). The fixed-mode entry point above
-is unchanged and stays a qualification interface; the reference pendulum adapter, its identity
-and the worker protocol are unchanged.
+The recovered VM candidate executes the squat through `RunSpec -> preflight -> supervisor ->
+worker`, using its fixed entry point `python -I -m
+dynamisbench.adapters.mujoco.squat.worker` (protocol version 1). This official source export
+transfers the fixed-mode mechanics and qualification interface above. It does **not** integrate
+that RunSpec worker or its native-output pipeline: those depend on `dynamisbench.execution.native`,
+which is absent from protected `main`, and RES-555 has not authorized a native-evidence contract
+or extraction path. Do not treat fixed-mode observations as sealed DynamisBench evidence. The
+reference pendulum adapter and existing worker protocol are unchanged.
+
+The following subsections describe the recovered VM candidate's RunSpec authority and pipeline;
+they are retained as source context and are not wired into official execution by this export.
 
 **Authority.** [`case.py`](case.py) defines the benchmark release `db.squat.back-squat` (45
 canonical quantities with frames, units and sign conventions; 17 metrics with predeclared
