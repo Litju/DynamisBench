@@ -7,17 +7,33 @@
  * one as scientific authority: it turns bounded bytes into fields and rows for a caller that
  * already has a reason to read them.
  *
- * Refusals are bounded. Empty input, input above `MAX_ARROW_IPC_BYTES`, a table with more rows
- * than `MAX_ARROW_ROWS`, and bytes the official reader rejects all raise `ArrowDecodeError`
- * with a closed reason. The underlying exception text is not attached or quoted.
+ * The IPC envelope, schema, dimensions and decoded-buffer sizes are preflighted before the
+ * official reader constructs vectors or rows. Refusals use a closed reason; the underlying
+ * exception text is not attached or quoted.
  */
 
+import { ArrowPreflightError, type ArrowFailure, MAX_ARROW_IPC_BYTES, MAX_ARROW_ROWS } from "./limits";
+import { preflightArrowIpcStream } from "./preflight";
+
+export {
+  MAX_ARROW_BUFFERS,
+  MAX_ARROW_COLUMNS,
+  MAX_ARROW_DECODED_BYTES,
+  MAX_ARROW_FIELD_DEPTH,
+  MAX_ARROW_FIELD_NODES,
+  MAX_ARROW_IPC_BYTES,
+  MAX_ARROW_LOGICAL_VALUES,
+  MAX_ARROW_MESSAGE_METADATA_BYTES,
+  MAX_ARROW_MESSAGES,
+  MAX_ARROW_METADATA_ENTRIES,
+  MAX_ARROW_METADATA_STRING_BYTES,
+  MAX_ARROW_RECORD_BATCHES,
+  MAX_ARROW_ROWS,
+  MAX_ARROW_TOTAL_METADATA_BYTES,
+} from "./limits";
+export type { ArrowFailure } from "./limits";
+
 export const ARROW_IPC_STREAM_CONTENT_TYPE = "application/vnd.apache.arrow.stream";
-
-export const MAX_ARROW_IPC_BYTES = 1 * 1024 * 1024;
-export const MAX_ARROW_ROWS = 100_000;
-
-export type ArrowFailure = "empty" | "too_large" | "malformed" | "too_many_rows";
 
 export class ArrowDecodeError extends Error {
   readonly reason: ArrowFailure;
@@ -58,6 +74,16 @@ export async function decodeArrowIpcStream(
     throw new ArrowDecodeError("too_large");
   }
 
+  let budget: ReturnType<typeof preflightArrowIpcStream>;
+  try {
+    budget = preflightArrowIpcStream(payload);
+  } catch (error) {
+    if (error instanceof ArrowPreflightError) {
+      throw new ArrowDecodeError(error.reason);
+    }
+    throw new ArrowDecodeError("malformed");
+  }
+
   const { tableFromIPC } = await import("apache-arrow");
 
   let table;
@@ -67,6 +93,9 @@ export async function decodeArrowIpcStream(
     throw new ArrowDecodeError("malformed");
   }
 
+  if (table.numRows !== budget.rowCount || table.schema.fields.length !== budget.columnCount) {
+    throw new ArrowDecodeError("malformed");
+  }
   if (table.numRows > MAX_ARROW_ROWS) {
     throw new ArrowDecodeError("too_many_rows");
   }
