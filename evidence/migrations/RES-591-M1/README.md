@@ -51,3 +51,5 @@ These are local checks, not exact-head hosted Windows/Linux qualification. The n
 4. **Native desktop and empirical qualification remain open.** RES-562 and RES-564 still govern real Windows WebView2 usability and CSP/session hardening. Numerical verification of synthetic recordings is not empirical biomechanical validation; RES-570 remains separate.
 
 No ADR, scientific contract, protected branch, or Linear status was changed by this evidence package.
+
+The narrow, unaccepted rendering-stack proposal is in `stack-exception-proposal.md`.
