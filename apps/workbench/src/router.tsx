@@ -4,6 +4,7 @@
  * ```text
  * /                        the workbench overview and its runtime status
  * /workspace/$workspaceId  a workspace identified by the opaque handle the API minted
+ * /laboratory              the biomechanics laboratory over the packaged squat recordings
  * ```
  *
  * No file-route generator and no plugin: this foundation's route tree is small enough to
@@ -23,12 +24,13 @@ import {
   type RouterHistory,
 } from "@tanstack/react-router";
 
+import { laboratoryRoute } from "./routes/laboratory";
 import { landingRoute } from "./routes/landing";
 import { rootRoute } from "./routes/root";
 import { workspaceRoute } from "./routes/workspace";
 import type { RouterContext } from "./routes/context";
 
-export const routeTree = rootRoute.addChildren([landingRoute, workspaceRoute]);
+export const routeTree = rootRoute.addChildren([landingRoute, workspaceRoute, laboratoryRoute]);
 
 /**
  * Build the application's router from the runtime's own `QueryClient`.

@@ -1,0 +1,9 @@
+{
+  "status": 409,
+  "body": {
+    "error": {
+      "code": "http_error",
+      "message": "the integration timestep 0.0003 s does not divide the 10 ms sample period exactly; snapshots are never interpolated between steps"
+    }
+  }
+}

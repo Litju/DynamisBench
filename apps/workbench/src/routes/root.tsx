@@ -10,10 +10,12 @@
  * publishes its `workspace.opened` event during the POST made from the landing route. A
  * panel mounted only on the workspace route would therefore start listening after the event
  * it exists to show. At the root it is mounted while the landing form is usable, survives
- * navigation unchanged, and owns the session's one subscription.
+ * navigation unchanged, and owns the session's one subscription. On the laboratory route it
+ * stays mounted (and subscribed) but is not drawn: the laboratory uses the whole window and
+ * has its own status bar.
  */
 
-import { createRootRouteWithContext, Outlet } from "@tanstack/react-router";
+import { createRootRouteWithContext, Outlet, useRouterState } from "@tanstack/react-router";
 
 import { AppShell } from "../shell/app-shell";
 import { ActivityPanel } from "../workbench/activity";
@@ -24,11 +26,16 @@ export const rootRoute = createRootRouteWithContext<RouterContext>()({
 });
 
 function RootLayout() {
+  const onLaboratory = useRouterState({
+    select: (state) => state.location.pathname === "/laboratory",
+  });
   return (
     <AppShell>
       <div className="flex min-h-0 flex-1 flex-col">
         <Outlet />
-        <ActivityPanel />
+        <div className="wb-activity-slot" hidden={onLaboratory}>
+          <ActivityPanel />
+        </div>
       </div>
     </AppShell>
   );

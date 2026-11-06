@@ -35,6 +35,32 @@ import {
   decodeWorkspaceDiscoveryResponse,
 } from "./decode";
 import { ApiClientError, MAX_API_MESSAGE_LENGTH, isApiErrorCode } from "./errors";
+import {
+  decodeLaboratoryIndexResponse,
+  decodeLaboratoryModelResponse,
+  decodeLaboratoryRecordingResponse,
+} from "./laboratory-decode";
+import type {
+  LaboratoryFrameGroup,
+  LaboratoryIndexResponse,
+  LaboratoryModelResponse,
+  LaboratoryRecordingResponse,
+} from "./laboratory-types";
+import {
+  decodePreflightResponse,
+  decodeRunEvidenceResponse,
+  decodeRunListResponse,
+  decodeRunProgressResponse,
+  decodeStudyCatalogueResponse,
+} from "./run-decode";
+import type {
+  PreflightResponse,
+  RunConfigurationRequest,
+  RunEvidenceResponse,
+  RunListResponse,
+  RunProgressResponse,
+  StudyCatalogueResponse,
+} from "./run-types";
 import { SseParseError, SseParser } from "./sse";
 import type {
   ApiErrorCode,
@@ -49,6 +75,21 @@ import type {
 
 /** The versioned namespace every request is built under. */
 export const API_PATH_PREFIX = "/api/v1";
+
+/** The media type of a laboratory frame group: an Arrow IPC stream (ADR-019). */
+export const FRAME_STREAM_MEDIA_TYPE = "application/vnd.apache.arrow.stream";
+
+/**
+ * The largest frame stream this client will hold: one mebibyte, the Arrow decoder's own bound.
+ * The largest published group (body poses) is about half of it.
+ */
+export const MAX_FRAME_STREAM_BYTES = 1 * 1024 * 1024;
+
+/** The media type of the laboratory's anatomical figure stream. */
+export const FIGURE_MEDIA_TYPE = "application/vnd.dynamisbench.figure";
+
+/** The largest figure stream this client will hold (the packaged one is about 3.6 MiB). */
+export const MAX_FIGURE_BYTES = 8 * 1024 * 1024;
 
 /** The request shape this client needs from a `fetch` implementation. */
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
@@ -91,6 +132,58 @@ export interface ApiClient {
    * `invalid_response` and ends the iteration.
    */
   streamEvents(options: { signal: AbortSignal }): AsyncIterable<ApplicationEvent>;
+  /** `GET /api/v1/laboratory` */
+  laboratoryIndex(): Promise<LaboratoryIndexResponse>;
+  /** `GET /api/v1/laboratory/model` */
+  laboratoryModel(): Promise<LaboratoryModelResponse>;
+  /** `GET /api/v1/laboratory/recordings/{recordingId}` */
+  laboratoryRecording(recordingId: string): Promise<LaboratoryRecordingResponse>;
+  /**
+   * `GET /api/v1/laboratory/recordings/{recordingId}/frames/{group}` as the raw Arrow IPC
+   * stream bytes. The client checks the media type and the size bound; decoding the columns is
+   * the Arrow utility's job, so this module never loads the columnar stack.
+   */
+  laboratoryFrames(recordingId: string, group: LaboratoryFrameGroup): Promise<Uint8Array>;
+  /**
+   * `GET /api/v1/laboratory/figure` as the raw figure stream (a pinned presentation asset;
+   * decoded and checked against the model by the laboratory, never by the client).
+   */
+  laboratoryFigure(): Promise<Uint8Array>;
+  /** `GET /api/v1/workspaces/{workspaceId}/studies` */
+  studyCatalogue(workspaceId: string): Promise<StudyCatalogueResponse>;
+  /** `POST /api/v1/workspaces/{workspaceId}/runs/preflight` — plans and admits; starts nothing. */
+  preflightRun(workspaceId: string, request: RunConfigurationRequest): Promise<PreflightResponse>;
+  /** `POST /api/v1/workspaces/{workspaceId}/runs` — asks the run service to execute. */
+  startRun(workspaceId: string, request: RunConfigurationRequest): Promise<RunProgressResponse>;
+  /** `GET /api/v1/workspaces/{workspaceId}/runs/{runId}/progress` */
+  runProgress(workspaceId: string, runId: string): Promise<RunProgressResponse>;
+  /** `POST /api/v1/workspaces/{workspaceId}/runs/{runId}/cancel` */
+  cancelRun(workspaceId: string, runId: string): Promise<RunProgressResponse>;
+  /** `GET /api/v1/workspaces/{workspaceId}/runs` */
+  listRuns(workspaceId: string): Promise<RunListResponse>;
+  /** `GET /api/v1/workspaces/{workspaceId}/runs/{runId}/evidence` */
+  runEvidence(workspaceId: string, runId: string): Promise<RunEvidenceResponse>;
+  /** `GET /api/v1/workspaces/{workspaceId}/runs/{runId}/recording` */
+  runRecording(workspaceId: string, runId: string): Promise<LaboratoryRecordingResponse>;
+  /** `GET /api/v1/workspaces/{workspaceId}/runs/{runId}/model` */
+  runModel(workspaceId: string, runId: string): Promise<LaboratoryModelResponse>;
+  /** `GET /api/v1/workspaces/{workspaceId}/runs/{runId}/frames/{group}` (Arrow IPC bytes) */
+  runFrames(workspaceId: string, runId: string, group: LaboratoryFrameGroup): Promise<Uint8Array>;
+}
+
+/** The workspace-scoped prefix of a run's routes, every identifier URL-encoded. */
+function runPath(workspaceId: string, runId?: string): string {
+  const base = `/workspaces/${encodeURIComponent(workspaceId)}/runs`;
+  return runId === undefined ? base : `${base}/${encodeURIComponent(runId)}`;
+}
+
+/** The one JSON body a run request carries: the study and its configuration, nothing else. */
+function runRequestBody(request: RunConfigurationRequest): string {
+  return JSON.stringify({
+    study_id: request.study_id,
+    case_id: request.case_id,
+    values: { ...request.values },
+  });
 }
 
 function defaultFetch(input: string, init: RequestInit): Promise<Response> {
@@ -177,6 +270,47 @@ export function createApiClient(
     return decoded;
   }
 
+  /** One binary read: the same request, refusal and bounds, with the bytes as the answer. */
+  async function sendBinary(path: string, mediaType: string, limit: number): Promise<Uint8Array> {
+    let response: Response;
+    try {
+      response = await fetchImpl(url(path), {
+        method: "GET",
+        headers: { Accept: mediaType, Authorization: authorization },
+        credentials: "omit",
+        cache: "no-store",
+      });
+    } catch {
+      throw new ApiClientError("network");
+    }
+
+    if (!response.ok) {
+      const failure = await readEnvelope(response, connection.credential);
+      throw new ApiClientError("http", {
+        status: response.status,
+        code: failure?.code ?? null,
+        apiMessage: failure?.message ?? null,
+      });
+    }
+
+    const contentType = (response.headers.get("content-type") ?? "").split(";")[0]?.trim();
+    const declaredLength = Number(response.headers.get("content-length") ?? "0");
+    if (contentType !== mediaType || declaredLength > limit) {
+      throw new ApiClientError("invalid_response", { status: response.status });
+    }
+
+    let bytes: ArrayBuffer;
+    try {
+      bytes = await response.arrayBuffer();
+    } catch {
+      throw new ApiClientError("invalid_response", { status: response.status });
+    }
+    if (bytes.byteLength === 0 || bytes.byteLength > limit) {
+      throw new ApiClientError("invalid_response", { status: response.status });
+    }
+    return new Uint8Array(bytes);
+  }
+
   return {
     async health(): Promise<HealthResponse> {
       return await send("/health", { method: "GET" }, decodeHealthResponse);
@@ -216,6 +350,118 @@ export function createApiClient(
         `/workspaces/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}`,
         { method: "GET" },
         decodeArtifactInspectionResponse,
+      );
+    },
+
+    async laboratoryIndex(): Promise<LaboratoryIndexResponse> {
+      return await send("/laboratory", { method: "GET" }, decodeLaboratoryIndexResponse);
+    },
+
+    async laboratoryModel(): Promise<LaboratoryModelResponse> {
+      return await send("/laboratory/model", { method: "GET" }, decodeLaboratoryModelResponse);
+    },
+
+    async laboratoryRecording(recordingId: string): Promise<LaboratoryRecordingResponse> {
+      const recording = await send(
+        `/laboratory/recordings/${encodeURIComponent(recordingId)}`,
+        { method: "GET" },
+        decodeLaboratoryRecordingResponse,
+      );
+      // An answer about another recording is not an answer to this request.
+      if (recording.recording_id !== recordingId) {
+        throw new ApiClientError("invalid_response", { status: 200 });
+      }
+      return recording;
+    },
+
+    async laboratoryFrames(
+      recordingId: string,
+      group: LaboratoryFrameGroup,
+    ): Promise<Uint8Array> {
+      return await sendBinary(
+        `/laboratory/recordings/${encodeURIComponent(recordingId)}/frames/${encodeURIComponent(group)}`,
+        FRAME_STREAM_MEDIA_TYPE,
+        MAX_FRAME_STREAM_BYTES,
+      );
+    },
+
+    async laboratoryFigure(): Promise<Uint8Array> {
+      return await sendBinary("/laboratory/figure", FIGURE_MEDIA_TYPE, MAX_FIGURE_BYTES);
+    },
+
+    async studyCatalogue(workspaceId: string): Promise<StudyCatalogueResponse> {
+      return await send(
+        `/workspaces/${encodeURIComponent(workspaceId)}/studies`,
+        { method: "GET" },
+        decodeStudyCatalogueResponse,
+      );
+    },
+
+    async preflightRun(workspaceId: string, request: RunConfigurationRequest): Promise<PreflightResponse> {
+      return await send(
+        `${runPath(workspaceId)}/preflight`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: runRequestBody(request) },
+        decodePreflightResponse,
+      );
+    },
+
+    async startRun(workspaceId: string, request: RunConfigurationRequest): Promise<RunProgressResponse> {
+      return await send(
+        runPath(workspaceId),
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: runRequestBody(request) },
+        decodeRunProgressResponse,
+      );
+    },
+
+    async runProgress(workspaceId: string, runId: string): Promise<RunProgressResponse> {
+      const progress = await send(`${runPath(workspaceId, runId)}/progress`, { method: "GET" }, decodeRunProgressResponse);
+      if (progress.run_id !== runId) {
+        throw new ApiClientError("invalid_response", { status: 200 });
+      }
+      return progress;
+    },
+
+    async cancelRun(workspaceId: string, runId: string): Promise<RunProgressResponse> {
+      const progress = await send(`${runPath(workspaceId, runId)}/cancel`, { method: "POST" }, decodeRunProgressResponse);
+      if (progress.run_id !== runId) {
+        throw new ApiClientError("invalid_response", { status: 200 });
+      }
+      return progress;
+    },
+
+    async listRuns(workspaceId: string): Promise<RunListResponse> {
+      return await send(runPath(workspaceId), { method: "GET" }, decodeRunListResponse);
+    },
+
+    async runEvidence(workspaceId: string, runId: string): Promise<RunEvidenceResponse> {
+      const evidence = await send(`${runPath(workspaceId, runId)}/evidence`, { method: "GET" }, decodeRunEvidenceResponse);
+      if (evidence.run_id !== runId) {
+        throw new ApiClientError("invalid_response", { status: 200 });
+      }
+      return evidence;
+    },
+
+    async runRecording(workspaceId: string, runId: string): Promise<LaboratoryRecordingResponse> {
+      const recording = await send(
+        `${runPath(workspaceId, runId)}/recording`,
+        { method: "GET" },
+        decodeLaboratoryRecordingResponse,
+      );
+      if (recording.recording_id !== runId || recording.kind !== "run") {
+        throw new ApiClientError("invalid_response", { status: 200 });
+      }
+      return recording;
+    },
+
+    async runModel(workspaceId: string, runId: string): Promise<LaboratoryModelResponse> {
+      return await send(`${runPath(workspaceId, runId)}/model`, { method: "GET" }, decodeLaboratoryModelResponse);
+    },
+
+    async runFrames(workspaceId: string, runId: string, group: LaboratoryFrameGroup): Promise<Uint8Array> {
+      return await sendBinary(
+        `${runPath(workspaceId, runId)}/frames/${encodeURIComponent(group)}`,
+        FRAME_STREAM_MEDIA_TYPE,
+        MAX_FRAME_STREAM_BYTES,
       );
     },
 

@@ -1,10 +1,63 @@
 import { Box, ChevronLeft, ChevronRight } from "lucide-react";
 
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 
+import { ApiClientError } from "../api/errors";
+import { apiQueryKeys, runListOptions } from "../api/queries";
+import type { RunListResponse } from "../api/run-types";
 import type { ArtifactSummary } from "../api/types";
+import { useApiClient } from "../session/provider";
 
 import { useUiStore } from "../store/ui";
+import { LIVE_WORKSPACE_RUN_API_AVAILABLE, LIVE_WORKSPACE_RUN_API_UNAVAILABLE_MESSAGE } from "../laboratory/m1-capabilities";
+
+/** What the workspace's runs are, as the run service read them back from their seals. */
+function useRunSummary(workspaceId: string): { execution: string; evidence: string; available: boolean } {
+  const client = useApiClient();
+  const runs = useQuery({
+    ...(client === null || !LIVE_WORKSPACE_RUN_API_AVAILABLE
+      ? {
+          queryKey: apiQueryKeys.runs(workspaceId),
+          queryFn: (): Promise<RunListResponse> => Promise.reject(new Error(LIVE_WORKSPACE_RUN_API_UNAVAILABLE_MESSAGE)),
+        }
+      : runListOptions(client, workspaceId)),
+    enabled: client !== null && LIVE_WORKSPACE_RUN_API_AVAILABLE,
+    retry: false,
+  });
+  if (!LIVE_WORKSPACE_RUN_API_AVAILABLE) {
+    return {
+      execution: "Live workspace runs unavailable in M1",
+      evidence: "Packaged diagnostic recordings are available in the Laboratory",
+      available: true,
+    };
+  }
+  if (runs.isError) {
+    const unavailable = runs.error instanceof ApiClientError && runs.error.status === 503;
+    return {
+      execution: unavailable ? "Unavailable in this session" : "Could not be read",
+      evidence: "—",
+      available: false,
+    };
+  }
+  if (runs.data === undefined) {
+    return { execution: "Reading…", evidence: "Reading…", available: true };
+  }
+  const list = runs.data.runs;
+  const active = list.filter((run) => run.progress?.active === true).length;
+  const verified = list.filter((run) => run.status === "verified").length;
+  const failed = list.filter((run) => run.status === "failed").length;
+  const rejected = list.filter((run) => run.status === "rejected" || run.status === "incomplete").length;
+  return {
+    execution: list.length === 0 ? "No runs yet" : `${list.length} run${list.length === 1 ? "" : "s"}${active > 0 ? ` · ${active} active` : ""}`,
+    evidence:
+      list.length === 0
+        ? "No sealed evidence yet"
+        : `${verified} verified · ${failed} failed${rejected > 0 ? ` · ${rejected} rejected` : ""}`,
+    available: true,
+  };
+}
 
 export function WorkbenchLayout({
   navigator,
@@ -27,6 +80,8 @@ export function WorkbenchLayout({
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
 
   const [layout, setLayout] = useState("bottom");
+
+  const runs = useRunSummary(workspaceId);
 
   const [dock, setDock] = useState("source");
 
@@ -65,12 +120,12 @@ export function WorkbenchLayout({
 
         <div>
           <dt>Execution</dt>
-          <dd>Unavailable</dd>
+          <dd>{runs.execution}</dd>
         </div>
 
         <div>
-          <dt>Native evidence / assessment</dt>
-          <dd>Unavailable / not assessed</dd>
+          <dt>Sealed evidence / assessment</dt>
+          <dd>{runs.evidence}</dd>
         </div>
       </dl>
 
@@ -114,16 +169,15 @@ export function WorkbenchLayout({
             <>
               <div className="wb-pane wb-toolbar">
                 <strong>Simulation Laboratory</strong>
-                <span className="wb-tag">READ ONLY</span>
-                <button disabled title="No production preflight API">
-                  Preflight
-                </button>
-                <button disabled title="No production execution API">
-                  Execute
-                </button>
-                <button disabled title="No production cancellation API">
-                  Cancel
-                </button>
+                <Link
+                  to="/laboratory"
+                  search={{ workspace: workspaceId }}
+                  className="wb-link-button"
+                  aria-disabled={!runs.available}
+                >
+                  Open in the laboratory
+                </Link>
+                <span className="wb-tag">{runs.execution}</span>
 
                 <label className="ml-auto">
                   Layout{" "}
@@ -135,9 +189,8 @@ export function WorkbenchLayout({
                   >
                     <option value="bottom">Bottom</option>
                     <option value="side">Side</option>
-                    <option value="scene" disabled>Scene only</option>
                   </select>
-                  <span id="laboratory-layout-availability" className="sr-only">Scene only is unavailable until a supported scientific scene exists.</span>
+                  <span id="laboratory-layout-availability" className="sr-only">The 3D scene of this workspace's runs is drawn in its laboratory.</span>
                 </label>
               </div>
 
@@ -154,21 +207,29 @@ export function WorkbenchLayout({
                 <div className="wb-pane wb-scene">
                   <div className="wb-pane-title">
                     <span>Model scene</span>
-                    <span className="wb-tag">UNAVAILABLE</span>
+                    <span className="wb-tag">IN THE LABORATORY</span>
                   </div>
                   <div className="wb-unavailable">
                     <Box size={36} strokeWidth={1} />
-                    <strong>No materialized scientific scene</strong>
+                    <strong>Studies run in the laboratory</strong>
                     <p>
-                      Inspect validated source definitions below. Geometry,
-                      model simulation and recorded trajectories are not
-                      published by the current application API.
+                      Configure a study of this workspace, preflight and execute
+                      it in the isolated worker, play the sealed and verified
+                      run in 3D, analyse and compare it, and inspect its
+                      evidence — in the{" "}
+                      <Link
+                        to="/laboratory"
+                        search={{ workspace: workspaceId }}
+                        className="text-accent underline"
+                      >
+                        laboratory of this workspace
+                      </Link>
+                      . Source definitions are inspected below.
                     </p>
                   </div>
                   <div className="wb-toolbar">
-                    <button disabled>Play</button>
-                    <span>Recorded playback unavailable</span>
-                    <span className="ml-auto">No trajectory</span>
+                    <span>{runs.execution}</span>
+                    <span className="ml-auto">{runs.evidence}</span>
                   </div>
                 </div>
 
@@ -197,13 +258,18 @@ export function WorkbenchLayout({
                   </div>
 
                   {dock !== "source" && (
-                    <Unavailable
+                    <InTheLaboratory
+                      workspaceId={workspaceId}
                       title={
                         dock === "signals"
-                          ? "Signals unavailable"
-                          : "Execution log unavailable"
+                          ? "Signals of this workspace's runs"
+                          : "Execution of this workspace's runs"
                       }
-                      detail="No production execution or canonical trajectory API is connected. Application activity below describes source operations only."
+                      detail={
+                        dock === "signals"
+                          ? "The canonical series of every verified run is plotted, linked to one playback clock, in the laboratory's Laboratory and Analysis folios."
+                          : `${runs.execution} · ${runs.evidence}. Preflight, execution, progress, cancellation and each run's read-back status are in the laboratory's Study & Runs folio.`
+                      }
                     />
                   )}
                 </div>
@@ -216,16 +282,17 @@ export function WorkbenchLayout({
               {mode === "study" ? (
                 <div className="wb-pane-body">{content}</div>
               ) : (
-                <Unavailable
+                <InTheLaboratory
+                  workspaceId={workspaceId}
                   title={
                     mode === "analysis"
-                      ? "Scientific analysis unavailable"
-                      : "Native evidence unavailable"
+                      ? "Analysis of this workspace's runs"
+                      : "Evidence of this workspace's runs"
                   }
                   detail={
                     mode === "analysis"
-                      ? "Comparisons, validation and uncertainty assessment require accepted result and scientific contracts. Source validation is not scientific qualification."
-                      : "Source identity and diagnostics are available in the Inspector. Native execution evidence, canonical results and assessments are not published by the current API."
+                      ? "Summaries, the work–energy ledger and comparison of verified runs are in the laboratory's Analysis folio. Validation against measured data and uncertainty quantification are not available: numerical verification and assessment against predeclared criteria are not scientific validation."
+                      : `${runs.evidence}. Both sealed bundles of every run, its provenance chain, verification and assessment are inspected in the laboratory's Evidence folio; source identity and diagnostics are in the Inspector.`
                   }
                 />
               )}
@@ -264,12 +331,23 @@ export function WorkbenchLayout({
   );
 }
 
-function Unavailable({ title, detail }: { title: string; detail: string }) {
+function InTheLaboratory({
+  workspaceId,
+  title,
+  detail,
+}: {
+  workspaceId: string;
+  title: string;
+  detail: string;
+}) {
   return (
     <div className="wb-unavailable" role="status">
-      <span className="wb-tag">NOT IMPLEMENTED</span>
+      <span className="wb-tag">IN THE LABORATORY</span>
       <strong>{title}</strong>
       <p>{detail}</p>
+      <Link to="/laboratory" search={{ workspace: workspaceId }} className="text-accent underline">
+        Open the laboratory of this workspace
+      </Link>
     </div>
   );
 }

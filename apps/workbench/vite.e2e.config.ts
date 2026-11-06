@@ -19,4 +19,10 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
   },
+  // The laboratory's two large dependencies are reached only through lazy imports. Bundling
+  // them when the server starts keeps the dev server from discovering them mid-session and
+  // re-optimising (which stalls the in-flight dynamic import until a reload).
+  optimizeDeps: {
+    include: ["three", "apache-arrow"],
+  },
 });

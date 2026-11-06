@@ -91,3 +91,61 @@ export async function decodeArrowIpcStream(
     contentType: ARROW_IPC_STREAM_CONTENT_TYPE,
   };
 }
+
+export interface DecodedFloatColumns {
+  readonly names: readonly string[];
+  readonly columns: ReadonlyMap<string, Float64Array>;
+  readonly numRows: number;
+}
+
+/**
+ * Decode one Arrow IPC stream of non-null `float64` columns into typed arrays, column by column.
+ *
+ * The columnar counterpart of [`decodeArrowIpcStream`] for bulk numeric frames (the server's
+ * `encode_float_columns`): no per-row objects are built. The same bounds apply, and a stream
+ * whose fields are not all non-null `Float64`, or whose names repeat, is `malformed`.
+ */
+export async function decodeArrowFloatColumns(payload: Uint8Array): Promise<DecodedFloatColumns> {
+  if (payload.byteLength === 0) {
+    throw new ArrowDecodeError("empty");
+  }
+  if (payload.byteLength > MAX_ARROW_IPC_BYTES) {
+    throw new ArrowDecodeError("too_large");
+  }
+
+  const { tableFromIPC, DataType, Precision } = await import("apache-arrow");
+
+  let table;
+  try {
+    table = tableFromIPC(payload);
+  } catch {
+    throw new ArrowDecodeError("malformed");
+  }
+
+  if (table.numRows > MAX_ARROW_ROWS) {
+    throw new ArrowDecodeError("too_many_rows");
+  }
+
+  const names: string[] = [];
+  const columns = new Map<string, Float64Array>();
+  for (const field of table.schema.fields) {
+    const double =
+      DataType.isFloat(field.type) && (field.type as { precision: number }).precision === Precision.DOUBLE;
+    if (!double || field.nullable || columns.has(field.name)) {
+      throw new ArrowDecodeError("malformed");
+    }
+    const vector = table.getChild(field.name);
+    if (vector === null || vector.nullCount !== 0) {
+      throw new ArrowDecodeError("malformed");
+    }
+    const values = vector.toArray();
+    if (!(values instanceof Float64Array) || values.length !== table.numRows) {
+      throw new ArrowDecodeError("malformed");
+    }
+    names.push(field.name);
+    // A copy: the decoded column must not alias the IPC buffer it was read from.
+    columns.set(field.name, Float64Array.from(values));
+  }
+
+  return { names, columns, numRows: table.numRows };
+}

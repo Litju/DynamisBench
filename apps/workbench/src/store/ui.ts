@@ -17,7 +17,8 @@ export type UiStore = {
 export const useUiStore = create<UiStore>((set) => ({
   mode: "lab",
   setMode: (mode) => set({ mode }),
-  theme: "light",
+  // Studiolo, the dark ground, is the default for long sessions (DESIGN.md §2.2).
+  theme: "dark",
   toggleTheme: () =>
     set((s) => ({ theme: s.theme === "light" ? "dark" : "light" })),
   sidebarCollapsed: false,

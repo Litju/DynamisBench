@@ -9,6 +9,11 @@ test("approved shell preserves selection, pane controls and latest source status
   harness,
   network,
 }) => {
+  const liveRunRequests: string[] = [];
+  page.on("request", (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (/(?:^|\/)(?:studies|runs)(?:\/|$)/.test(pathname)) liveRunRequests.push(pathname);
+  });
   await page.getByLabel("Source root").fill(harness.workspace.sourceRoot);
   await page.getByLabel("Evidence root").fill(harness.workspace.evidenceRoot);
   await page
@@ -20,16 +25,20 @@ test("approved shell preserves selection, pane controls and latest source status
   await expect(page.getByTestId("artifact-content")).toContainText(
     "Loaded countermovement jump",
   );
+  // Execution is not offered here: the workspace's studies run in its laboratory.
+  await expect(page.getByRole("button", { name: "Execute", exact: true })).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Execute", exact: true }),
-  ).toBeDisabled();
-  await expect(
-    page.getByText("No materialized scientific scene"),
+    page.getByRole("link", { name: "Open in the laboratory", exact: true }),
   ).toBeVisible();
+  await expect(page.getByText("Studies run in the laboratory")).toBeVisible();
+  await expect(page.getByLabel("Scientific context", { exact: true })).toContainText(
+    "Live workspace runs unavailable in M1",
+  );
   await page
     .getByRole("button", { name: "Analysis & VVUQ", exact: true })
     .click();
-  await expect(page.getByText("Scientific analysis unavailable")).toBeVisible();
+  await expect(page.getByText("Analysis of this workspace's runs")).toBeVisible();
+  await expect(page.getByText("IN THE LABORATORY", { exact: true })).toBeVisible();
   await expect(source).toHaveAttribute("aria-selected", "true");
   await page
     .getByRole("button", { name: "Simulation Laboratory", exact: true })
@@ -64,13 +73,10 @@ test("approved shell preserves selection, pane controls and latest source status
       .getByRole("option")
       .first(),
   ).toBeFocused();
-  await expect(
-    page.getByRole("option", { name: "Scene only", exact: true }),
-  ).toHaveAttribute("disabled", "");
-  await page.getByLabel("Laboratory layout").focus();
-  await page.keyboard.press("End");
-  await page.keyboard.press("Enter");
-  await expect(page.getByLabel("Laboratory layout")).not.toHaveValue("scene");
+  await expect(page.getByRole("option", { name: "Scene only", exact: true })).toHaveCount(0);
+  await page.getByLabel("Laboratory layout").selectOption("side");
+  await expect(page.getByLabel("Laboratory layout")).toHaveValue("side");
+  await page.getByLabel("Laboratory layout").selectOption("bottom");
   await expect(
     page.getByRole("button", { name: "Re-read", exact: true }),
   ).toBeVisible();
@@ -108,16 +114,17 @@ test("approved shell preserves selection, pane controls and latest source status
     await mkdir(directory, { recursive: true });
     expect(await page.content()).not.toContain(harness.sidecar.credential);
     expect(await page.content()).not.toContain(harness.workspace.sourceRoot);
+    // Studiolo (dark) is the default ground; the toggle turns to Vellum (light).
     await page.screenshot({
-      path: path.join(directory, "production-lab-light.png"),
+      path: path.join(directory, "production-lab-dark.png"),
     });
     await page.getByRole("button", { name: "Toggle color theme" }).click();
     await expect(page.locator(".wb-shell")).toHaveAttribute(
       "data-theme",
-      "dark",
+      "light",
     );
     await page.screenshot({
-      path: path.join(directory, "production-lab-dark.png"),
+      path: path.join(directory, "production-lab-light.png"),
     });
   }
   // Hold then fail a real inspection request; cached Explorer facts must be explicit.
@@ -151,5 +158,18 @@ test("approved shell preserves selection, pane controls and latest source status
   await expect(page.getByText("0 valid", { exact: true })).toBeVisible();
   await expect(page.getByTestId("artifact-content")).toHaveCount(0);
   await expect(page.locator(".wb-context")).toContainText("invalid");
+  await page.getByRole("link", { name: "Open in the laboratory", exact: true }).click();
+  await page.waitForURL(/\/laboratory\?workspace=/);
+  await page.getByRole("navigation", { name: "Folios" }).getByRole("button", { name: /Study & Runs/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Workspace execution is not enabled in this integration phase" }),
+  ).toBeVisible();
+  expect(liveRunRequests).toEqual([]);
+  if (process.env.DYNAMISBENCH_UX_SCREENSHOTS) {
+    const directory = process.env.DYNAMISBENCH_UX_SCREENSHOTS;
+    expect(await page.content()).not.toContain(harness.sidecar.credential);
+    await mkdir(directory, { recursive: true });
+    await page.screenshot({ path: path.join(directory, "05-study-runs-m1-unavailable.png") });
+  }
   expect(network.offenses).toEqual([]);
 });

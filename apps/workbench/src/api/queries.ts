@@ -17,6 +17,20 @@ import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react
 
 import type { ApiClient } from "./client";
 import type {
+  LaboratoryFrameGroup,
+  LaboratoryIndexResponse,
+  LaboratoryModelResponse,
+  LaboratoryRecordingResponse,
+} from "./laboratory-types";
+import type {
+  PreflightResponse,
+  RunConfigurationRequest,
+  RunEvidenceResponse,
+  RunListResponse,
+  RunProgressResponse,
+  StudyCatalogueResponse,
+} from "./run-types";
+import type {
   ApplicationInfoResponse,
   ArtifactInspectionResponse,
   OpenWorkspaceRequest,
@@ -37,11 +51,34 @@ export const apiQueryKeys = {
     ["api", "workspace", workspaceId, "artifacts"] as const,
   artifact: (workspaceId: string, artifactId: string) =>
     ["api", "workspace", workspaceId, "artifacts", artifactId] as const,
+  laboratory: () => ["api", "laboratory"] as const,
+  laboratoryModel: () => ["api", "laboratory", "model"] as const,
+  laboratoryRecording: (recordingId: string) =>
+    ["api", "laboratory", "recordings", recordingId] as const,
+  laboratoryFrames: (recordingId: string, group: LaboratoryFrameGroup) =>
+    ["api", "laboratory", "recordings", recordingId, "frames", group] as const,
+  laboratoryFigure: () => ["api", "laboratory", "figure"] as const,
+  studies: (workspaceId: string) => ["api", "workspace", workspaceId, "studies"] as const,
+  runs: (workspaceId: string) => ["api", "workspace", workspaceId, "runs"] as const,
+  run: (workspaceId: string, runId: string) => ["api", "workspace", workspaceId, "runs", runId] as const,
+  runProgress: (workspaceId: string, runId: string) =>
+    ["api", "workspace", workspaceId, "runs", runId, "progress"] as const,
+  runEvidence: (workspaceId: string, runId: string) =>
+    ["api", "workspace", workspaceId, "runs", runId, "evidence"] as const,
+  runRecording: (workspaceId: string, runId: string) =>
+    ["api", "workspace", workspaceId, "runs", runId, "recording"] as const,
+  runModel: (workspaceId: string, runId: string) =>
+    ["api", "workspace", workspaceId, "runs", runId, "model"] as const,
+  runFrames: (workspaceId: string, runId: string, group: LaboratoryFrameGroup) =>
+    ["api", "workspace", workspaceId, "runs", runId, "frames", group] as const,
 } as const;
 
 /** Mutation keys, for the same reason. */
 export const apiMutationKeys = {
   openWorkspace: () => ["api", "workspaces", "open"] as const,
+  preflightRun: (workspaceId: string) => ["api", "workspace", workspaceId, "runs", "preflight"] as const,
+  startRun: (workspaceId: string) => ["api", "workspace", workspaceId, "runs", "start"] as const,
+  cancelRun: (workspaceId: string) => ["api", "workspace", workspaceId, "runs", "cancel"] as const,
 } as const;
 
 /** The build identity of the running application. */
@@ -84,6 +121,43 @@ export function artifactInspectionOptions(
 }
 
 /**
+ * The laboratory's packaged dataset is immutable for the life of a session (it is pinned by
+ * digest in the application), so its reads never go stale; the whole cache is still discarded
+ * with the session like every other server read.
+ */
+const IMMUTABLE = { staleTime: Number.POSITIVE_INFINITY, gcTime: 10 * 60 * 1000 } as const;
+
+/** The laboratory dataset's identity, claim and recordings. */
+export function laboratoryIndexOptions(client: ApiClient) {
+  return queryOptions<LaboratoryIndexResponse>({
+    queryKey: apiQueryKeys.laboratory(),
+    queryFn: () => client.laboratoryIndex(),
+    ...IMMUTABLE,
+  });
+}
+
+/** The compiled model the laboratory's recordings were integrated with. */
+export function laboratoryModelOptions(client: ApiClient) {
+  return queryOptions<LaboratoryModelResponse>({
+    queryKey: apiQueryKeys.laboratoryModel(),
+    queryFn: () => client.laboratoryModel(),
+    ...IMMUTABLE,
+  });
+}
+
+/** One recording's metadata, measurements, work ledger and checks. */
+export function laboratoryRecordingOptions(client: ApiClient, recordingId: string) {
+  return queryOptions<LaboratoryRecordingResponse>({
+    queryKey: apiQueryKeys.laboratoryRecording(recordingId),
+    queryFn: () => client.laboratoryRecording(recordingId),
+    ...IMMUTABLE,
+  });
+}
+
+/** Read-model reads of the laboratory never change within a session. */
+export const LABORATORY_QUERY_TIMING = IMMUTABLE;
+
+/**
  * Opening a workspace, as a mutation.
  *
  * A mutation rather than Zustand state: opening asks the application to do something and
@@ -95,6 +169,101 @@ export function openWorkspaceOptions(client: ApiClient) {
   return mutationOptions<OpenWorkspaceResponse, Error, OpenWorkspaceRequest>({
     mutationKey: apiMutationKeys.openWorkspace(),
     mutationFn: (request) => client.openWorkspace(request),
+  });
+}
+
+/**
+ * Runs are re-verified from sealed evidence on every read, and sealed evidence can be damaged on
+ * disk at any time. A run read is therefore never treated as immutable: it is fresh for a short
+ * while (so the stage, plots and folios share one read) and read again after that. Evidence is
+ * always re-read when it is looked at.
+ */
+const RUN_READ_TIMING = { staleTime: 15_000, gcTime: 5 * 60 * 1000 } as const;
+
+/** Polling interval of a run's progress while it is active, ms. */
+export const RUN_PROGRESS_POLL_MS = 400;
+
+/** The workspace's studies, whether each can run here, and their configuration surfaces. */
+export function studyCatalogueOptions(client: ApiClient, workspaceId: string) {
+  return queryOptions<StudyCatalogueResponse>({
+    queryKey: apiQueryKeys.studies(workspaceId),
+    queryFn: () => client.studyCatalogue(workspaceId),
+    staleTime: 30_000,
+  });
+}
+
+/** Every sealed run of the workspace (re-verified) and this session's runs in progress. */
+export function runListOptions(client: ApiClient, workspaceId: string) {
+  return queryOptions<RunListResponse>({
+    queryKey: apiQueryKeys.runs(workspaceId),
+    queryFn: () => client.listRuns(workspaceId),
+    staleTime: 2_000,
+    refetchInterval: (query) =>
+      query.state.data?.runs.some((run) => run.progress?.active === true) ? 1_000 : false,
+  });
+}
+
+/** The progress of one run this session started, polled while it is active. */
+export function runProgressOptions(client: ApiClient, workspaceId: string, runId: string) {
+  return queryOptions<RunProgressResponse>({
+    queryKey: apiQueryKeys.runProgress(workspaceId, runId),
+    queryFn: () => client.runProgress(workspaceId, runId),
+    staleTime: 0,
+    refetchInterval: (query) => (query.state.data?.active === false ? false : RUN_PROGRESS_POLL_MS),
+  });
+}
+
+/** Both seals, the provenance chain, verification and assessment of one run: always re-read. */
+export function runEvidenceOptions(client: ApiClient, workspaceId: string, runId: string) {
+  return queryOptions<RunEvidenceResponse>({
+    queryKey: apiQueryKeys.runEvidence(workspaceId, runId),
+    queryFn: () => client.runEvidence(workspaceId, runId),
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+}
+
+/** A verified run as a laboratory recording. */
+export function runRecordingOptions(client: ApiClient, workspaceId: string, runId: string) {
+  return queryOptions<LaboratoryRecordingResponse>({
+    queryKey: apiQueryKeys.runRecording(workspaceId, runId),
+    queryFn: () => client.runRecording(workspaceId, runId),
+    ...RUN_READ_TIMING,
+  });
+}
+
+/** The compiled model exactly as the run executed it. */
+export function runModelOptions(client: ApiClient, workspaceId: string, runId: string) {
+  return queryOptions<LaboratoryModelResponse>({
+    queryKey: apiQueryKeys.runModel(workspaceId, runId),
+    queryFn: () => client.runModel(workspaceId, runId),
+    ...RUN_READ_TIMING,
+  });
+}
+
+export const RUN_QUERY_TIMING = RUN_READ_TIMING;
+
+/** Preflight one configuration: plans and admits; nothing starts and nothing is sealed. */
+export function preflightRunOptions(client: ApiClient, workspaceId: string) {
+  return mutationOptions<PreflightResponse, Error, RunConfigurationRequest>({
+    mutationKey: apiMutationKeys.preflightRun(workspaceId),
+    mutationFn: (request) => client.preflightRun(workspaceId, request),
+  });
+}
+
+/** Ask the run service to execute one configuration in the isolated worker. */
+export function startRunOptions(client: ApiClient, workspaceId: string) {
+  return mutationOptions<RunProgressResponse, Error, RunConfigurationRequest>({
+    mutationKey: apiMutationKeys.startRun(workspaceId),
+    mutationFn: (request) => client.startRun(workspaceId, request),
+  });
+}
+
+/** Ask the supervisor to terminate a run's worker; the run is sealed as canceled. */
+export function cancelRunOptions(client: ApiClient, workspaceId: string) {
+  return mutationOptions<RunProgressResponse, Error, string>({
+    mutationKey: apiMutationKeys.cancelRun(workspaceId),
+    mutationFn: (runId) => client.cancelRun(workspaceId, runId),
   });
 }
 

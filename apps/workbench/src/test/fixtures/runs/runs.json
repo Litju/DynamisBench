@@ -1,0 +1,195 @@
+{
+  "runs": [
+    {
+      "run_id": "run-3ffb950da9-001",
+      "status": "rejected",
+      "reasons": [
+        "derived bundle: payload_modified [canonical/series.parquet]: the declared payload no longer matches the digest and size the manifest records (expected 977de0006d25671d5effd4220c91978517ea0b3057462728dc7397ebab7917e1 and 1567673 bytes)",
+        "derived bundle: checksum_mismatch [canonical/series.parquet]: the file no longer matches the digest the checksum file records (expected 977de0006d25671d5effd4220c91978517ea0b3057462728dc7397ebab7917e1)"
+      ],
+      "case_id": "",
+      "configuration": {},
+      "progress": {
+        "run_id": "run-3ffb950da9-001",
+        "study_id": "st.squat.configuration",
+        "case_id": "slow-tempo",
+        "configuration": {
+          "f.squat.bottom-knee-flexion": 2.0943951023931953,
+          "f.squat.descent-duration": 2.0,
+          "f.squat.ascent-duration": 1.6,
+          "f.squat.integration-timestep": 0.001,
+          "f.squat.internal-model-gain": 1.0,
+          "f.squat.sole-friction-time-constant": 0.002
+        },
+        "state": "completed",
+        "active": false,
+        "lifecycle": [
+          "starting",
+          "running",
+          "completed"
+        ],
+        "refusals": [],
+        "message": "executed, sealed, normalized, verified and assessed",
+        "execution_evidence_digest": "70bb167aee11b04026516a2e69fb00be2055cacfd4e89bf18af6cde3f3c521bd",
+        "derived_evidence_digest": "4d229df15064949749b3a4375e5f9bd7bdd66ee47949b252db49b13dc1a577f4",
+        "derived_outcome": "succeeded",
+        "elapsed_s": 17.548
+      },
+      "execution_evidence_digest": "70bb167aee11b04026516a2e69fb00be2055cacfd4e89bf18af6cde3f3c521bd",
+      "derived_evidence_digest": null,
+      "trajectory_sha256": null,
+      "completed": null,
+      "timestep_s": null,
+      "duration_s": null,
+      "frame_count": null,
+      "checks": {
+        "pass": 0,
+        "fail": 0,
+        "not_evaluated": 0,
+        "reported": 0
+      },
+      "metrics": {
+        "pass": 0,
+        "fail": 0,
+        "not_evaluated": 0,
+        "reported": 0
+      },
+      "verification": {
+        "pass": 0,
+        "fail": 0,
+        "not_evaluated": 0,
+        "reported": 0
+      }
+    },
+    {
+      "run_id": "run-49440369db-001",
+      "status": "verified",
+      "reasons": [],
+      "case_id": "nominal",
+      "configuration": {
+        "f.squat.ascent-duration": 1.2,
+        "f.squat.bottom-knee-flexion": 2.0943951023931953,
+        "f.squat.descent-duration": 1.5,
+        "f.squat.integration-timestep": 0.001,
+        "f.squat.internal-model-gain": 1.0,
+        "f.squat.sole-friction-time-constant": 0.002
+      },
+      "progress": {
+        "run_id": "run-49440369db-001",
+        "study_id": "st.squat.configuration",
+        "case_id": "nominal",
+        "configuration": {
+          "f.squat.bottom-knee-flexion": 2.0943951023931953,
+          "f.squat.descent-duration": 1.5,
+          "f.squat.ascent-duration": 1.2,
+          "f.squat.integration-timestep": 0.001,
+          "f.squat.internal-model-gain": 1.0,
+          "f.squat.sole-friction-time-constant": 0.002
+        },
+        "state": "completed",
+        "active": false,
+        "lifecycle": [
+          "starting",
+          "running",
+          "completed"
+        ],
+        "refusals": [],
+        "message": "executed, sealed, normalized, verified and assessed",
+        "execution_evidence_digest": "465902c4ac2e1f71e81b5a6b28f2c0a8f149fb74b8df242f61023bc35737e02c",
+        "derived_evidence_digest": "da921a7cde8712b1e2b14e30a3364a1d02ed318e7d744a72e5fde9e70eeaa9c7",
+        "derived_outcome": "succeeded",
+        "elapsed_s": 14.696
+      },
+      "execution_evidence_digest": "465902c4ac2e1f71e81b5a6b28f2c0a8f149fb74b8df242f61023bc35737e02c",
+      "derived_evidence_digest": "da921a7cde8712b1e2b14e30a3364a1d02ed318e7d744a72e5fde9e70eeaa9c7",
+      "trajectory_sha256": "d3b4edafc090b1b1dca76f2af04343febdec9f9a0ff3d02b8e8d54d2aaef678b",
+      "completed": true,
+      "timestep_s": 0.001,
+      "duration_s": 5.500000000000171,
+      "frame_count": 551,
+      "checks": {
+        "pass": 19,
+        "fail": 0,
+        "not_evaluated": 3,
+        "reported": 0
+      },
+      "metrics": {
+        "pass": 14,
+        "fail": 0,
+        "not_evaluated": 0,
+        "reported": 3
+      },
+      "verification": {
+        "pass": 11,
+        "fail": 0,
+        "not_evaluated": 0,
+        "reported": 0
+      }
+    },
+    {
+      "run_id": "run-50d09f417d-001",
+      "status": "verified",
+      "reasons": [],
+      "case_id": "static-internal-model",
+      "configuration": {
+        "f.squat.ascent-duration": 1.2,
+        "f.squat.bottom-knee-flexion": 2.0943951023931953,
+        "f.squat.descent-duration": 1.5,
+        "f.squat.integration-timestep": 0.001,
+        "f.squat.internal-model-gain": 0.0,
+        "f.squat.sole-friction-time-constant": 0.002
+      },
+      "progress": {
+        "run_id": "run-50d09f417d-001",
+        "study_id": "st.squat.configuration",
+        "case_id": "static-internal-model",
+        "configuration": {
+          "f.squat.bottom-knee-flexion": 2.0943951023931953,
+          "f.squat.descent-duration": 1.5,
+          "f.squat.ascent-duration": 1.2,
+          "f.squat.integration-timestep": 0.001,
+          "f.squat.internal-model-gain": 0.0,
+          "f.squat.sole-friction-time-constant": 0.002
+        },
+        "state": "completed",
+        "active": false,
+        "lifecycle": [
+          "starting",
+          "running",
+          "completed"
+        ],
+        "refusals": [],
+        "message": "executed, sealed, normalized, verified and assessed",
+        "execution_evidence_digest": "af58799bf9a66d3b02ecb6687ba82daf38fa8fea7825f800326edbf18c76ff38",
+        "derived_evidence_digest": "ef2f7a22a997bfa3ae2870ae78c3815248c6defaa9ff3ec10f247b9d1dcdf2ed",
+        "derived_outcome": "succeeded",
+        "elapsed_s": 14.308
+      },
+      "execution_evidence_digest": "af58799bf9a66d3b02ecb6687ba82daf38fa8fea7825f800326edbf18c76ff38",
+      "derived_evidence_digest": "ef2f7a22a997bfa3ae2870ae78c3815248c6defaa9ff3ec10f247b9d1dcdf2ed",
+      "trajectory_sha256": "6d34a139189ac4535d30ff6ca8d9a99eae1e07e80b70445b3453fe5f80ab1d02",
+      "completed": true,
+      "timestep_s": 0.001,
+      "duration_s": 5.537000000000184,
+      "frame_count": 554,
+      "checks": {
+        "pass": 13,
+        "fail": 6,
+        "not_evaluated": 3,
+        "reported": 0
+      },
+      "metrics": {
+        "pass": 9,
+        "fail": 5,
+        "not_evaluated": 0,
+        "reported": 3
+      },
+      "verification": {
+        "pass": 11,
+        "fail": 0,
+        "not_evaluated": 0,
+        "reported": 0
+      }
+    }
+  ]
+}

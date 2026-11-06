@@ -40,7 +40,15 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        // Optional: a locally provisioned Chromium when Playwright's pinned browser download is
+        // unavailable (for example an offline build host). Unset in CI, where the pinned
+        // browser installed by `playwright install chromium` is used.
+        ...(process.env.DYNAMISBENCH_E2E_CHROMIUM === undefined
+          ? {}
+          : { launchOptions: { executablePath: process.env.DYNAMISBENCH_E2E_CHROMIUM } }),
+      },
     },
   ],
 
