@@ -1,0 +1,25 @@
+{
+  "captured_product_screenshots": 15,
+  "m0_visual_reference_screenshots_compared": 14,
+  "byte_identical": 9,
+  "not_byte_identical": [
+    "40-evidence-studiolo.png",
+    "40-evidence-vellum.png",
+    "50-evidence-ablation-studiolo.png",
+    "60-laboratory-sagittal-bottom-studiolo.png",
+    "61-laboratory-sagittal-bottom-scientific-studiolo.png"
+  ],
+  "intentional_evidence_text_updates": [
+    "40-evidence-studiolo.png",
+    "40-evidence-vellum.png",
+    "50-evidence-ablation-studiolo.png"
+  ],
+  "render_sensitive_views_visually_reviewed": [
+    "60-laboratory-sagittal-bottom-studiolo.png",
+    "61-laboratory-sagittal-bottom-scientific-studiolo.png"
+  ],
+  "new_m1_read_only_state": [
+    "05-study-runs-m1-unavailable.png"
+  ],
+  "reference_set": "RES-591-M0/reports/product-reference/reproduced-windows-browser"
+}

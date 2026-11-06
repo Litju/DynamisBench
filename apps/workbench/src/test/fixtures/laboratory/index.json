@@ -1,0 +1,81 @@
+{
+  "dataset_schema": "dynamisbench.laboratory.dataset/1",
+  "dataset_id": "laboratory/1",
+  "manifest_sha256": "69bd013b3444e6b3993a15b46dfb19e394589a037cfd72701f74ba0208467bd9",
+  "generated_with": {
+    "criteria_schema": "dynamisbench.mujoco.squat.criteria/1",
+    "engine": "mujoco",
+    "engine_version": "3.17.0",
+    "model_sha256": "c91b2fa2ca1e04f920f4685bc23be2a99a64ad697dcd6a40cf5699dc5761a947",
+    "python_version": "3.12.3",
+    "tool": "python/tools/mujoco_squat_laboratory.py"
+  },
+  "claim": "Diagnostic recordings of a synthetic, population-scaled athlete-barbell model integrated by MuJoCo. Not validated against measured human motion, not subject-specific, not sealed DynamisBench evidence and not a benchmark execution.",
+  "plan": {
+    "ascent_s": 1.2,
+    "blend_width_deg": 40.0,
+    "bottom_knee_flexion_deg": 120.0,
+    "bottom_pause_s": 0.3,
+    "descent_s": 1.5,
+    "return_s": 1.5,
+    "standing_s": 1.0
+  },
+  "recordings": [
+    {
+      "recording_id": "repetition",
+      "label": "Back squat — nominal",
+      "kind": "nominal",
+      "description": "One controlled repetition at parallel depth, dt 1 ms: standing, descent, bottom, ascent, standing. Motion integrated from actuator torques.",
+      "timestep_s": 0.001,
+      "duration_s": 5.500000000000171,
+      "frame_count": 551,
+      "trajectory_sha256": "d3b4edafc090b1b1dca76f2af04343febdec9f9a0ff3d02b8e8d54d2aaef678b",
+      "completed": true,
+      "checks_passed": 22,
+      "checks_failed": 0,
+      "checks_not_evaluated": 0
+    },
+    {
+      "recording_id": "repetition-half-timestep",
+      "label": "Timestep study — dt 0.5 ms",
+      "kind": "timestep-companion",
+      "description": "The same repetition at half the timestep: the convergence companion of the nominal.",
+      "timestep_s": 0.0005,
+      "duration_s": 5.500499999999671,
+      "frame_count": 551,
+      "trajectory_sha256": "736b8af5ebadc07040e921aa2859a929da5a6bc23a2869df1c7aabf314d2a8e2",
+      "completed": true,
+      "checks_passed": 19,
+      "checks_failed": 0,
+      "checks_not_evaluated": 3
+    },
+    {
+      "recording_id": "ablation-no-internal-model",
+      "label": "Ablation — no internal model",
+      "kind": "ablation",
+      "description": "The controller predicts only static torques: every inertial effect must be caught by feedback. Shown to demonstrate what the checks reject.",
+      "timestep_s": 0.001,
+      "duration_s": 5.537000000000184,
+      "frame_count": 554,
+      "trajectory_sha256": "6d34a139189ac4535d30ff6ca8d9a99eae1e07e80b70445b3453fe5f80ab1d02",
+      "completed": true,
+      "checks_passed": 13,
+      "checks_failed": 6,
+      "checks_not_evaluated": 3
+    },
+    {
+      "recording_id": "ablation-soft-friction",
+      "label": "Ablation — soft friction",
+      "kind": "ablation",
+      "description": "Sole friction at the 15 ms normal-contact time constant (the model before the repetition was built). Shown to demonstrate what the checks reject.",
+      "timestep_s": 0.001,
+      "duration_s": 5.500000000000171,
+      "frame_count": 551,
+      "trajectory_sha256": "359cc0263cb86e88ced863183f30b9d1d667fcc5c748e3aa5ab73ce1edde6865",
+      "completed": true,
+      "checks_passed": 17,
+      "checks_failed": 2,
+      "checks_not_evaluated": 3
+    }
+  ]
+}

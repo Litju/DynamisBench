@@ -12,34 +12,48 @@ schema helpers does. That is a measured property, not a comment: the API-startup
 and this module's own qualification both assert that ``pyarrow`` is absent from
 ``sys.modules`` after import.
 
-**Refusals are bounded.** Empty input, input above :data:`MAX_ARROW_IPC_BYTES`, a stream that
-is not Arrow IPC, and a table larger than :data:`MAX_ARROW_ROWS` all raise
-:class:`ArrowTransportError` with a closed reason. The underlying Arrow exception text is
-never attached: it can quote bytes, offsets or a type name that this layer has no reason to
-publish.
+**Refusals are bounded before materialization.** A pure-stdlib FlatBuffers preflight checks
+message/metadata sizes, the supported flat-scalar schema, rows, columns, logical values,
+buffers and declared decompressed sizes before PyArrow opens the stream. The matching browser
+decoder uses the same resource profile. The frozen cross-language scalar fixture remains
+unchanged. Compressed buffers are accepted only after their declared decoded sizes fit the
+aggregate cap; PyArrow's available codec runs only after that preflight. The browser package
+has no codec and keeps its existing closed refusal. Nested/dictionary/view schemas fail
+closed until their decoded shape has an explicit budget.
 """
 
 from __future__ import annotations
 
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Final
+
+from dynamisbench.transport.arrow_limits import (
+    MAX_ARROW_BUFFERS,
+    MAX_ARROW_COLUMNS,
+    MAX_ARROW_DECODED_BYTES,
+    MAX_ARROW_FIELD_DEPTH,
+    MAX_ARROW_FIELD_NODES,
+    MAX_ARROW_IPC_BYTES,
+    MAX_ARROW_LOGICAL_VALUES,
+    MAX_ARROW_MESSAGE_METADATA_BYTES,
+    MAX_ARROW_MESSAGES,
+    MAX_ARROW_METADATA_ENTRIES,
+    MAX_ARROW_METADATA_STRING_BYTES,
+    MAX_ARROW_RECORD_BATCHES,
+    MAX_ARROW_ROWS,
+    MAX_ARROW_TOTAL_METADATA_BYTES,
+)
+from dynamisbench.transport.arrow_preflight import ArrowPreflightError, preflight_ipc_stream
+from dynamisbench.transport.columnar import columnar_stack
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, and deliberately erased at runtime
     pass
 
 ARROW_IPC_STREAM_CONTENT_TYPE: Final = "application/vnd.apache.arrow.stream"
-"""The registered media type for an Arrow IPC stream. No endpoint publishes it in M2."""
-
-MAX_ARROW_IPC_BYTES: Final = 1 * 1024 * 1024
-"""The largest IPC stream this utility will read: one mebibyte.
-
-The qualification payload is a few kilobytes. The bound is deliberately two orders of
-magnitude above it, so it is a transport guard rather than a dataset limit.
-"""
-
-MAX_ARROW_ROWS: Final = 100_000
-"""A structural ceiling on one decoded table, independent of its byte size."""
+"""The registered media type for an Arrow IPC stream. The Laboratory frame routes publish it."""
 
 QUALIFICATION_FIELDS: Final[tuple[tuple[str, str, bool], ...]] = (
     ("sample_index", "int64", False),
@@ -63,8 +77,17 @@ class ArrowFailure(StrEnum):
 
     EMPTY = "empty"
     TOO_LARGE = "too_large"
+    TOO_LARGE_METADATA = "too_large_metadata"
+    TOO_LARGE_DECODED = "too_large_decoded"
     MALFORMED = "malformed"
+    UNSUPPORTED_SCHEMA = "unsupported_schema"
+    UNSUPPORTED_COMPRESSION = "unsupported_compression"
     TOO_MANY_ROWS = "too_many_rows"
+    TOO_MANY_COLUMNS = "too_many_columns"
+    TOO_MANY_VALUES = "too_many_values"
+    TOO_MANY_BATCHES = "too_many_batches"
+    TOO_MANY_MESSAGES = "too_many_messages"
+    TOO_MANY_METADATA_ENTRIES = "too_many_metadata_entries"
 
 
 class ArrowTransportError(ValueError):
@@ -95,13 +118,13 @@ class ArrowTable:
 
 
 def _pyarrow():
-    """Import the optional columnar stack at call time.
+    """The optional columnar stack, loaded at call time through the one thread-safe loader.
 
-    Kept as one function so the lazy boundary is visible and every entry point shares it.
+    Kept as one function so the lazy boundary is visible and every entry point shares it; the
+    import itself happens in :func:`dynamisbench.transport.columnar.columnar_stack`, once, by
+    one thread (see that module for the Windows cold-import hazard it removes).
     """
-    import pyarrow as pa
-
-    return pa
+    return columnar_stack().pyarrow
 
 
 def _schema(pa):
@@ -159,15 +182,23 @@ def encode_qualification_stream() -> bytes:
 
 
 def read_ipc_stream(payload: bytes) -> ArrowTable:
-    """Read one Arrow IPC stream, within the byte and row bounds.
+    """Read one supported Arrow IPC stream after preflighting all resource dimensions.
 
     :raises ArrowTransportError: with a closed reason for empty, oversized, malformed or
-        over-large input. The underlying Arrow exception is discarded.
+        unsupported input. The underlying Arrow exception is discarded. The checked profile
+        preserves the cross-language fixture's flat scalar types and admits compressed
+        buffers only when their declared output fits the decoded-byte cap. Nested, dictionary
+        and view schemas require separately qualified budgets.
     """
     if not payload:
         raise ArrowTransportError(ArrowFailure.EMPTY)
     if len(payload) > MAX_ARROW_IPC_BYTES:
         raise ArrowTransportError(ArrowFailure.TOO_LARGE)
+
+    try:
+        budget = preflight_ipc_stream(payload)
+    except ArrowPreflightError as error:
+        raise ArrowTransportError(ArrowFailure(error.reason)) from None
 
     pa = _pyarrow()
     try:
@@ -176,6 +207,8 @@ def read_ipc_stream(payload: bytes) -> ArrowTable:
     except (pa.ArrowException, ValueError, TypeError, OSError):
         raise ArrowTransportError(ArrowFailure.MALFORMED) from None
 
+    if table.num_rows != budget.row_count or table.num_columns != budget.column_count:
+        raise ArrowTransportError(ArrowFailure.MALFORMED)
     if table.num_rows > MAX_ARROW_ROWS:
         raise ArrowTransportError(ArrowFailure.TOO_MANY_ROWS)
 
@@ -211,10 +244,59 @@ def decode_qualification_stream(payload: bytes) -> ArrowTable:
     return table
 
 
+def encode_float_columns(columns: Sequence[tuple[str, Sequence[float]]]) -> bytes:
+    """Encode equal-length, non-null ``float64`` columns as one Arrow IPC stream.
+
+    The general bulk-numeric transport (ADR-019): the application publishes frame data this
+    way rather than as JSON. Bounded exactly like :func:`read_ipc_stream`: an empty table, rows
+    above :data:`MAX_ARROW_ROWS`, unequal or duplicate columns, a non-finite value, or an
+    encoded stream above :data:`MAX_ARROW_IPC_BYTES` is refused with a closed reason.
+    Deterministic for equal input.
+    """
+    if not columns:
+        raise ArrowTransportError(ArrowFailure.EMPTY)
+    names = [name for name, _values in columns]
+    lengths = {len(values) for _name, values in columns}
+    if len(set(names)) != len(names) or len(lengths) != 1:
+        raise ArrowTransportError(ArrowFailure.MALFORMED)
+    (rows,) = lengths
+    if rows == 0:
+        raise ArrowTransportError(ArrowFailure.EMPTY)
+    if rows > MAX_ARROW_ROWS:
+        raise ArrowTransportError(ArrowFailure.TOO_MANY_ROWS)
+    for _name, values in columns:
+        if not all(math.isfinite(value) for value in values):
+            raise ArrowTransportError(ArrowFailure.MALFORMED)
+    pa = _pyarrow()
+    schema = pa.schema([pa.field(name, pa.float64(), nullable=False) for name in names])
+    table = pa.Table.from_arrays(
+        [pa.array(values, type=pa.float64()) for _name, values in columns], schema=schema
+    )
+    sink = pa.BufferOutputStream()
+    with pa.ipc.new_stream(sink, table.schema) as writer:
+        writer.write_table(table)
+    payload = sink.getvalue().to_pybytes()
+    if len(payload) > MAX_ARROW_IPC_BYTES:
+        raise ArrowTransportError(ArrowFailure.TOO_LARGE)
+    return payload
+
+
 __all__ = [
     "ARROW_IPC_STREAM_CONTENT_TYPE",
+    "MAX_ARROW_BUFFERS",
+    "MAX_ARROW_COLUMNS",
+    "MAX_ARROW_DECODED_BYTES",
+    "MAX_ARROW_FIELD_DEPTH",
+    "MAX_ARROW_FIELD_NODES",
     "MAX_ARROW_IPC_BYTES",
+    "MAX_ARROW_LOGICAL_VALUES",
+    "MAX_ARROW_MESSAGE_METADATA_BYTES",
+    "MAX_ARROW_MESSAGES",
+    "MAX_ARROW_METADATA_ENTRIES",
+    "MAX_ARROW_METADATA_STRING_BYTES",
+    "MAX_ARROW_RECORD_BATCHES",
     "MAX_ARROW_ROWS",
+    "MAX_ARROW_TOTAL_METADATA_BYTES",
     "QUALIFICATION_FIELDS",
     "QUALIFICATION_ROWS",
     "ArrowFailure",
@@ -223,6 +305,7 @@ __all__ = [
     "ArrowTransportError",
     "build_qualification_table",
     "decode_qualification_stream",
+    "encode_float_columns",
     "encode_qualification_stream",
     "qualification_rows",
     "qualification_schema",

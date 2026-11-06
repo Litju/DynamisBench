@@ -1,0 +1,9 @@
+{
+  "status": 409,
+  "body": {
+    "error": {
+      "code": "http_error",
+      "message": "derived bundle: payload_modified [canonical/series.parquet]: the declared payload no longer matches the digest and size the manifest records (expected 977de0006d25671d5effd4220c91978517ea0b3057462728dc7397ebab7917e1 and 1567673 bytes); deri"
+    }
+  }
+}

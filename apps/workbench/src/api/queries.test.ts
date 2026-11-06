@@ -67,6 +67,21 @@ function stubClient() {
         }) satisfies ArtifactInspectionResponse,
     ),
     streamEvents: () => (async function* () {})(),
+    laboratoryIndex: vi.fn(),
+    laboratoryModel: vi.fn(),
+    laboratoryRecording: vi.fn(),
+    laboratoryFrames: vi.fn(),
+    laboratoryFigure: vi.fn(),
+    studyCatalogue: vi.fn(),
+    preflightRun: vi.fn(),
+    startRun: vi.fn(),
+    runProgress: vi.fn(),
+    cancelRun: vi.fn(),
+    listRuns: vi.fn(),
+    runEvidence: vi.fn(),
+    runRecording: vi.fn(),
+    runModel: vi.fn(),
+    runFrames: vi.fn(),
   };
 
   return client;

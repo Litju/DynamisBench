@@ -14,6 +14,17 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
   },
+  // The laboratory's two large dependencies are reached only through lazy imports. Bundling
+  // them when the server starts keeps the dev server from discovering them mid-session and
+  // re-optimising (which stalls the in-flight dynamic import until a reload).
+  optimizeDeps: {
+    include: ["three", "apache-arrow"],
+  },
+  build: {
+    // The laboratory route's chunk carries three.js (~0.5 MB minified). It is loaded lazily,
+    // only when the laboratory is opened, so it does not weigh on the initial bundle.
+    chunkSizeWarningLimit: 720,
+  },
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],

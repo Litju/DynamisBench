@@ -161,7 +161,24 @@ platform. A receipt is a numerical solution-verification artifact, **not** `nati
 independently checks identity consistency, numerical tolerance compliance and unexpected
 platform divergence; it does not require bitwise cross-platform equality.
 
-Explicitly not present yet: arbitrary model/asset materialization for a generic MuJoCo
-realization, native→canonical normalization, `assessment.json`, scientific benchmark
-acceptance or model validation, a production simulation UI/run command, OpenSim, packaging,
-and the scientific workbench surfaces (explorer, artifact inspector, charts, 3D playback).
+### VM Laboratory — packaged diagnostic mode (M1)
+
+The `/laboratory` route is the Turn 4 + Turn 5 scientific workbench UI, connected to the
+authenticated, read-only `/api/v1/laboratory` dataset routes. It includes the Study & Runs,
+Laboratory, Model Atlas, Analysis, and Evidence folios; the articulated anatomical presentation
+asset and scientific segment geometry; a synchronized timeline, inspector and signal plots;
+and comparison and provenance views for the pinned packaged recordings. Workspace-run
+comparison and sealed-evidence readback remain unavailable in M1. Packaged records are labeled
+**diagnostic recordings, not sealed DynamisBench evidence**. Their files are checked against the
+dataset manifest; this view does not rerun the historical MuJoCo worker. The underlying model is
+synthetic and has not been validated against measured human motion.
+
+In this M1 integration, workspace study catalogues, preflight, execute, cancel, and workspace-run
+evidence routes are deliberately unavailable. The VM's live-workflow source is preserved for
+later authority-gated work; the UI reports the M1 read-only state and never substitutes a fake
+run or seal.
+
+Still not qualified: arbitrary model/asset materialization for a generic MuJoCo realization,
+accepted native→canonical normalization and `assessment.json`, benchmark acceptance or model
+validation, the VM live RunSpec execution API, OpenSim, packaging, native Windows Tauri/WebView2
+usability, and empirical biomechanical validation.

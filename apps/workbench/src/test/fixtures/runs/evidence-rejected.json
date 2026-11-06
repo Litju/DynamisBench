@@ -1,0 +1,67 @@
+{
+  "run_id": "run-3ffb950da9-001",
+  "status": "rejected",
+  "reasons": [
+    "derived bundle: payload_modified [canonical/series.parquet]: the declared payload no longer matches the digest and size the manifest records (expected 977de0006d25671d5effd4220c91978517ea0b3057462728dc7397ebab7917e1 and 1567673 bytes)",
+    "derived bundle: checksum_mismatch [canonical/series.parquet]: the file no longer matches the digest the checksum file records (expected 977de0006d25671d5effd4220c91978517ea0b3057462728dc7397ebab7917e1)"
+  ],
+  "execution": {
+    "valid": true,
+    "defects": [],
+    "run_id": "run-3ffb950da9-001",
+    "outcome": "succeeded",
+    "evidence_digest": "70bb167aee11b04026516a2e69fb00be2055cacfd4e89bf18af6cde3f3c521bd",
+    "files": [
+      {
+        "path": "diagnostics.json",
+        "sha256": "8331f4922bdd4723289358000c7b69eab3c374cafe58ab12f3059a36df744c05",
+        "size_bytes": 852
+      },
+      {
+        "path": "logs/worker.stderr.txt",
+        "sha256": "6cd1d5735cdcd5b3dbb0fa0a9d8879fa1199660dd76dd8fb19be74b0ab1102f1",
+        "size_bytes": 287
+      },
+      {
+        "path": "native/index.json",
+        "sha256": "2dcec90ba47d3c4839db3cade78c94da510644d6293064c21f23de2f300cc389",
+        "size_bytes": 954
+      },
+      {
+        "path": "native/model.json",
+        "sha256": "4cf53a990f7168cab908dd9da7c5456700294b0114bdd1f414e68661dd140c81",
+        "size_bytes": 14393
+      },
+      {
+        "path": "native/record.json",
+        "sha256": "3a55a16f5d0985959544486b2fecd5a87ad4bf6b1593f36a1cdf93ad4fd9ac10",
+        "size_bytes": 12361
+      },
+      {
+        "path": "native/samples.parquet",
+        "sha256": "d85faffa0915c5e44fd2faf0820e1d78160bf6e54f525ab4f359930e311c9221",
+        "size_bytes": 1390168
+      },
+      {
+        "path": "native/state.parquet",
+        "sha256": "ce19a901a9454a60e8bd9a7b9f59973e2fae306470df060c3282d72c9b539b35",
+        "size_bytes": 551962
+      }
+    ]
+  },
+  "derived": {
+    "valid": false,
+    "defects": [
+      "payload_modified [canonical/series.parquet]: the declared payload no longer matches the digest and size the manifest records (expected 977de0006d25671d5effd4220c91978517ea0b3057462728dc7397ebab7917e1 and 1567673 bytes)",
+      "checksum_mismatch [canonical/series.parquet]: the file no longer matches the digest the checksum file records (expected 977de0006d25671d5effd4220c91978517ea0b3057462728dc7397ebab7917e1)"
+    ],
+    "run_id": "run-3ffb950da9-001-derived",
+    "outcome": null,
+    "evidence_digest": null,
+    "files": []
+  },
+  "run_record": {},
+  "provenance": {},
+  "verification": [],
+  "assessment": {}
+}

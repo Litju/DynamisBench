@@ -1,0 +1,9 @@
+cb89b0b73b3d26c42f78447e766e3cb9cd7920064b39a335b239034029b0bd1d  apps/workbench/src/test/fixtures/arrow/columns-over-limit.arrow.b64
+398612429827b910ad56b27b17e74ca350b9501e2f3d483ba59bea6b0a95cf5e  apps/workbench/src/test/fixtures/arrow/compressed-buffer-expansion.arrow.b64
+b0c0742f0ed383d8a24ec45d8f2eeaeead803ef4f1c8b8171a4f3f641e0c9564  apps/workbench/src/test/fixtures/arrow/dictionary.arrow.b64
+8440d101a5286d834351c1c37fb77a276ec862aa30976e74c217c479ac0b985d  apps/workbench/src/test/fixtures/arrow/expanded-null-columns.arrow.b64
+5f39bc1367b21ee1e7add7600c70039f1056c6f88098c72de9a6543465cc5644  apps/workbench/src/test/fixtures/arrow/malformed-string-offsets.arrow.b64
+11ca88a920b7879fe87051d75a5ef2eec6aeb68a03da5dcde225c087d1a9126a  apps/workbench/src/test/fixtures/arrow/nested-list.arrow.b64
+88263b1e507157381c1db0ac1b9cf0d5bbc3a8e857dc170fd539ae825e10b7a6  apps/workbench/src/test/fixtures/arrow/rows-over-limit.arrow.b64
+3aa949916cea90b2d57e625cb83ea8a74ff187ce1ac432696776ae7063df8aac  apps/workbench/src/test/fixtures/arrow/small-compressed.arrow.b64
+4ce250a3d706a83d66a023038d3b88f33e2c58176996fe6478eac51223e520d8  apps/workbench/src/test/fixtures/qualification.arrow.b64

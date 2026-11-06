@@ -290,6 +290,18 @@ describe("the browser depends on nothing scientific", () => {
     "clsx",
     "tailwind-merge",
     "./styles.css",
+    // The laboratory stage's renderer (reviewed addition): WebGL only, no addons.
+    "three",
+    // The bundled letters (reviewed addition, SIL OFL 1.1): imported once, by `fonts.ts`.
+    "@fontsource/eb-garamond/latin-400.css",
+    "@fontsource/eb-garamond/latin-500.css",
+    "@fontsource/eb-garamond/latin-600.css",
+    "@fontsource/eb-garamond/latin-400-italic.css",
+    "@fontsource/ibm-plex-sans/latin-400.css",
+    "@fontsource/ibm-plex-sans/latin-500.css",
+    "@fontsource/ibm-plex-sans/latin-600.css",
+    "@fontsource/ibm-plex-mono/latin-400.css",
+    "@fontsource/ibm-plex-mono/latin-500.css",
   ]);
 
   const SCIENTIFIC = /dynamisbench|python|simulator|execution|evidence|mujoco|opensim|duckdb/i;
@@ -343,12 +355,19 @@ describe("the workbench cannot mutate authority", () => {
     }
   });
 
-  it("has no write verb in the HTTP client except the root-selection command", () => {
+  it("has no write verb in the HTTP client except root selection and the three run commands", () => {
     const client = sourceOf("api/client.ts");
 
     expect(client).not.toMatch(/method:\s*["'](?:PUT|PATCH|DELETE)["']/i);
-    expect([...client.matchAll(/method:\s*["']POST["']/g)]).toHaveLength(1);
+    // Root selection, and the run service's three commands: preflight (admits, starts nothing),
+    // start (asks the service to execute in the isolated worker) and cancel. None of them writes
+    // authority: source documents are never sent, and evidence is sealed by the service.
+    expect([...client.matchAll(/method:\s*["']POST["']/g)]).toHaveLength(4);
     expect(client).toContain('"/workspaces/open"');
+    expect(client).toContain("`${runPath(workspaceId)}/preflight`");
+    expect(client).toContain("`${runPath(workspaceId, runId)}/cancel`");
+    // A run request body is exactly the study, the case and the factor values.
+    expect(client).toMatch(/study_id: request\.study_id,\s*case_id: request\.case_id,\s*values: \{ \.\.\.request\.values \}/);
   });
 
   it("keeps operational roots out of routes, query keys and activity", () => {
@@ -396,12 +415,50 @@ describe("Arrow is a lazy transport utility", () => {
     expect(source).not.toMatch(/^\s*import\s*["']apache-arrow["']/m);
   });
 
-  it("is not imported by the route tree, the client or the shell", () => {
+  it("is imported only by the laboratory's frame decoder, never by the route tree, the client or the shell", () => {
     const importers = filesMatching((source) =>
       importSpecifiers(source).some((specifier) => specifier.includes("arrow/arrow")),
     );
 
-    expect(importers).toEqual([]);
+    // The laboratory route is itself lazily loaded, so the columnar stack stays out of the
+    // initial module graph twice over.
+    expect(importers).toEqual(["laboratory/frames.ts"]);
+  });
+});
+
+describe("the laboratory is read-only and lazily loaded", () => {
+  it("is reached through a lazily loaded route component", () => {
+    const route = sourceOf("routes/laboratory.tsx");
+
+    expect(route).toMatch(/lazyRouteComponent\(\s*\(\)\s*=>\s*import\(\s*["']\.\.\/laboratory\/laboratory-page["']\s*\)/);
+    const staticImporters = filesMatching((source) =>
+      /^\s*import\s+[^;]*from\s*["'][^"']*laboratory\/laboratory-page["']/m.test(source),
+    );
+    expect(staticImporters).toEqual([]);
+  });
+
+  it("names three.js only in the stage", () => {
+    const importers = filesMatching((source) =>
+      importSpecifiers(source).some((specifier) => specifier === "three"),
+    );
+
+    expect(importers).toEqual(["laboratory/stage/scene.ts", "laboratory/stage/stage.tsx"]);
+  });
+
+  it("has no editable surface except the run configuration form, and no write path", () => {
+    const laboratory = PRODUCTION.filter((source) => source.path.startsWith("laboratory/"));
+
+    expect(laboratory.length).toBeGreaterThan(5);
+    for (const source of laboratory) {
+      expect(source.source).not.toMatch(/contentEditable|dangerouslySetInnerHTML|<textarea/);
+      expect(source.source).not.toMatch(/method:\s*["'](?:POST|PUT|PATCH|DELETE)["']/i);
+      expect(source.source).not.toMatch(/\bfetch\s*\(/);
+    }
+    // Factor values are typed in one place, Study & Runs, and only ever sent as a run request.
+    const withInputs = laboratory.filter((source) => /<input/.test(source.source)).map((source) => source.path);
+    expect(withInputs).toEqual(["laboratory/folio-study.tsx"]);
+    const study = sourceOf("laboratory/folio-study.tsx");
+    expect([...study.matchAll(/type="(\w+)"/g)].map((match) => match[1]).filter((type) => type !== "button")).toEqual(["range", "text"]);
   });
 });
 

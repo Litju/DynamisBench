@@ -1,0 +1,146 @@
+{
+  "studies": [
+    {
+      "study_id": "st.squat.configuration",
+      "version": "1.0.0",
+      "label": "Back-squat configuration study",
+      "research_question": "How do depth, tempo, integration timestep, internal-model gain and sole friction change the kinematics, kinetics, contact and balance of one repetition, and do the predeclared mechanical criteria hold?",
+      "realization": {
+        "identifier": "rl.mujoco.squat.torque-driven",
+        "version": "1.0.0",
+        "label": "Barbell back squat (MuJoCo, torque-driven)"
+      },
+      "platform": "linux-x86-64",
+      "environment": "env.mujoco.squat.linux-x86-64",
+      "executable": true,
+      "reason": "",
+      "factors": [
+        {
+          "factor_id": "f.squat.bottom-knee-flexion",
+          "label": "Target knee flexion at the bottom",
+          "quantity_id": "q.squat.bottom-knee-flexion-target",
+          "unit": "1",
+          "lower": 1.5707963267948966,
+          "upper": 2.0943951023931953,
+          "nominal": 2.0943951023931953,
+          "display": "degree",
+          "choices": []
+        },
+        {
+          "factor_id": "f.squat.descent-duration",
+          "label": "Intended descent duration",
+          "quantity_id": "q.squat.descent-duration",
+          "unit": "s",
+          "lower": 1.0,
+          "upper": 2.0,
+          "nominal": 1.5,
+          "display": "second",
+          "choices": []
+        },
+        {
+          "factor_id": "f.squat.ascent-duration",
+          "label": "Intended ascent duration",
+          "quantity_id": "q.squat.ascent-duration",
+          "unit": "s",
+          "lower": 0.8,
+          "upper": 1.6,
+          "nominal": 1.2,
+          "display": "second",
+          "choices": []
+        },
+        {
+          "factor_id": "f.squat.integration-timestep",
+          "label": "Integration timestep",
+          "quantity_id": "q.squat.integration-timestep",
+          "unit": "s",
+          "lower": 0.00025,
+          "upper": 0.001,
+          "nominal": 0.001,
+          "display": "millisecond",
+          "choices": [
+            0.001,
+            0.0009090909090909091,
+            0.0008333333333333334,
+            0.0007692307692307692,
+            0.0007142857142857143,
+            0.0006666666666666666,
+            0.000625,
+            0.0005882352941176471,
+            0.0005555555555555556,
+            0.0005263157894736842,
+            0.0005,
+            0.0004761904761904762,
+            0.00045454545454545455,
+            0.0004347826086956522,
+            0.0004166666666666667,
+            0.0004,
+            0.0003846153846153846,
+            0.00037037037037037035,
+            0.00035714285714285714,
+            0.0003448275862068966,
+            0.0003333333333333333,
+            0.0003225806451612903,
+            0.0003125,
+            0.00030303030303030303,
+            0.00029411764705882356,
+            0.00028571428571428574,
+            0.0002777777777777778,
+            0.0002702702702702703,
+            0.0002631578947368421,
+            0.0002564102564102564,
+            0.00025
+          ]
+        },
+        {
+          "factor_id": "f.squat.internal-model-gain",
+          "label": "Internal-model dynamics gain",
+          "quantity_id": "q.squat.internal-model-gain",
+          "unit": "1",
+          "lower": 0.0,
+          "upper": 1.0,
+          "nominal": 1.0,
+          "display": "unitless",
+          "choices": []
+        },
+        {
+          "factor_id": "f.squat.sole-friction-time-constant",
+          "label": "Sole friction time constant",
+          "quantity_id": "q.squat.sole-friction-time-constant",
+          "unit": "s",
+          "lower": 0.002,
+          "upper": 0.015,
+          "nominal": 0.002,
+          "display": "millisecond",
+          "choices": []
+        }
+      ],
+      "presets": {
+        "nominal": {},
+        "half-timestep": {
+          "f.squat.integration-timestep": 0.0005
+        },
+        "static-internal-model": {
+          "f.squat.internal-model-gain": 0.0
+        },
+        "soft-sole-friction": {
+          "f.squat.sole-friction-time-constant": 0.015
+        },
+        "quarter-squat-90": {
+          "f.squat.bottom-knee-flexion": 1.5707963267948966
+        },
+        "slow-tempo": {
+          "f.squat.descent-duration": 2.0,
+          "f.squat.ascent-duration": 1.6
+        }
+      },
+      "limitations": [
+        "one repetition from quiet standing with an empty 20 kg bar",
+        "torque generators, not muscles; no sensorimotor delay",
+        "pure-hinge knee: valgus and tibial rotation cannot occur",
+        "an exact internal model at gain 1 (a person's is approximate)",
+        "population-scaled segments; not subject-specific and not validated"
+      ]
+    }
+  ],
+  "invalid_documents": 0
+}

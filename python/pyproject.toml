@@ -22,11 +22,12 @@ requires-python = ">=3.12,<3.13"
 # The plain `fastapi` distribution is used rather than `fastapi[standard]`, which
 # would drag in unrelated CLI tooling this project does not use.
 #
-# pyarrow is DB-2.6's (RES-379) Arrow IPC transport primitive. It is imported lazily
-# by dynamisbench.transport.arrow and by nothing on the scientific-core or API-startup
-# path, so the package root and the application boundary load no columnar stack.
+# NumPy and PyArrow are the application's locked columnar runtime for the Laboratory's
+# Arrow IPC read models. The sidecar preloads both on its main thread before binding, while
+# imports from the scientific core and package root remain lazy and engine-independent.
 dependencies = [
     "fastapi>=0.121.0",
+    "numpy>=2.5.4",
     "pyarrow>=21.0.0",
     "pydantic>=2.12.0",
     "pyyaml>=6.0.3",

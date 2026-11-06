@@ -1,0 +1,26 @@
+{
+  "run_id": "run-49440369db-001",
+  "study_id": "st.squat.configuration",
+  "case_id": "nominal",
+  "configuration": {
+    "f.squat.bottom-knee-flexion": 2.0943951023931953,
+    "f.squat.descent-duration": 1.5,
+    "f.squat.ascent-duration": 1.2,
+    "f.squat.integration-timestep": 0.001,
+    "f.squat.internal-model-gain": 1.0,
+    "f.squat.sole-friction-time-constant": 0.002
+  },
+  "state": "completed",
+  "active": false,
+  "lifecycle": [
+    "starting",
+    "running",
+    "completed"
+  ],
+  "refusals": [],
+  "message": "executed, sealed, normalized, verified and assessed",
+  "execution_evidence_digest": "465902c4ac2e1f71e81b5a6b28f2c0a8f149fb74b8df242f61023bc35737e02c",
+  "derived_evidence_digest": "da921a7cde8712b1e2b14e30a3364a1d02ed318e7d744a72e5fde9e70eeaa9c7",
+  "derived_outcome": "succeeded",
+  "elapsed_s": 14.696
+}

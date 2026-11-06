@@ -1,0 +1,1881 @@
+{
+  "model_sha256": "c91b2fa2ca1e04f920f4685bc23be2a99a64ad697dcd6a40cf5699dc5761a947",
+  "counts": {
+    "nbody": 18,
+    "neq": 3,
+    "ngeom": 33,
+    "npair": 10,
+    "nq": 43,
+    "nu": 29,
+    "nv": 41
+  },
+  "total_mass_kg": 95.0,
+  "bodies": [
+    {
+      "name": "pelvis",
+      "parent": "world",
+      "mass_kg": 8.3775,
+      "com_m": [
+        0.0,
+        0.0,
+        0.05413388253
+      ],
+      "principal_inertia_kg_m2": [
+        0.06152065832,
+        0.04938259868,
+        0.05604629973
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        0.928876077
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "torso_middle",
+      "parent": "pelvis",
+      "mass_kg": 12.2475,
+      "com_m": [
+        0.0,
+        0.0,
+        0.1133106188
+      ],
+      "principal_inertia_kg_m2": [
+        0.1208574081,
+        0.07630917312,
+        0.1139386071
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        0.139340753
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "torso_upper",
+      "parent": "torso_middle",
+      "mass_kg": 11.97,
+      "com_m": [
+        0.0,
+        0.0,
+        0.1620964368
+      ],
+      "principal_inertia_kg_m2": [
+        0.3289629416,
+        0.1322612545,
+        0.2786709903
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        0.2060942503
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "head",
+      "parent": "torso_upper",
+      "mass_kg": 5.205,
+      "com_m": [
+        0.0,
+        0.0,
+        0.09824823665
+      ],
+      "principal_inertia_kg_m2": [
+        0.04066038249,
+        0.0438661994,
+        0.03020393358
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        0.2315332621
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "upper_arm_l",
+      "parent": "torso_upper",
+      "mass_kg": 2.0325,
+      "com_m": [
+        0.0,
+        0.0,
+        -0.1634377771
+      ],
+      "principal_inertia_kg_m2": [
+        0.01323648048,
+        0.01179199709,
+        0.004068150183
+      ],
+      "position_m": [
+        0.03,
+        0.18,
+        0.1571889198
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "forearm_l",
+      "parent": "upper_arm_l",
+      "mass_kg": 1.215,
+      "com_m": [
+        0.0,
+        0.0,
+        -0.1236306749
+      ],
+      "principal_inertia_kg_m2": [
+        0.006761679812,
+        0.006233445768,
+        0.001299592446
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.2831562321
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "hand_l",
+      "parent": "forearm_l",
+      "mass_kg": 0.4575,
+      "com_m": [
+        0.0,
+        0.0,
+        -0.06845002872
+      ],
+      "principal_inertia_kg_m2": [
+        0.0013545763,
+        0.0009038969384,
+        0.0005522973131
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.2702900632
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "upper_arm_r",
+      "parent": "torso_upper",
+      "mass_kg": 2.0325,
+      "com_m": [
+        0.0,
+        0.0,
+        -0.1634377771
+      ],
+      "principal_inertia_kg_m2": [
+        0.01323648048,
+        0.01179199709,
+        0.004068150183
+      ],
+      "position_m": [
+        0.03,
+        -0.18,
+        0.1571889198
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "forearm_r",
+      "parent": "upper_arm_r",
+      "mass_kg": 1.215,
+      "com_m": [
+        0.0,
+        0.0,
+        -0.1236306749
+      ],
+      "principal_inertia_kg_m2": [
+        0.006761679812,
+        0.006233445768,
+        0.001299592446
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.2831562321
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "hand_r",
+      "parent": "forearm_r",
+      "mass_kg": 0.4575,
+      "com_m": [
+        0.0,
+        0.0,
+        -0.06845002872
+      ],
+      "principal_inertia_kg_m2": [
+        0.0013545763,
+        0.0009038969384,
+        0.0005522973131
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.2702900632
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "thigh_l",
+      "parent": "pelvis",
+      "mass_kg": 10.62,
+      "com_m": [
+        0.0,
+        0.0,
+        -0.1737846496
+      ],
+      "principal_inertia_kg_m2": [
+        0.2070290674,
+        0.2070290674,
+        0.04246313619
+      ],
+      "position_m": [
+        0.0,
+        0.0882,
+        0.0
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "shank_l",
+      "parent": "thigh_l",
+      "mass_kg": 3.2475,
+      "com_m": [
+        0.0,
+        0.0,
+        -0.1945209937
+      ],
+      "principal_inertia_kg_m2": [
+        0.04018718025,
+        0.03831826778,
+        0.006556644294
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.4243825388
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "foot_l",
+      "parent": "shank_l",
+      "mass_kg": 1.0275,
+      "com_m": [
+        0.05746468265,
+        0.0,
+        -0.034125
+      ],
+      "principal_inertia_kg_m2": [
+        0.001063358642,
+        0.004151151308,
+        0.004567753315
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.4362435382
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "thigh_r",
+      "parent": "pelvis",
+      "mass_kg": 10.62,
+      "com_m": [
+        0.0,
+        0.0,
+        -0.1737846496
+      ],
+      "principal_inertia_kg_m2": [
+        0.2070290674,
+        0.2070290674,
+        0.04246313619
+      ],
+      "position_m": [
+        0.0,
+        -0.0882,
+        0.0
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "shank_r",
+      "parent": "thigh_r",
+      "mass_kg": 3.2475,
+      "com_m": [
+        0.0,
+        0.0,
+        -0.1945209937
+      ],
+      "principal_inertia_kg_m2": [
+        0.04018718025,
+        0.03831826778,
+        0.006556644294
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.4243825388
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "foot_r",
+      "parent": "shank_r",
+      "mass_kg": 1.0275,
+      "com_m": [
+        0.05746468265,
+        0.0,
+        -0.034125
+      ],
+      "principal_inertia_kg_m2": [
+        0.001063358642,
+        0.004151151308,
+        0.004567753315
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.4362435382
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "barbell",
+      "parent": "world",
+      "mass_kg": 20.0,
+      "com_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "principal_inertia_kg_m2": [
+        11.55447699,
+        0.005472034605,
+        11.55447699
+      ],
+      "position_m": [
+        -0.035,
+        0.0,
+        1.475844342
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "geoms": [
+    {
+      "name": "floor",
+      "body": "world",
+      "type": "plane",
+      "size_m": [
+        3.0,
+        3.0,
+        0.05
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "floor"
+    },
+    {
+      "name": "pelvis_geom",
+      "body": "pelvis",
+      "type": "ellipsoid",
+      "size_m": [
+        0.1,
+        0.15,
+        0.09967037648
+      ],
+      "position_m": [
+        0.02,
+        0.0,
+        0.06967037648
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "segment"
+    },
+    {
+      "name": "torso_middle_geom",
+      "body": "torso_middle",
+      "type": "ellipsoid",
+      "size_m": [
+        0.1,
+        0.14,
+        0.1130471251
+      ],
+      "position_m": [
+        0.03,
+        0.0,
+        0.1030471251
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "segment"
+    },
+    {
+      "name": "torso_upper_geom",
+      "body": "torso_upper",
+      "type": "ellipsoid",
+      "size_m": [
+        0.1,
+        0.17,
+        0.1257666311
+      ],
+      "position_m": [
+        0.035,
+        0.0,
+        0.104189968
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "segment"
+    },
+    {
+      "name": "neck_geom",
+      "body": "head",
+      "type": "capsule",
+      "size_m": [
+        0.05,
+        0.04,
+        0.0
+      ],
+      "position_m": [
+        0.03,
+        0.0,
+        0.04
+      ],
+      "quaternion": [
+        6.123233995736766e-17,
+        1.0,
+        0.0,
+        0.0
+      ],
+      "role": "segment"
+    },
+    {
+      "name": "head_geom",
+      "body": "head",
+      "type": "ellipsoid",
+      "size_m": [
+        0.095,
+        0.08,
+        0.11
+      ],
+      "position_m": [
+        0.045,
+        0.0,
+        0.1341556577
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "segment"
+    },
+    {
+      "name": "upper_arm_l_geom",
+      "body": "upper_arm_l",
+      "type": "capsule",
+      "size_m": [
+        0.045,
+        0.12157811605,
+        0.0
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.14157811605
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "segment"
+    },
+    {
+      "name": "forearm_l_geom",
+      "body": "forearm_l",
+      "type": "capsule",
+      "size_m": [
+        0.035,
+        0.1201450316,
+        0.0
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.1401450316
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "segment"
+    },
+    {
+      "name": "hand_l_geom",
+      "body": "hand_l",
+      "type": "box",
+      "size_m": [
+        0.015,
+        0.045,
+        0.04332280299
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.04332280299
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "segment"
+    },
+    {
+      "name": "upper_arm_r_geom",
+      "body": "upper_arm_r",
+      "type": "capsule",
+      "size_m": [
+        0.045,
+        0.12157811605,
+        0.0
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.14157811605
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "segment"
+    },
+    {
+      "name": "forearm_r_geom",
+      "body": "forearm_r",
+      "type": "capsule",
+      "size_m": [
+        0.035,
+        0.1201450316,
+        0.0
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.1401450316
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "segment"
+    },
+    {
+      "name": "hand_r_geom",
+      "body": "hand_r",
+      "type": "box",
+      "size_m": [
+        0.015,
+        0.045,
+        0.04332280299
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.04332280299
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "segment"
+    },
+    {
+      "name": "thigh_l_geom",
+      "body": "thigh_l",
+      "type": "capsule",
+      "size_m": [
+        0.065,
+        0.18219126940000002,
+        0.0
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.2121912694
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "segment"
+    },
+    {
+      "name": "shank_l_geom",
+      "body": "shank_l",
+      "type": "capsule",
+      "size_m": [
+        0.045,
+        0.1781217691,
+        0.0
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.20812176910000002
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "segment"
+    },
+    {
+      "name": "foot_l_shape",
+      "body": "foot_l",
+      "type": "box",
+      "size_m": [
+        0.1297171166,
+        0.048125,
+        0.0273
+      ],
+      "position_m": [
+        0.0726415853,
+        0.0,
+        -0.0375375
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "visual"
+    },
+    {
+      "name": "foot_l_heel_lateral",
+      "body": "foot_l",
+      "type": "sphere",
+      "size_m": [
+        0.012,
+        0.0,
+        0.0
+      ],
+      "position_m": [
+        -0.0370755313,
+        0.022,
+        -0.05625
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "sole"
+    },
+    {
+      "name": "foot_l_heel_medial",
+      "body": "foot_l",
+      "type": "sphere",
+      "size_m": [
+        0.012,
+        0.0,
+        0.0
+      ],
+      "position_m": [
+        -0.0370755313,
+        -0.022,
+        -0.05625
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "sole"
+    },
+    {
+      "name": "foot_l_met1",
+      "body": "foot_l",
+      "type": "sphere",
+      "size_m": [
+        0.012,
+        0.0,
+        0.0
+      ],
+      "position_m": [
+        0.1297171166,
+        -0.036125,
+        -0.05625
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "sole"
+    },
+    {
+      "name": "foot_l_met5",
+      "body": "foot_l",
+      "type": "sphere",
+      "size_m": [
+        0.012,
+        0.0,
+        0.0
+      ],
+      "position_m": [
+        0.1063680356,
+        0.030125,
+        -0.05625
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "sole"
+    },
+    {
+      "name": "foot_l_hallux",
+      "body": "foot_l",
+      "type": "sphere",
+      "size_m": [
+        0.012,
+        0.0,
+        0.0
+      ],
+      "position_m": [
+        0.1853587019,
+        -0.024125,
+        -0.05625
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "sole"
+    },
+    {
+      "name": "thigh_r_geom",
+      "body": "thigh_r",
+      "type": "capsule",
+      "size_m": [
+        0.065,
+        0.18219126940000002,
+        0.0
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.2121912694
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "segment"
+    },
+    {
+      "name": "shank_r_geom",
+      "body": "shank_r",
+      "type": "capsule",
+      "size_m": [
+        0.045,
+        0.1781217691,
+        0.0
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        -0.20812176910000002
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "segment"
+    },
+    {
+      "name": "foot_r_shape",
+      "body": "foot_r",
+      "type": "box",
+      "size_m": [
+        0.1297171166,
+        0.048125,
+        0.0273
+      ],
+      "position_m": [
+        0.0726415853,
+        0.0,
+        -0.0375375
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "visual"
+    },
+    {
+      "name": "foot_r_heel_lateral",
+      "body": "foot_r",
+      "type": "sphere",
+      "size_m": [
+        0.012,
+        0.0,
+        0.0
+      ],
+      "position_m": [
+        -0.0370755313,
+        -0.022,
+        -0.05625
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "sole"
+    },
+    {
+      "name": "foot_r_heel_medial",
+      "body": "foot_r",
+      "type": "sphere",
+      "size_m": [
+        0.012,
+        0.0,
+        0.0
+      ],
+      "position_m": [
+        -0.0370755313,
+        0.022,
+        -0.05625
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "sole"
+    },
+    {
+      "name": "foot_r_met1",
+      "body": "foot_r",
+      "type": "sphere",
+      "size_m": [
+        0.012,
+        0.0,
+        0.0
+      ],
+      "position_m": [
+        0.1297171166,
+        0.036125,
+        -0.05625
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "sole"
+    },
+    {
+      "name": "foot_r_met5",
+      "body": "foot_r",
+      "type": "sphere",
+      "size_m": [
+        0.012,
+        0.0,
+        0.0
+      ],
+      "position_m": [
+        0.1063680356,
+        -0.030125,
+        -0.05625
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "sole"
+    },
+    {
+      "name": "foot_r_hallux",
+      "body": "foot_r",
+      "type": "sphere",
+      "size_m": [
+        0.012,
+        0.0,
+        0.0
+      ],
+      "position_m": [
+        0.1853587019,
+        0.024125,
+        -0.05625
+      ],
+      "quaternion": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "role": "sole"
+    },
+    {
+      "name": "bar_shaft",
+      "body": "barbell",
+      "type": "cylinder",
+      "size_m": [
+        0.014,
+        1.1,
+        0.0
+      ],
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "quaternion": [
+        0.7071067811865476,
+        -0.7071067811865475,
+        0.0,
+        0.0
+      ],
+      "role": "barbell"
+    },
+    {
+      "name": "bar_collar_l",
+      "body": "barbell",
+      "type": "cylinder",
+      "size_m": [
+        0.035,
+        0.015,
+        0.0
+      ],
+      "position_m": [
+        0.0,
+        0.67,
+        0.0
+      ],
+      "quaternion": [
+        0.7071067811865476,
+        -0.7071067811865475,
+        0.0,
+        0.0
+      ],
+      "role": "barbell"
+    },
+    {
+      "name": "bar_collar_r",
+      "body": "barbell",
+      "type": "cylinder",
+      "size_m": [
+        0.035,
+        0.015,
+        0.0
+      ],
+      "position_m": [
+        0.0,
+        -0.67,
+        0.0
+      ],
+      "quaternion": [
+        0.7071067811865476,
+        -0.7071067811865475,
+        0.0,
+        0.0
+      ],
+      "role": "barbell"
+    },
+    {
+      "name": "bar_sleeve_l",
+      "body": "barbell",
+      "type": "cylinder",
+      "size_m": [
+        0.025,
+        0.2075,
+        0.0
+      ],
+      "position_m": [
+        0.0,
+        0.8925,
+        0.0
+      ],
+      "quaternion": [
+        0.7071067811865476,
+        -0.7071067811865475,
+        0.0,
+        0.0
+      ],
+      "role": "barbell"
+    },
+    {
+      "name": "bar_sleeve_r",
+      "body": "barbell",
+      "type": "cylinder",
+      "size_m": [
+        0.025,
+        0.2075,
+        0.0
+      ],
+      "position_m": [
+        0.0,
+        -0.8925,
+        0.0
+      ],
+      "quaternion": [
+        0.7071067811865476,
+        -0.7071067811865475,
+        0.0,
+        0.0
+      ],
+      "role": "barbell"
+    }
+  ],
+  "joints": [
+    {
+      "name": "lumbar_flexion",
+      "body": "torso_middle",
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "range_deg": [
+        -25.0,
+        50.0
+      ],
+      "torque_capacity_nm": [
+        300.0,
+        200.0
+      ],
+      "damping_n_m_s": 5.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "lumbar_bending",
+      "body": "torso_middle",
+      "axis": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "range_deg": [
+        -25.0,
+        25.0
+      ],
+      "torque_capacity_nm": [
+        200.0,
+        200.0
+      ],
+      "damping_n_m_s": 1.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "lumbar_rotation",
+      "body": "torso_middle",
+      "axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "range_deg": [
+        -10.0,
+        10.0
+      ],
+      "torque_capacity_nm": [
+        100.0,
+        100.0
+      ],
+      "damping_n_m_s": 1.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "thoracic_flexion",
+      "body": "torso_upper",
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "range_deg": [
+        -20.0,
+        35.0
+      ],
+      "torque_capacity_nm": [
+        250.0,
+        150.0
+      ],
+      "damping_n_m_s": 5.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "thoracic_bending",
+      "body": "torso_upper",
+      "axis": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "range_deg": [
+        -20.0,
+        20.0
+      ],
+      "torque_capacity_nm": [
+        150.0,
+        150.0
+      ],
+      "damping_n_m_s": 1.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "thoracic_rotation",
+      "body": "torso_upper",
+      "axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "range_deg": [
+        -29.999999999999996,
+        29.999999999999996
+      ],
+      "torque_capacity_nm": [
+        80.0,
+        80.0
+      ],
+      "damping_n_m_s": 1.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "neck_flexion",
+      "body": "head",
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "range_deg": [
+        -59.99999999999999,
+        45.0
+      ],
+      "torque_capacity_nm": [
+        50.0,
+        30.0
+      ],
+      "damping_n_m_s": 0.3,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "neck_bending",
+      "body": "head",
+      "axis": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "range_deg": [
+        -40.0,
+        40.0
+      ],
+      "torque_capacity_nm": [
+        30.0,
+        30.0
+      ],
+      "damping_n_m_s": 0.3,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "neck_rotation",
+      "body": "head",
+      "axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "range_deg": [
+        -70.0,
+        70.0
+      ],
+      "torque_capacity_nm": [
+        25.0,
+        25.0
+      ],
+      "damping_n_m_s": 0.3,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "shoulder_flexion_l",
+      "body": "upper_arm_l",
+      "axis": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "range_deg": [
+        -59.99999999999999,
+        180.0
+      ],
+      "torque_capacity_nm": [
+        110.0,
+        100.0
+      ],
+      "damping_n_m_s": 0.3,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "shoulder_abduction_l",
+      "body": "upper_arm_l",
+      "axis": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "range_deg": [
+        -29.999999999999996,
+        180.0
+      ],
+      "torque_capacity_nm": [
+        110.0,
+        90.0
+      ],
+      "damping_n_m_s": 0.3,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "shoulder_rotation_l",
+      "body": "upper_arm_l",
+      "axis": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "range_deg": [
+        -110.0,
+        70.0
+      ],
+      "torque_capacity_nm": [
+        50.0,
+        50.0
+      ],
+      "damping_n_m_s": 0.3,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "elbow_flexion_l",
+      "body": "forearm_l",
+      "axis": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "range_deg": [
+        0.0,
+        150.0
+      ],
+      "torque_capacity_nm": [
+        65.0,
+        80.0
+      ],
+      "damping_n_m_s": 0.3,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "shoulder_flexion_r",
+      "body": "upper_arm_r",
+      "axis": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "range_deg": [
+        -59.99999999999999,
+        180.0
+      ],
+      "torque_capacity_nm": [
+        110.0,
+        100.0
+      ],
+      "damping_n_m_s": 0.3,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "shoulder_abduction_r",
+      "body": "upper_arm_r",
+      "axis": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "range_deg": [
+        -29.999999999999996,
+        180.0
+      ],
+      "torque_capacity_nm": [
+        110.0,
+        90.0
+      ],
+      "damping_n_m_s": 0.3,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "shoulder_rotation_r",
+      "body": "upper_arm_r",
+      "axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "range_deg": [
+        -110.0,
+        70.0
+      ],
+      "torque_capacity_nm": [
+        50.0,
+        50.0
+      ],
+      "damping_n_m_s": 0.3,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "elbow_flexion_r",
+      "body": "forearm_r",
+      "axis": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "range_deg": [
+        0.0,
+        150.0
+      ],
+      "torque_capacity_nm": [
+        65.0,
+        80.0
+      ],
+      "damping_n_m_s": 0.3,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "hip_flexion_l",
+      "body": "thigh_l",
+      "axis": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "range_deg": [
+        -29.999999999999996,
+        125.00000000000001
+      ],
+      "torque_capacity_nm": [
+        300.0,
+        200.0
+      ],
+      "damping_n_m_s": 5.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "hip_adduction_l",
+      "body": "thigh_l",
+      "axis": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "range_deg": [
+        -45.0,
+        29.999999999999996
+      ],
+      "torque_capacity_nm": [
+        170.0,
+        170.0
+      ],
+      "damping_n_m_s": 1.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "hip_rotation_l",
+      "body": "thigh_l",
+      "axis": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "range_deg": [
+        -45.0,
+        45.0
+      ],
+      "torque_capacity_nm": [
+        90.0,
+        80.0
+      ],
+      "damping_n_m_s": 1.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "knee_flexion_l",
+      "body": "shank_l",
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "range_deg": [
+        -5.0,
+        150.0
+      ],
+      "torque_capacity_nm": [
+        300.0,
+        150.0
+      ],
+      "damping_n_m_s": 5.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "ankle_dorsiflexion_l",
+      "body": "foot_l",
+      "axis": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "range_deg": [
+        -50.0,
+        40.0
+      ],
+      "torque_capacity_nm": [
+        200.0,
+        60.0
+      ],
+      "damping_n_m_s": 5.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "subtalar_inversion_l",
+      "body": "foot_l",
+      "axis": [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      "range_deg": [
+        -20.0,
+        29.999999999999996
+      ],
+      "torque_capacity_nm": [
+        50.0,
+        50.0
+      ],
+      "damping_n_m_s": 1.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "hip_flexion_r",
+      "body": "thigh_r",
+      "axis": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "range_deg": [
+        -29.999999999999996,
+        125.00000000000001
+      ],
+      "torque_capacity_nm": [
+        300.0,
+        200.0
+      ],
+      "damping_n_m_s": 5.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "hip_adduction_r",
+      "body": "thigh_r",
+      "axis": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "range_deg": [
+        -45.0,
+        29.999999999999996
+      ],
+      "torque_capacity_nm": [
+        170.0,
+        170.0
+      ],
+      "damping_n_m_s": 1.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "hip_rotation_r",
+      "body": "thigh_r",
+      "axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "range_deg": [
+        -45.0,
+        45.0
+      ],
+      "torque_capacity_nm": [
+        90.0,
+        80.0
+      ],
+      "damping_n_m_s": 1.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "knee_flexion_r",
+      "body": "shank_r",
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "range_deg": [
+        -5.0,
+        150.0
+      ],
+      "torque_capacity_nm": [
+        300.0,
+        150.0
+      ],
+      "damping_n_m_s": 5.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "ankle_dorsiflexion_r",
+      "body": "foot_r",
+      "axis": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "range_deg": [
+        -50.0,
+        40.0
+      ],
+      "torque_capacity_nm": [
+        200.0,
+        60.0
+      ],
+      "damping_n_m_s": 5.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "name": "subtalar_inversion_r",
+      "body": "foot_r",
+      "axis": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "range_deg": [
+        -20.0,
+        29.999999999999996
+      ],
+      "torque_capacity_nm": [
+        50.0,
+        50.0
+      ],
+      "damping_n_m_s": 1.0,
+      "position_m": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "sole_points": [
+    "heel_lateral",
+    "heel_medial",
+    "met1",
+    "met5",
+    "hallux"
+  ],
+  "timestep_s": 0.001,
+  "integrator": "implicitfast",
+  "gravity_m_s2": 9.80665,
+  "subject": {
+    "body_mass_kg": 75.0,
+    "stature_m": 1.75,
+    "barbell_mass_kg": 20.0,
+    "grip_half_width_m": 0.48
+  },
+  "contact": {
+    "sole_point_radius_m": 0.012,
+    "friction": [
+      0.9,
+      0.005,
+      0.0001
+    ],
+    "normal_time_constant_s": 0.015,
+    "friction_time_constant_s": 0.002,
+    "loaded_threshold_n": 5.0
+  }
+}

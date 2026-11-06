@@ -1,0 +1,57 @@
+{
+  "decision": "ready",
+  "refusals": [],
+  "request_digest": "ad63382533849a3b8abd8546821dd104844178d5799a61807f6e45575e238958",
+  "execution_fingerprint": "49440369db4b76bb12e704b46e460bdfb152c10f59e5942ecce38aaa619a57f8",
+  "study": {
+    "identifier": "st.squat.configuration",
+    "version": "1.0.0",
+    "semantic_digest": "e332403ff12d87bc24e2ecb3af8f389d2e9b93432cb4cb483820679369233f5b"
+  },
+  "definitions": {
+    "benchmark": {
+      "identifier": "db.squat.back-squat",
+      "version": "1.0.0",
+      "semantic_digest": "8b581aa2814283d58e291494f593e0be570b5f2e10d7860b794464d199667201"
+    },
+    "scenario": {
+      "identifier": "sc.squat.controlled-repetition",
+      "version": "1.0.0",
+      "semantic_digest": "02ea513eca7770742ebac0c5b41d3c3588b869b123616b42b0061fbef0c9088e"
+    },
+    "realization": {
+      "identifier": "rl.mujoco.squat.torque-driven",
+      "version": "1.0.0",
+      "semantic_digest": "60183b7353ef442da1f808f515643ac61b6bba5df4db2883550ebaf7292bc4de"
+    },
+    "system_under_test": {
+      "identifier": "sut.squat.athlete-barbell",
+      "version": "1.0.0",
+      "semantic_digest": "bf50027c197775b8c56492b397f51a048f1eadca243dba83a78bb57bb67fbb9b"
+    },
+    "environment": {
+      "identifier": "env.mujoco.squat.linux-x86-64",
+      "version": "1.0.0",
+      "semantic_digest": "8a8c34161f79d530d1eb279769603c9133029547e55c724c322b21c74f4fb42b"
+    }
+  },
+  "configuration": {
+    "f.squat.bottom-knee-flexion": 2.0943951023931953,
+    "f.squat.descent-duration": 1.5,
+    "f.squat.ascent-duration": 1.2,
+    "f.squat.integration-timestep": 0.001,
+    "f.squat.internal-model-gain": 1.0,
+    "f.squat.sole-friction-time-constant": 0.002
+  },
+  "adapter": {
+    "adapter_id": "dynamisbench.mujoco.squat",
+    "adapter_version": "0.1.0",
+    "implementation_digest": "491d078997344412fa9460e58c18a6fbbc7439f1f030afbb19c47dc6fc637ac4",
+    "engine": "mujoco",
+    "engine_version": "3.17.0",
+    "python_version": "3.12.3",
+    "platform": "linux-x86-64",
+    "dependency_closure_digest": "6a2f7ad6b36c71ac3c17466934843666efe35d743502be64837bb322f8275d5c"
+  },
+  "timeout_seconds": 1800.0
+}

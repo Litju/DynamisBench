@@ -1,0 +1,830 @@
+{
+  "run_id": "run-49440369db-001",
+  "status": "verified",
+  "reasons": [],
+  "execution": {
+    "valid": true,
+    "defects": [],
+    "run_id": "run-49440369db-001",
+    "outcome": "succeeded",
+    "evidence_digest": "465902c4ac2e1f71e81b5a6b28f2c0a8f149fb74b8df242f61023bc35737e02c",
+    "files": [
+      {
+        "path": "diagnostics.json",
+        "sha256": "aef62b978581744b5e6c9c1521f5ab642a70436a7e32027a9a73bdcc7b7b1efc",
+        "size_bytes": 852
+      },
+      {
+        "path": "logs/worker.stderr.txt",
+        "sha256": "9859bb5a0ae948e85abbb8b5e59406cc2a794f50b7df116066c78edeae765b86",
+        "size_bytes": 287
+      },
+      {
+        "path": "native/index.json",
+        "sha256": "b943b9c32a049da7dab2db9747dcf802636010447d15d442ec1c612868621eb6",
+        "size_bytes": 954
+      },
+      {
+        "path": "native/model.json",
+        "sha256": "4cf53a990f7168cab908dd9da7c5456700294b0114bdd1f414e68661dd140c81",
+        "size_bytes": 14393
+      },
+      {
+        "path": "native/record.json",
+        "sha256": "97aebc038f9107dd879d8af25cda42b73604e91c4eebab31bf6ce7b8e08dee03",
+        "size_bytes": 12364
+      },
+      {
+        "path": "native/samples.parquet",
+        "sha256": "ea5ef0153b12adc4f352e0d8066618ad919af4ca578d7a672eb04a4d501832f4",
+        "size_bytes": 1195229
+      },
+      {
+        "path": "native/state.parquet",
+        "sha256": "afb0d183efc6e7ecf988ddc59d34f5b2310e27d90eee4c9ad76621d9ba0060cb",
+        "size_bytes": 477379
+      }
+    ]
+  },
+  "derived": {
+    "valid": true,
+    "defects": [],
+    "run_id": "run-49440369db-001-derived",
+    "outcome": "succeeded",
+    "evidence_digest": "da921a7cde8712b1e2b14e30a3364a1d02ed318e7d744a72e5fde9e70eeaa9c7",
+    "files": [
+      {
+        "path": "assessment.json",
+        "sha256": "f04ec654f1263c00421c79188a9ebc4a8a3e2336cb4f0ce1a858c4eb4e623f7e",
+        "size_bytes": 12803
+      },
+      {
+        "path": "canonical/catalogue.json",
+        "sha256": "dac31c4f0fb7821f80c78defcac2c5e82a026d2cff0ae8c4ea95ea33139b2dfc",
+        "size_bytes": 71756
+      },
+      {
+        "path": "canonical/series.parquet",
+        "sha256": "c5432e0310d1404a5bb26f63e21955ca6d8c9e398302f75f3e327fd045b43359",
+        "size_bytes": 1365663
+      },
+      {
+        "path": "environment.json",
+        "sha256": "3fca9facb0dbf8905479c2e8c775cdddd1ea5e2c7d18a09e70fb257f41c4193e",
+        "size_bytes": 4981
+      },
+      {
+        "path": "inputs/manifest.json",
+        "sha256": "bd2baa078e3ff0288088f5c50f5b779db8a6027130826db06a9198571ecac1c3",
+        "size_bytes": 3282
+      },
+      {
+        "path": "inputs/objects/02ea513eca7770742ebac0c5b41d3c3588b869b123616b42b0061fbef0c9088e",
+        "sha256": "02ea513eca7770742ebac0c5b41d3c3588b869b123616b42b0061fbef0c9088e",
+        "size_bytes": 1246
+      },
+      {
+        "path": "inputs/objects/60183b7353ef442da1f808f515643ac61b6bba5df4db2883550ebaf7292bc4de",
+        "sha256": "60183b7353ef442da1f808f515643ac61b6bba5df4db2883550ebaf7292bc4de",
+        "size_bytes": 6271
+      },
+      {
+        "path": "inputs/objects/8a8c34161f79d530d1eb279769603c9133029547e55c724c322b21c74f4fb42b",
+        "sha256": "8a8c34161f79d530d1eb279769603c9133029547e55c724c322b21c74f4fb42b",
+        "size_bytes": 832
+      },
+      {
+        "path": "inputs/objects/8b581aa2814283d58e291494f593e0be570b5f2e10d7860b794464d199667201",
+        "sha256": "8b581aa2814283d58e291494f593e0be570b5f2e10d7860b794464d199667201",
+        "size_bytes": 52309
+      },
+      {
+        "path": "inputs/objects/bf50027c197775b8c56492b397f51a048f1eadca243dba83a78bb57bb67fbb9b",
+        "sha256": "bf50027c197775b8c56492b397f51a048f1eadca243dba83a78bb57bb67fbb9b",
+        "size_bytes": 648
+      },
+      {
+        "path": "inputs/objects/c91b2fa2ca1e04f920f4685bc23be2a99a64ad697dcd6a40cf5699dc5761a947",
+        "sha256": "c91b2fa2ca1e04f920f4685bc23be2a99a64ad697dcd6a40cf5699dc5761a947",
+        "size_bytes": 20039
+      },
+      {
+        "path": "preflight.json",
+        "sha256": "061547a53daf5eab3af43dfbec7955bae392a296e66d2e96151863c570a284bb",
+        "size_bytes": 940
+      },
+      {
+        "path": "provenance.json",
+        "sha256": "199b02aa57155d201cf3da76513a303b50d6093f1bb2f36357b20376fb289067",
+        "size_bytes": 4326
+      },
+      {
+        "path": "run-spec.json",
+        "sha256": "49440369db4b76bb12e704b46e460bdfb152c10f59e5942ecce38aaa619a57f8",
+        "size_bytes": 2455
+      },
+      {
+        "path": "run.json",
+        "sha256": "de5fccd608d59aca3bd802d506754a6c63c8e8c5793892b6c40295d4d25cba08",
+        "size_bytes": 1064
+      },
+      {
+        "path": "verification.json",
+        "sha256": "c4c4f9e4c27afd5e4466cb850eecd523ef5b7f3175f68817d4cf290b816a0ac1",
+        "size_bytes": 4495
+      }
+    ]
+  },
+  "run_record": {
+    "canonical": true,
+    "claim": "A verified and assessed execution of a synthetic model. Verification is internal numerical consistency; assessment is against predeclared criteria of the benchmark release. Neither is validation against measured human motion.",
+    "derived_run_id": "run-49440369db-001-derived",
+    "environment": "env.mujoco.squat.linux-x86-64",
+    "execution_outcome": "succeeded",
+    "factor_case": {
+      "case_id": "nominal",
+      "values": {
+        "f.squat.ascent-duration": 1.2,
+        "f.squat.bottom-knee-flexion": 2.0943951023931953,
+        "f.squat.descent-duration": 1.5,
+        "f.squat.integration-timestep": 0.001,
+        "f.squat.internal-model-gain": 1.0,
+        "f.squat.sole-friction-time-constant": 0.002
+      }
+    },
+    "failure": null,
+    "realization": {
+      "identifier": "rl.mujoco.squat.torque-driven",
+      "version": "1.0.0"
+    },
+    "run_id": "run-49440369db-001",
+    "schema": "dynamisbench.run-record/1",
+    "study": {
+      "identifier": "st.squat.configuration",
+      "semantic_digest": "e332403ff12d87bc24e2ecb3af8f389d2e9b93432cb4cb483820679369233f5b",
+      "version": "1.0.0"
+    }
+  },
+  "provenance": {
+    "adapter": {
+      "adapter_id": "dynamisbench.mujoco.squat",
+      "adapter_version": "0.1.0",
+      "capabilities": [
+        "forward_dynamics"
+      ],
+      "engine": "mujoco",
+      "engine_version": "3.17.0",
+      "implementation_digest": "491d078997344412fa9460e58c18a6fbbc7439f1f030afbb19c47dc6fc637ac4",
+      "protocol_version": 1
+    },
+    "canonical": {
+      "canonical/series.parquet": "c5432e0310d1404a5bb26f63e21955ca6d8c9e398302f75f3e327fd045b43359"
+    },
+    "claim": "A verified and assessed execution of a synthetic model. Verification is internal numerical consistency; assessment is against predeclared criteria of the benchmark release. Neither is validation against measured human motion.",
+    "definitions": {
+      "benchmark": {
+        "identifier": "db.squat.back-squat",
+        "semantic_digest": {
+          "algorithm": "sha256",
+          "hex": "8b581aa2814283d58e291494f593e0be570b5f2e10d7860b794464d199667201"
+        },
+        "version": "1.0.0"
+      },
+      "environment": {
+        "identifier": "env.mujoco.squat.linux-x86-64",
+        "semantic_digest": {
+          "algorithm": "sha256",
+          "hex": "8a8c34161f79d530d1eb279769603c9133029547e55c724c322b21c74f4fb42b"
+        },
+        "version": "1.0.0"
+      },
+      "realization": {
+        "identifier": "rl.mujoco.squat.torque-driven",
+        "semantic_digest": {
+          "algorithm": "sha256",
+          "hex": "60183b7353ef442da1f808f515643ac61b6bba5df4db2883550ebaf7292bc4de"
+        },
+        "version": "1.0.0"
+      },
+      "scenario": {
+        "identifier": "sc.squat.controlled-repetition",
+        "semantic_digest": {
+          "algorithm": "sha256",
+          "hex": "02ea513eca7770742ebac0c5b41d3c3588b869b123616b42b0061fbef0c9088e"
+        },
+        "version": "1.0.0"
+      },
+      "study": {
+        "identifier": "st.squat.configuration",
+        "semantic_digest": {
+          "algorithm": "sha256",
+          "hex": "e332403ff12d87bc24e2ecb3af8f389d2e9b93432cb4cb483820679369233f5b"
+        },
+        "version": "1.0.0"
+      },
+      "system_under_test": {
+        "identifier": "sut.squat.athlete-barbell",
+        "semantic_digest": {
+          "algorithm": "sha256",
+          "hex": "bf50027c197775b8c56492b397f51a048f1eadca243dba83a78bb57bb67fbb9b"
+        },
+        "version": "1.0.0"
+      }
+    },
+    "derivation_implementation": {
+      "dynamisbench.evaluation/records.py": "d57578ef2f7c9055bc11b588ad54a68c3805484185f98386b398ebd3813223e7",
+      "dynamisbench.normalization/canonical.py": "6b896e080e3ab7c4d6f5f7bf706d2f973ae4e75a328e97e95da88b67ef6cdff1",
+      "dynamisbench.pipeline/derivation.py": "0830679d99ce1e80216014d2dba0dd7734a3812de2e1c200fb53fe94ef053280",
+      "dynamisbench.pipeline/plugins.py": "4bfdad274a4d8499916abbd3fdc44db5cbd141b9f97e076df81712e5f8994dcd",
+      "dynamisbench.pipeline/squat.py": "17018b2aebd5255021be45033da8a159ad2f37c9ab6b7890646bf66b5fe27d8a"
+    },
+    "execution": {
+      "evidence_digest": "465902c4ac2e1f71e81b5a6b28f2c0a8f149fb74b8df242f61023bc35737e02c",
+      "native": {
+        "native/index.json": "b943b9c32a049da7dab2db9747dcf802636010447d15d442ec1c612868621eb6",
+        "native/model.json": "4cf53a990f7168cab908dd9da7c5456700294b0114bdd1f414e68661dd140c81",
+        "native/record.json": "97aebc038f9107dd879d8af25cda42b73604e91c4eebab31bf6ce7b8e08dee03",
+        "native/samples.parquet": "ea5ef0153b12adc4f352e0d8066618ad919af4ca578d7a672eb04a4d501832f4",
+        "native/state.parquet": "afb0d183efc6e7ecf988ddc59d34f5b2310e27d90eee4c9ad76621d9ba0060cb"
+      },
+      "outcome": "succeeded",
+      "run_id": "run-49440369db-001"
+    },
+    "execution_fingerprint": "49440369db4b76bb12e704b46e460bdfb152c10f59e5942ecce38aaa619a57f8",
+    "input_manifest_digest": "bd2baa078e3ff0288088f5c50f5b779db8a6027130826db06a9198571ecac1c3",
+    "preflight_request_digest": "ad63382533849a3b8abd8546821dd104844178d5799a61807f6e45575e238958",
+    "run_id": "run-49440369db-001",
+    "schema": "dynamisbench.provenance/1",
+    "source_documents": {
+      "benchmark:db.squat.back-squat@1.0.0": "benchmarks/benchmark/squat_back_squat.json",
+      "environment:env.mujoco.squat.linux-x86-64@1.0.0": "realizations/environment/squat_linux-x86-64.json",
+      "environment:env.mujoco.squat.windows-x86-64@1.0.0": "realizations/environment/squat_windows-x86-64.json",
+      "realization:rl.mujoco.squat.torque-driven@1.0.0": "realizations/realization/squat_mujoco.json",
+      "study:st.squat.configuration@1.0.0": "studies/study/squat_configuration.json",
+      "sut:sut.squat.athlete-barbell@1.0.0": "realizations/sut/squat_athlete_barbell.json"
+    },
+    "trajectory_sha256": "d3b4edafc090b1b1dca76f2af04343febdec9f9a0ff3d02b8e8d54d2aaef678b"
+  },
+  "verification": [
+    {
+      "category": "integrity",
+      "check_id": "time-grid",
+      "detail": "",
+      "label": "Exact 10 ms sample grid",
+      "method": "t_k = k x 10 ms from 0 through the last sample instant of the recorded duration",
+      "status": "pass",
+      "tolerance": 0.0,
+      "unit": "s",
+      "value": 0.0
+    },
+    {
+      "category": "integrity",
+      "check_id": "canonical-roundtrip",
+      "detail": "",
+      "label": "Sealed canonical table reads back identically",
+      "method": "the canonical Parquet written to the bundle, read back, equals the series in memory",
+      "status": "pass",
+      "tolerance": 0.0,
+      "unit": "",
+      "value": 0.0
+    },
+    {
+      "category": "contact",
+      "check_id": "contact-closure",
+      "detail": "",
+      "label": "Plantar loads sum to the vertical ground reaction",
+      "method": "largest absolute difference over samples: sum of the ten normal loads minus (left + right vertical GRF)",
+      "status": "pass",
+      "tolerance": 1e-06,
+      "unit": "N",
+      "value": 2.2737367544323206e-13
+    },
+    {
+      "category": "contact",
+      "check_id": "cop-recomputation",
+      "detail": "",
+      "label": "Centre of pressure recomputed from the plantar loads",
+      "method": "load-weighted mean of contact positions, both feet and each foot, every sample",
+      "status": "pass",
+      "tolerance": 1e-09,
+      "unit": "m",
+      "value": 8.326672684688674e-17
+    },
+    {
+      "category": "kinematics",
+      "check_id": "forward-kinematics-orientation",
+      "detail": "",
+      "label": "Segment orientations from the joint angles",
+      "method": "chain body offsets and canonical joint angles about the published hinge axes from the pelvis; largest rotation between recomputed and published orientation",
+      "status": "pass",
+      "tolerance": 1e-12,
+      "unit": "rad",
+      "value": 5.353301558149145e-16
+    },
+    {
+      "category": "kinematics",
+      "check_id": "forward-kinematics-position",
+      "detail": "",
+      "label": "Segment origins from the parent poses",
+      "method": "parent origin + parent rotation x body offset, every body and sample",
+      "status": "pass",
+      "tolerance": 1e-09,
+      "unit": "m",
+      "value": 9.43689570931383e-16
+    },
+    {
+      "category": "kinematics",
+      "check_id": "joint-velocity",
+      "detail": "largest at hip_flexion_r",
+      "label": "Joint angles integrate their angular velocities",
+      "method": "largest absolute difference per 10 ms interval: change of angle minus trapezoid integral of angular velocity, every joint",
+      "status": "pass",
+      "tolerance": 0.0002,
+      "unit": "rad",
+      "value": 6.076101014993937e-05
+    },
+    {
+      "category": "mechanics",
+      "check_id": "impulse-momentum-x",
+      "detail": "impulse -0.0966 N s, momentum change -0.1013 N s, quadrature bound 0.0739 N s",
+      "label": "Impulse-momentum balance, x",
+      "method": "trapezoid impulse of (GRF + gravity) over the run minus the change of system momentum; tolerance = quadrature bound + 0.05 N s",
+      "status": "pass",
+      "tolerance": 0.12392491055241446,
+      "unit": "N*s",
+      "value": 0.0047586982623475105
+    },
+    {
+      "category": "mechanics",
+      "check_id": "impulse-momentum-z",
+      "detail": "impulse 0.0084 N s, momentum change 0.0035 N s, quadrature bound 0.2165 N s",
+      "label": "Impulse-momentum balance, z",
+      "method": "trapezoid impulse of (GRF + gravity) over the run minus the change of system momentum; tolerance = quadrature bound + 0.05 N s",
+      "status": "pass",
+      "tolerance": 0.26652806832652837,
+      "unit": "N*s",
+      "value": 0.0049387497097969305
+    },
+    {
+      "category": "energy",
+      "check_id": "energy-ledger",
+      "detail": "sampled 183.113 J, step-resolved 184.976 J, gross 828.1 J, quadrature estimate 0.210 J",
+      "label": "Actuator work from the sampled power",
+      "method": "trapezoid integral of canonical actuator power (tau . omega at each 10 ms instant) vs the worker's 1 ms ledger of the work the integrator applied; tolerance = quadrature estimate + 1 % of the gross actuator work",
+      "status": "pass",
+      "tolerance": 8.490553247406197,
+      "unit": "J",
+      "value": 1.8625506770278548
+    },
+    {
+      "category": "integrity",
+      "check_id": "sampled-extrema",
+      "detail": "",
+      "label": "Sampled extremes lie within the step-resolved extremes",
+      "method": "each 10 ms extreme (plantar minimum, loaded count, heel share, friction peak, slip, activation) is no worse than the worker's 1 ms envelope; value is the largest breach",
+      "status": "pass",
+      "tolerance": 1e-09,
+      "unit": "mixed",
+      "value": 0.0
+    }
+  ],
+  "assessment": {
+    "adapter_checks": [
+      {
+        "bound": "< 0.05",
+        "criterion_id": "momentum",
+        "group": "Mechanics",
+        "label": "Impulse–momentum residual",
+        "rationale": "momentum change equals the external impulse at every step",
+        "status": "pass",
+        "unit": "N·s",
+        "value": 0.02933363734501082
+      },
+      {
+        "bound": "1 ± 0.001",
+        "criterion_id": "mean-grf",
+        "group": "Mechanics",
+        "label": "Mean vertical GRF / weight",
+        "rationale": "starting and ending at rest, the mean ground reaction is the weight",
+        "status": "pass",
+        "unit": "",
+        "value": 1.0000016280032407
+      },
+      {
+        "bound": "< 1",
+        "criterion_id": "ledger",
+        "group": "Mechanics",
+        "label": "Work–energy ledger residual",
+        "rationale": "actuator work − damping = ΔE per phase, within 1 % + 1 J",
+        "status": "pass",
+        "unit": "of allowance",
+        "value": 0.10471804754802186
+      },
+      {
+        "bound": "< 3",
+        "criterion_id": "plan-grf",
+        "group": "Mechanics",
+        "label": "Internal-model plan vs measured GRF",
+        "rationale": "the internal model predicts the simulated ground reaction",
+        "status": "pass",
+        "unit": "% weight",
+        "value": 0.9686851242245978
+      },
+      {
+        "bound": "= 10",
+        "criterion_id": "loaded",
+        "group": "Contact",
+        "label": "Loaded plantar contacts (min)",
+        "rationale": "every plantar point bears load (> 5 N) throughout",
+        "status": "pass",
+        "unit": "of 10",
+        "value": 10
+      },
+      {
+        "bound": "> 10",
+        "criterion_id": "point-load",
+        "group": "Contact",
+        "label": "Lightest contact-point load",
+        "rationale": "no plantar point unloads",
+        "status": "pass",
+        "unit": "N",
+        "value": 31.01146556655906
+      },
+      {
+        "bound": "< 1e-6",
+        "criterion_id": "load-sum",
+        "group": "Contact",
+        "label": "Σ point loads − total GRF",
+        "rationale": "the per-point loads account for the whole ground reaction",
+        "status": "pass",
+        "unit": "N",
+        "value": 4.547473508864641e-13
+      },
+      {
+        "bound": "> 20",
+        "criterion_id": "heel",
+        "group": "Contact",
+        "label": "Heel load share, min foot",
+        "rationale": "the heels stay loaded on each foot: no heel rise",
+        "status": "pass",
+        "unit": "%",
+        "value": 38.39721723754875
+      },
+      {
+        "bound": "< 2",
+        "criterion_id": "slip",
+        "group": "Contact",
+        "label": "Foot slip (contact point)",
+        "rationale": "shod feet do not slide during a squat",
+        "status": "pass",
+        "unit": "mm",
+        "value": 0.6432689246983577
+      },
+      {
+        "bound": "< 50",
+        "criterion_id": "friction",
+        "group": "Contact",
+        "label": "Friction use per contact",
+        "rationale": "each contact stays inside its friction cone",
+        "status": "pass",
+        "unit": "%",
+        "value": 31.29025842233058
+      },
+      {
+        "bound": "< 0.5",
+        "criterion_id": "weld",
+        "group": "Coupling & joints",
+        "label": "Bar shelf weld error",
+        "rationale": "the bar stays on the upper-trapezius shelf",
+        "status": "pass",
+        "unit": "mm",
+        "value": 0.07636131664840261
+      },
+      {
+        "bound": "< 0.5",
+        "criterion_id": "grip",
+        "group": "Coupling & joints",
+        "label": "Hand grip error",
+        "rationale": "the hands stay on the bar",
+        "status": "pass",
+        "unit": "mm",
+        "value": 0.05697394989204093
+      },
+      {
+        "bound": "= 0",
+        "criterion_id": "range",
+        "group": "Coupling & joints",
+        "label": "Joint range violation",
+        "rationale": "no joint passes its anatomical stop",
+        "status": "pass",
+        "unit": "°",
+        "value": 0
+      },
+      {
+        "bound": "= 0",
+        "criterion_id": "saturation",
+        "group": "Coupling & joints",
+        "label": "Actuator saturation",
+        "rationale": "no actuator reaches its capacity",
+        "status": "pass",
+        "unit": "% steps",
+        "value": 0
+      },
+      {
+        "bound": "118–122",
+        "criterion_id": "depth",
+        "group": "Human-likeness",
+        "label": "Bottom knee flexion",
+        "rationale": "the measured bottom reaches the configured depth (120 deg is parallel here)",
+        "status": "pass",
+        "unit": "°",
+        "value": 120.08665118161697
+      },
+      {
+        "bound": "< 5",
+        "criterion_id": "spine",
+        "group": "Human-likeness",
+        "label": "Lumbar excursion (neutral spine)",
+        "rationale": "no lumbar flexion at depth",
+        "status": "pass",
+        "unit": "°",
+        "value": 0.3219867600683324
+      },
+      {
+        "bound": "1.0–2.2",
+        "criterion_id": "knee-moment",
+        "group": "Human-likeness",
+        "label": "Peak knee extensor moment",
+        "rationale": "magnitude reported for light-load squats",
+        "status": "pass",
+        "unit": "N·m/kg",
+        "value": 1.577232462701578
+      },
+      {
+        "bound": "> 30",
+        "criterion_id": "cop",
+        "group": "Human-likeness",
+        "label": "CoP margin to loaded polygon",
+        "rationale": "the centre of pressure stays well inside the loaded support polygon",
+        "status": "pass",
+        "unit": "mm",
+        "value": 64.34640488678076
+      },
+      {
+        "bound": "< 10",
+        "criterion_id": "com",
+        "group": "Human-likeness",
+        "label": "CoM offset from the mid-foot",
+        "rationale": "the whole-system centre of mass stays over the mid-foot",
+        "status": "pass",
+        "unit": "mm",
+        "value": 2.9364724025304905
+      },
+      {
+        "bound": "< 0.5",
+        "criterion_id": "timestep",
+        "group": "Numerics",
+        "label": "Knee angle, dt 1 ms vs 0.5 ms",
+        "rationale": "the motion is insensitive to halving the timestep",
+        "status": "not_evaluated",
+        "unit": "°",
+        "value": null
+      },
+      {
+        "bound": "1.7–2.3",
+        "criterion_id": "convergence",
+        "group": "Numerics",
+        "label": "Momentum residual ratio, dt vs dt/2",
+        "rationale": "what remains is first-order integration error",
+        "status": "not_evaluated",
+        "unit": "",
+        "value": null
+      },
+      {
+        "bound": "< 0.02",
+        "criterion_id": "tracking-invariance",
+        "group": "Numerics",
+        "label": "Tracking error change with dt",
+        "rationale": "a synchronized measurement does not depend on the timestep",
+        "status": "not_evaluated",
+        "unit": "°",
+        "value": null
+      }
+    ],
+    "benchmark": {
+      "identifier": "db.squat.back-squat",
+      "semantic_digest": "8b581aa2814283d58e291494f593e0be570b5f2e10d7860b794464d199667201",
+      "version": "1.0.0"
+    },
+    "claim": "A verified and assessed execution of a synthetic model. Verification is internal numerical consistency; assessment is against predeclared criteria of the benchmark release. Neither is validation against measured human motion.",
+    "metrics": [
+      {
+        "aggregation": "maximum",
+        "description": "No actuator saturates (activation below 1).",
+        "label": "Peak actuator activation",
+        "metric_id": "m.squat.activation.maximum",
+        "operator": "less",
+        "quantity_id": "q.squat.activation-peak",
+        "status": "pass",
+        "threshold": 1.0,
+        "unit": "1",
+        "value": 0.4440286703767866
+      },
+      {
+        "aggregation": "maximum",
+        "description": "The bar stays level (within 0.1 degree) on a symmetric squat.",
+        "label": "Barbell tilt, maximum",
+        "metric_id": "m.squat.bar-tilt.maximum",
+        "operator": "less",
+        "quantity_id": "q.squat.bar-tilt",
+        "status": "pass",
+        "threshold": 0.0017453292519943296,
+        "unit": "1",
+        "value": 3.5999398172956636e-06
+      },
+      {
+        "aggregation": "maximum",
+        "description": "The system centre of mass stays over the mid-foot (x = 50 mm) within 10 mm.",
+        "label": "Centre of mass, most anterior",
+        "metric_id": "m.squat.com-anterior.maximum",
+        "operator": "less",
+        "quantity_id": "q.squat.com-anterior",
+        "status": "pass",
+        "threshold": 0.06,
+        "unit": "m",
+        "value": 0.05275036111248521
+      },
+      {
+        "aggregation": "minimum",
+        "description": "The system centre of mass stays over the mid-foot (x = 50 mm) within 10 mm.",
+        "label": "Centre of mass, most posterior",
+        "metric_id": "m.squat.com-anterior.minimum",
+        "operator": "greater",
+        "quantity_id": "q.squat.com-anterior",
+        "status": "pass",
+        "threshold": 0.04,
+        "unit": "m",
+        "value": 0.04706352759746951
+      },
+      {
+        "aggregation": "minimum",
+        "description": "The centre of pressure stays well inside the loaded support polygon.",
+        "label": "Smallest centre-of-pressure margin",
+        "metric_id": "m.squat.cop-margin.minimum",
+        "operator": "greater",
+        "quantity_id": "q.squat.cop-margin",
+        "status": "pass",
+        "threshold": 0.03,
+        "unit": "m",
+        "value": 0.06434640488678076
+      },
+      {
+        "aggregation": "maximum",
+        "description": "Each contact stays well inside its friction cone.",
+        "label": "Peak friction utilization",
+        "metric_id": "m.squat.friction-utilization.maximum",
+        "operator": "less",
+        "quantity_id": "q.squat.friction-utilization-peak",
+        "status": "pass",
+        "threshold": 0.5,
+        "unit": "1",
+        "value": 0.3128207546845335
+      },
+      {
+        "aggregation": "minimum",
+        "description": "The heels stay loaded on each foot: no heel rise.",
+        "label": "Heel load share, lesser foot, minimum",
+        "metric_id": "m.squat.heel-load-share.minimum",
+        "operator": "greater",
+        "quantity_id": "q.squat.heel-load-share-lesser-foot",
+        "status": "pass",
+        "threshold": 0.2,
+        "unit": "1",
+        "value": 0.38398178337065253
+      },
+      {
+        "aggregation": "maximum",
+        "description": "Maximum left knee extensor moment over the run (reported).",
+        "label": "Peak knee extensor moment",
+        "metric_id": "m.squat.knee-extensor-moment.maximum",
+        "operator": null,
+        "quantity_id": "q.squat.knee-extensor-moment-left",
+        "status": "reported",
+        "threshold": null,
+        "unit": "m^2*kg*s^-2",
+        "value": 118.29243470261834
+      },
+      {
+        "aggregation": "maximum",
+        "description": "Maximum left knee flexion over the run (reported; the depth is a configuration).",
+        "label": "Deepest knee flexion",
+        "metric_id": "m.squat.knee-flexion.maximum",
+        "operator": null,
+        "quantity_id": "q.squat.knee-flexion-left",
+        "status": "reported",
+        "threshold": null,
+        "unit": "1",
+        "value": 2.095907450813155
+      },
+      {
+        "aggregation": "minimum",
+        "description": "Every plantar point bears load throughout: the feet stay flat.",
+        "label": "Fewest load-bearing plantar points",
+        "metric_id": "m.squat.loaded-contacts.minimum",
+        "operator": "greater_or_equal",
+        "quantity_id": "q.squat.loaded-contact-count",
+        "status": "pass",
+        "threshold": 10.0,
+        "unit": "1",
+        "value": 10.0
+      },
+      {
+        "aggregation": "maximum",
+        "description": "Neutral spine: no lumbar flexion beyond 5 degrees.",
+        "label": "Lumbar flexion, maximum",
+        "metric_id": "m.squat.lumbar-flexion.maximum",
+        "operator": "less",
+        "quantity_id": "q.squat.lumbar-flexion",
+        "status": "pass",
+        "threshold": 0.08726646259971647,
+        "unit": "1",
+        "value": 0.00529925289637011
+      },
+      {
+        "aggregation": "minimum",
+        "description": "Neutral spine: no lumbar extension beyond 5 degrees.",
+        "label": "Lumbar flexion, minimum",
+        "metric_id": "m.squat.lumbar-flexion.minimum",
+        "operator": "greater",
+        "quantity_id": "q.squat.lumbar-flexion",
+        "status": "pass",
+        "threshold": -0.08726646259971647,
+        "unit": "1",
+        "value": -0.005619729111021402
+      },
+      {
+        "aggregation": "minimum",
+        "description": "No plantar point unloads.",
+        "label": "Lightest plantar point load",
+        "metric_id": "m.squat.plantar-load.minimum",
+        "operator": "greater",
+        "quantity_id": "q.squat.plantar-load-minimum",
+        "status": "pass",
+        "threshold": 10.0,
+        "unit": "m*kg*s^-2",
+        "value": 31.060405009700712
+      },
+      {
+        "aggregation": "maximum",
+        "description": "Shod feet do not slide during a squat.",
+        "label": "Sole point slip",
+        "metric_id": "m.squat.sole-slip.maximum",
+        "operator": "less",
+        "quantity_id": "q.squat.sole-point-slip",
+        "status": "pass",
+        "threshold": 0.002,
+        "unit": "m",
+        "value": 0.0006432658860655834
+      },
+      {
+        "aggregation": "maximum",
+        "description": "Maximum vertical ground reaction over weight (reported).",
+        "label": "Peak vertical ground reaction",
+        "metric_id": "m.squat.vertical-grf-ratio.maximum",
+        "operator": null,
+        "quantity_id": "q.squat.vertical-grf-ratio",
+        "status": "reported",
+        "threshold": null,
+        "unit": "1",
+        "value": 1.3096482036600645
+      },
+      {
+        "aggregation": "mean",
+        "description": "Starting and ending at rest, the mean vertical ground reaction is the weight.",
+        "label": "Mean vertical ground reaction, lower bound",
+        "metric_id": "m.squat.vertical-grf-ratio.mean.lower",
+        "operator": "greater",
+        "quantity_id": "q.squat.vertical-grf-ratio",
+        "status": "pass",
+        "threshold": 0.999,
+        "unit": "1",
+        "value": 1.0000016280032407
+      },
+      {
+        "aggregation": "mean",
+        "description": "Starting and ending at rest, the mean vertical ground reaction is the weight.",
+        "label": "Mean vertical ground reaction, upper bound",
+        "metric_id": "m.squat.vertical-grf-ratio.mean.upper",
+        "operator": "less",
+        "quantity_id": "q.squat.vertical-grf-ratio",
+        "status": "pass",
+        "threshold": 1.001,
+        "unit": "1",
+        "value": 1.0000016280032407
+      }
+    ],
+    "repetition_completed": true,
+    "run_id": "run-49440369db-001",
+    "schema": "dynamisbench.assessment/1"
+  }
+}

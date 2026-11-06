@@ -7,7 +7,7 @@
  * of the address.
  */
 
-import { createRoute } from "@tanstack/react-router";
+import { Link, createRoute } from "@tanstack/react-router";
 
 import { useApiClient } from "../session/provider";
 import { RuntimeStatus } from "../shell/runtime-status";
@@ -39,6 +39,26 @@ function LandingPage() {
       >
         <h2 className="text-sm font-medium text-slate-700">Local API session</h2>
         <RuntimeStatus />
+      </section>
+
+      <section
+        aria-labelledby="laboratory-heading"
+        className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-4"
+      >
+        <h2 id="laboratory-heading" className="text-sm font-medium text-slate-700">
+          Biomechanics laboratory
+        </h2>
+        <p className="text-xs text-slate-500">
+          The MuJoCo barbell back-squat model: its packaged diagnostic recordings (the nominal
+          repetition, its timestep companion and two ablations) and, for an opened workspace that
+          holds the study, runs you configure and execute — preflighted, run in the isolated
+          worker, sealed as evidence and re-verified whenever they are read — with the 3D stage,
+          linked plots, the model atlas, analysis, comparison and evidence. Verification and
+          assessment are not validation against measured human motion.
+        </p>
+        <Link to="/laboratory" className="self-start text-sm font-medium text-accent underline-offset-4 hover:underline">
+          Open the laboratory
+        </Link>
       </section>
 
       <section
