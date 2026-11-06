@@ -197,6 +197,23 @@ jobs:
       # deselection in the full run); it is required on windows-2025.
       - name: Columnar cold-import and sidecar cold-start regression (required on Windows)
         run: uv run pytest -p no:cacheprovider tests/transport/test_columnar.py tests/api/test_sidecar_cold_start.py
+      - name: Measure Arrow decoded-allocation preflight (required on Windows and Linux)
+        shell: bash
+        run: >
+          uv run python tools/arrow_allocation_receipt.py
+          --target ${{ matrix.name }}
+          --tested-sha "${{ github.sha }}"
+          --head-sha "${{ github.event.pull_request.head.sha || github.sha }}"
+          --ref "${{ github.ref }}"
+          --image-os "${ImageOS:-unknown}"
+          --image-version "${ImageVersion:-unknown}"
+          --output "evidence/arrow-allocation-${{ matrix.name }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arrow-allocation-${{ matrix.name }}
+          path: python/evidence/arrow-allocation-${{ matrix.name }}.json
+          if-no-files-found: error
+          retention-days: 90
       # A bounded CI qualification artifact, not native/canonical/assessment evidence. It
       # records the real numerical observation, its independent comparison, the exact
       # authority and dependency closure, and the predeclared tolerances for this platform.
@@ -326,6 +343,22 @@ jobs:
         run: pnpm run typecheck
       - name: Test (Vitest)
         run: pnpm run test
+      - name: Measure browser Arrow preflight resource bounds
+        working-directory: apps/workbench
+        shell: bash
+        run: pnpm exec vitest run src/arrow/arrow-allocation.test.ts --reporter=verbose --silent=false
+        env:
+          DYNAMISBENCH_ARROW_ALLOCATION_REPORT: evidence/arrow-allocation-frontend-${{ matrix.name }}.json
+          DYNAMISBENCH_ARROW_ALLOCATION_TARGET: ${{ matrix.name }}
+          DYNAMISBENCH_ARROW_ALLOCATION_TESTED_SHA: ${{ github.sha }}
+          DYNAMISBENCH_ARROW_ALLOCATION_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          DYNAMISBENCH_ARROW_ALLOCATION_REF: ${{ github.ref }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arrow-allocation-frontend-${{ matrix.name }}
+          path: apps/workbench/evidence/arrow-allocation-frontend-${{ matrix.name }}.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Build (Vite)
         run: pnpm run build
       # Browser-grade qualification of the production route tree against a real secured
