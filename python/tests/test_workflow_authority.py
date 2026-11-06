@@ -305,6 +305,12 @@ EXPECTED_ARTIFACTS: dict[str, tuple[dict[str, object], ...]] = {
     ),
     "python": (
         {
+            "name": "arrow-allocation-${{ matrix.name }}",
+            "path": "python/evidence/arrow-allocation-${{ matrix.name }}.json",
+            "if-no-files-found": "error",
+            "retention-days": 90,
+        },
+        {
             "name": "m1-qualification-${{ matrix.name }}",
             "path": "python/evidence/m1-qualification-${{ matrix.name }}.json",
             "if-no-files-found": "error",
@@ -313,6 +319,14 @@ EXPECTED_ARTIFACTS: dict[str, tuple[dict[str, object], ...]] = {
         {
             "name": "mujoco-qualification-${{ matrix.name }}",
             "path": "python/evidence/mujoco-qualification-${{ matrix.name }}.json",
+            "if-no-files-found": "error",
+            "retention-days": 90,
+        },
+    ),
+    "frontend": (
+        {
+            "name": "arrow-allocation-frontend-${{ matrix.name }}",
+            "path": "apps/workbench/evidence/arrow-allocation-frontend-${{ matrix.name }}.json",
             "if-no-files-found": "error",
             "retention-days": 90,
         },
@@ -327,7 +341,7 @@ EXPECTED_ARTIFACTS: dict[str, tuple[dict[str, object], ...]] = {
     ),
 }
 
-NO_ARTIFACT_JOBS = ("frontend", "desktop")
+NO_ARTIFACT_JOBS = ("desktop",)
 
 
 def test_qualification_artifacts_publish_exactly_their_intended_surface() -> None:
@@ -335,8 +349,8 @@ def test_qualification_artifacts_publish_exactly_their_intended_surface() -> Non
 
     A same-prefix allowance admits any number of artifacts under that prefix, which
     is a publication surface rather than an authority. The identity record, the M1
-    report, the two platform MuJoCo receipts and their comparison are the whole of
-    it; frontend and desktop publish none.
+    report, Arrow allocation receipts, the two platform MuJoCo receipts and their
+    comparison are the whole of it; desktop publishes no qualification artifact.
     """
     gates = _gates()
     unexpected = set(gates) - set(EXPECTED_ARTIFACTS) - set(NO_ARTIFACT_JOBS)
