@@ -117,14 +117,21 @@ Neither module is in ``__all__``: the API advertises its application surface, an
 route's read models are reached by the routes that publish them.
 """
 
-EXPECTED_MODULES = tuple(
-    sorted((*BOUNDARY_MODULES, *SESSION_MODULES, *READER_MODULES, "events.py"))
-)
-"""The union of the three groups plus DB-2.6's event transport, in filesystem order.
+LABORATORY_MODULE = "laboratory.py"
+"""The separately bounded, read-only publisher for the packaged diagnostic dataset.
 
-``events.py`` is a fourth, one-module group rather than part of the reader modules: it owns
-the application-instance broadcaster and the one streaming route, imports no workspace or
-domain layer, and adds exactly one reviewed public route to the boundary.
+It imports only the API's own response/error types and the static ``laboratory`` reader. It
+does not open a workspace, run a simulation, or read arbitrary paths. Dense frame responses
+use the already declared Arrow transport.
+"""
+
+EXPECTED_MODULES = tuple(
+    sorted((*BOUNDARY_MODULES, *SESSION_MODULES, *READER_MODULES, "events.py", LABORATORY_MODULE))
+)
+"""The union of the three groups plus event transport and the static lab publisher.
+
+``events.py`` owns the application-instance broadcaster. ``laboratory.py`` is the pinned,
+read-only diagnostic dataset publisher. Both are explicit reviewed additions to the boundary.
 """
 
 FORBIDDEN_ENGINE_MODULES = frozenset(
@@ -327,6 +334,7 @@ def test_no_digest_reaches_an_api_module_directly(filename: str) -> None:
         ("session.py", ALLOWED_EXTERNAL_SURFACE),
         ("server.py", SESSION_EXTERNAL_SURFACE),
         ("events.py", ALLOWED_EXTERNAL_SURFACE),
+        (LABORATORY_MODULE, ALLOWED_EXTERNAL_SURFACE),
     ],
 )
 def test_the_api_package_has_a_closed_external_surface(
@@ -446,11 +454,10 @@ def test_an_exported_read_model_is_not_a_scientific_domain_model() -> None:
 def test_the_module_set_is_the_whole_package() -> None:
     """Named so that adding a tenth is a reviewed change rather than a silent one.
 
-    Stated as three named groups because the modules are not equivalent: five describe the
+    Stated as named groups because the modules are not equivalent: five describe the
     application and are reachable from ``import dynamisbench.api``; three belong to the
-    desktop session and are reachable only by importing them; and two read the workspace and
-    are reachable only through ``create_app``. The groups are asserted disjoint, so a module
-    cannot migrate into one of them by being renamed.
+    desktop session; two read workspace authority; one publishes the pinned read-only
+    diagnostic Laboratory; and one owns event transport. The groups are asserted disjoint.
     """
     assert API_MODULES == EXPECTED_MODULES
     assert set(BOUNDARY_MODULES) & set(SESSION_MODULES) == set()
@@ -459,7 +466,10 @@ def test_the_module_set_is_the_whole_package() -> None:
     assert "events.py" not in set(BOUNDARY_MODULES)
     assert "events.py" not in set(SESSION_MODULES)
     assert "events.py" not in set(READER_MODULES)
-    assert len(BOUNDARY_MODULES) + len(SESSION_MODULES) + len(READER_MODULES) + 1 == len(
+    assert LABORATORY_MODULE not in set(BOUNDARY_MODULES)
+    assert LABORATORY_MODULE not in set(SESSION_MODULES)
+    assert LABORATORY_MODULE not in set(READER_MODULES)
+    assert len(BOUNDARY_MODULES) + len(SESSION_MODULES) + len(READER_MODULES) + 2 == len(
         EXPECTED_MODULES
     )
 
@@ -469,17 +479,22 @@ def _openapi() -> dict[str, Any]:
 
 
 def test_the_openapi_document_publishes_exactly_the_versioned_routes() -> None:
-    """Six routes under one namespace, and no verb that publishes itself for free.
+    """Versioned source/workspace and read-only Laboratory routes; no new run commands.
 
     Stated as a closed set, so an unversioned route or a second namespace fails here instead
-    of quietly becoming a public interface. The workspace routes read; the one non-GET verb is
-    the root-selection operation and nothing else. DB-2.6 adds exactly one GET stream.
+    of quietly becoming a public interface. The only non-GET verb is root selection. M1 adds
+    GET-only packaged diagnostic routes; there are no workspace run or write routes.
     """
     paths = _openapi()["paths"]
     assert sorted(paths) == [
         f"{API_V1_PREFIX}/events",
         f"{API_V1_PREFIX}/health",
         f"{API_V1_PREFIX}/info",
+        f"{API_V1_PREFIX}/laboratory",
+        f"{API_V1_PREFIX}/laboratory/figure",
+        f"{API_V1_PREFIX}/laboratory/model",
+        f"{API_V1_PREFIX}/laboratory/recordings/{{recording_id}}",
+        f"{API_V1_PREFIX}/laboratory/recordings/{{recording_id}}/frames/{{group}}",
         f"{API_V1_PREFIX}/workspaces/open",
         f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/artifacts",
         f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/artifacts/{{artifact_id}}",
@@ -509,6 +524,25 @@ def test_the_openapi_document_types_every_success_response() -> None:
     assert response_of(f"{API_V1_PREFIX}/info", "get")["content"]["application/json"]["schema"][
         "$ref"
     ].endswith("/ApplicationInfoResponse")
+    assert response_of(f"{API_V1_PREFIX}/laboratory", "get")["content"]["application/json"][
+        "schema"
+    ]["$ref"].endswith("/LaboratoryIndexResponse")
+    assert response_of(f"{API_V1_PREFIX}/laboratory/model", "get")["content"]["application/json"][
+        "schema"
+    ]["$ref"].endswith("/LaboratoryModelResponse")
+    assert response_of(f"{API_V1_PREFIX}/laboratory/recordings/{{recording_id}}", "get")["content"][
+        "application/json"
+    ]["schema"]["$ref"].endswith("/LaboratoryRecordingResponse")
+    assert (
+        "application/vnd.apache.arrow.stream"
+        in response_of(
+            f"{API_V1_PREFIX}/laboratory/recordings/{{recording_id}}/frames/{{group}}", "get"
+        )["content"]
+    )
+    assert (
+        "application/vnd.dynamisbench.figure"
+        in response_of(f"{API_V1_PREFIX}/laboratory/figure", "get")["content"]
+    )
     assert response_of(f"{API_V1_PREFIX}/workspaces/open", "post")["content"]["application/json"][
         "schema"
     ]["$ref"].endswith("/OpenWorkspaceResponse")
@@ -525,6 +559,9 @@ def test_the_openapi_document_types_every_success_response() -> None:
         "OpenWorkspaceResponse",
         "WorkspaceDiscoveryResponse",
         "ArtifactInspectionResponse",
+        "LaboratoryIndexResponse",
+        "LaboratoryModelResponse",
+        "LaboratoryRecordingResponse",
         "ErrorResponse",
     } <= set(schemas)
 
