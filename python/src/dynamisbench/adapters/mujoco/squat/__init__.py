@@ -28,3 +28,7 @@ through the ``RunSpec -> preflight -> supervisor -> worker`` path by :mod:`.work
 """
 
 from __future__ import annotations
+
+from . import anthropometry, criteria
+
+__all__ = ["anthropometry", "criteria"]

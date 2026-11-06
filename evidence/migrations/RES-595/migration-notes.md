@@ -11,7 +11,7 @@ The source was reconstructed from Turn 4 plus the Turn 5 changed-files overlay:
 - The recovery report identifies its result as `RECOVERED_SOURCE_CANDIDATE; EXACT_ORIGINAL_WORKSPACE_NOT_PROVABLE`: 594 source files and 278 scientific output files were recovered; 43 screenshots are unavailable; unknown ignored files or unreported deletions cannot be ruled out.
 - The map covers all 35 M2-adjacent Turn 4/Turn 5 squat package, test, tool, pipeline, and MuJoCo worker type-stub paths found in the original archives. It validates each effective Turn 5 byte sequence against the recovered candidate. Each transfer is mapped to its official path and SHA-256 in [source-map.csv](source-map.csv).
 
-Commit `2fce40eac7705c775b8fa2a4c7ff311393f518bd` transfers the 24 original model, tests, and tools. A follow-on commit transfers the original MuJoCo worker type stub. In the final map, 24 of the 25 transferred paths are byte-identical to the effective Turn 5 source; the README carries one compatibility note identifying the source RunSpec/native pipeline as not yet integrated. Ten paths are held with reasons in the source map: the worker/native/identity seam, the Laboratory dataset and visualization tools, and the M3 squat pipeline, its two tests, and qualification tool.
+Commit `2fce40eac7705c775b8fa2a4c7ff311393f518bd` transfers the 24 original model, tests, and tools. A follow-on commit transfers the original MuJoCo worker type stub. In the final map, 23 of the 25 transferred paths are byte-identical to the effective Turn 5 source; the README and package initializer carry two small compatibility adaptations. Ten paths are held with reasons in the source map: the worker/native/identity seam, the Laboratory dataset and visualization tools, and the M3 squat pipeline, its two tests, and qualification tool.
 
 The Turn 4 and Turn 5 archive hashes match the values in RES-591. This validates the targeted squat files against those inputs; it does not elevate the recovery candidate to a complete image of the original VM.
 
@@ -24,7 +24,9 @@ The transferred source preserves the authored 75 kg, 1.75 m synthetic athlete, 2
 - `mujoco_squat_model.py --check`: passed, no problems.
 - `mujoco_squat_authority.py --check`: passed; benchmark, scenario, realization, SUT, and both platform environment pins matched; no stale pins.
 - Worker Pyright initially exposed missing MuJoCo stub declarations. The exact Turn 5 worker stub was transferred; the worker Pyright configuration then passed with 0 errors, 0 warnings, and 0 informational diagnostics.
-- Focused existing tests: **65 passed in 75.69 s**, covering model authority, squat dynamics, the full repetition, timestep comparison, repeated-process determinism, and negative controls. Negative controls confirmed soft sole friction permits slip, removing the dynamic internal model degrades/rejects the repetition, half-stiffness fails to recover the applied push, and zero excitation collapses the athlete.
+- Focused existing squat tests: **65 passed in 75.69 s**, covering model authority, squat dynamics, the full repetition, timestep comparison, repeated-process determinism, and negative controls. After the compatibility adaptations, the focused squat, M1 Laboratory, and simulator-isolation tests passed **91/91**.
+- Ruff: passed. Application Pyright: 0 errors, 0 warnings, 0 informational diagnostics. Worker Pyright: 0 errors, 0 warnings, 0 informational diagnostics.
+- Final full Python suite on the corrected tree: **2710 passed, 7 skipped in 318.03 s**. An earlier run exposed four missing package exports and the pendulum-only simulator-import guard; the two compatibility adaptations above fixed them. The seven skips follow existing host/optional conditions, including unavailable filesystem primitives and an M3 coordinator not present in this slice. Negative controls confirmed soft sole friction permits slip, removing the dynamic internal model degrades/rejects the repetition, half-stiffness fails to recover the applied push, and zero excitation collapses the athlete.
 - The checks establish software and numerical behavior of the synthetic model only. They do not establish empirical biomechanical validity or human-subject agreement.
 
 ## Windows/Linux trajectory investigation
@@ -58,6 +60,10 @@ Accordingly, this PR does not port `worker.py`, `identity.py`, `native.py`, the 
 
 The scope also excludes unrelated Laboratory UI work and the broader pipeline/normalization/assessment code. The fixed RunSpec case declarations are retained from the VM source, but this PR does not activate API routes, normalization, assessment, or M3.
 
-## Compatibility deviation
+## Compatibility deviations
 
-The only source-file deviation is the status note in the squat README. The original README described the VM's RunSpec worker and native pipeline as if they were active in the official repo. The note now labels those sections as recovered-source context and records the RES-555 hold. The exact original effective hash and official README hash are both in [source-map.csv](source-map.csv).
+- squat/README.md: the VM source described its RunSpec worker/native pipeline as active in DynamisBench. A note now labels those sections as recovered-source context and records the RES-555 hold.
+- squat/__init__.py: the original module had no package exports. It now re-exports the pure-Python anthropometry and criteria modules required by the existing M1 Laboratory read model. They do not import MuJoCo or NumPy.
+- python/tests/test_simulator_isolation.py: the prior guard admitted only mujoco/physics.py. It now admits exactly that module and the fixed squat mujoco/squat/engine.py; the guard still rejects simulator imports from every other package module.
+
+The source map records the exact VM and official hashes for both adapted VM files. No model, controller, solver, expected hash, numerical threshold, RunSpec schema, worker protocol, or evidence schema was changed by these adaptations.

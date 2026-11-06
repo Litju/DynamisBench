@@ -175,14 +175,17 @@ def test_source_files_outside_the_adapter_contain_no_simulator_import_statements
     assert not offenders
 
 
-def test_only_the_mujoco_adapter_physics_module_imports_the_engine() -> None:
-    """The engine import is a single reviewed file, not a family of convenient escapes."""
+def test_only_the_mujoco_adapter_physics_modules_import_the_engine() -> None:
+    """Only fixed, reviewed physical-model modules may import the engine."""
     importers = {
         path.relative_to(ADAPTER_PACKAGE).as_posix(): _simulator_imports(path)
         for path in sorted(ADAPTER_PACKAGE.rglob("*.py"))
         if _simulator_imports(path)
     }
-    assert importers == {"physics.py": {"mujoco"}}
+    assert importers == {
+        "physics.py": {"mujoco"},
+        "squat/engine.py": {"mujoco"},
+    }
 
 
 def test_declared_dependencies_exclude_simulators_and_control_plane_services() -> None:
