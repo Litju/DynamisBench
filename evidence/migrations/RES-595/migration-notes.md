@@ -9,9 +9,9 @@ The source was reconstructed from Turn 4 plus the Turn 5 changed-files overlay:
 - Turn 4 archive SHA-256: `b25c64b6396ce39b9801e202d15fb36a23c06bf89affe027d541af8ec63a0a9b`
 - Turn 5 delta ZIP SHA-256: `7f1f8a5433cc2249ca0dd2567c15ac8a519c6965b8e7d0d9035e33bd9529455d`
 - The recovery report identifies its result as `RECOVERED_SOURCE_CANDIDATE; EXACT_ORIGINAL_WORKSPACE_NOT_PROVABLE`: 594 source files and 278 scientific output files were recovered; 43 screenshots are unavailable; unknown ignored files or unreported deletions cannot be ruled out.
-- The map covers all 34 M2-adjacent Turn 4/Turn 5 squat package, test, tool, and pipeline paths found in the original archives. It validates each effective Turn 5 byte sequence against the recovered candidate. Each transfer is mapped to its official path and SHA-256 in [source-map.csv](source-map.csv).
+- The map covers all 35 M2-adjacent Turn 4/Turn 5 squat package, test, tool, pipeline, and MuJoCo worker type-stub paths found in the original archives. It validates each effective Turn 5 byte sequence against the recovered candidate. Each transfer is mapped to its official path and SHA-256 in [source-map.csv](source-map.csv).
 
-Commit `2fce40eac7705c775b8fa2a4c7ff311393f518bd` transfers 24 of those paths. Twenty-three are byte-identical to the effective Turn 5 source. The README carries one compatibility note identifying the source RunSpec/native pipeline as not yet integrated. Ten paths are held with reasons in the source map: the worker/native/identity seam, the Laboratory dataset and visualization tools, and the M3 squat pipeline, its two tests, and qualification tool.
+Commit `2fce40eac7705c775b8fa2a4c7ff311393f518bd` transfers the 24 original model, tests, and tools. A follow-on commit transfers the original MuJoCo worker type stub. In the final map, 24 of the 25 transferred paths are byte-identical to the effective Turn 5 source; the README carries one compatibility note identifying the source RunSpec/native pipeline as not yet integrated. Ten paths are held with reasons in the source map: the worker/native/identity seam, the Laboratory dataset and visualization tools, and the M3 squat pipeline, its two tests, and qualification tool.
 
 The Turn 4 and Turn 5 archive hashes match the values in RES-591. This validates the targeted squat files against those inputs; it does not elevate the recovery candidate to a complete image of the original VM.
 
@@ -23,6 +23,7 @@ The transferred source preserves the authored 75 kg, 1.75 m synthetic athlete, 2
 - Model settings: MuJoCo `3.17.0`; `implicitfast`; Newton solver; 100 iterations; tolerance `1e-10`; 10 no-slip iterations; nominal step `0.001 s`; float64.
 - `mujoco_squat_model.py --check`: passed, no problems.
 - `mujoco_squat_authority.py --check`: passed; benchmark, scenario, realization, SUT, and both platform environment pins matched; no stale pins.
+- Worker Pyright initially exposed missing MuJoCo stub declarations. The exact Turn 5 worker stub was transferred; the worker Pyright configuration then passed with 0 errors, 0 warnings, and 0 informational diagnostics.
 - Focused existing tests: **65 passed in 75.69 s**, covering model authority, squat dynamics, the full repetition, timestep comparison, repeated-process determinism, and negative controls. Negative controls confirmed soft sole friction permits slip, removing the dynamic internal model degrades/rejects the repetition, half-stiffness fails to recover the applied push, and zero excitation collapses the athlete.
 - The checks establish software and numerical behavior of the synthetic model only. They do not establish empirical biomechanical validity or human-subject agreement.
 
