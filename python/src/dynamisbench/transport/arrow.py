@@ -16,9 +16,10 @@ and this module's own qualification both assert that ``pyarrow`` is absent from
 message/metadata sizes, the supported flat-scalar schema, rows, columns, logical values,
 buffers and declared decompressed sizes before PyArrow opens the stream. The matching browser
 decoder uses the same resource profile. The frozen cross-language scalar fixture remains
-unchanged; compressed streams are budget-checked and then refused until a bounded codec is
-qualified, and nested/dictionary/view schemas fail closed until their decoded shape has an
-explicit budget.
+unchanged. Compressed buffers are accepted only after their declared decoded sizes fit the
+aggregate cap; PyArrow's available codec runs only after that preflight. The browser package
+has no codec and keeps its existing closed refusal. Nested/dictionary/view schemas fail
+closed until their decoded shape has an explicit budget.
 """
 
 from __future__ import annotations
@@ -182,8 +183,9 @@ def read_ipc_stream(payload: bytes) -> ArrowTable:
 
     :raises ArrowTransportError: with a closed reason for empty, oversized, malformed or
         unsupported input. The underlying Arrow exception is discarded. The checked profile
-        preserves the cross-language fixture's flat scalar types; compressed, nested,
-        dictionary and view schemas require separately qualified budgets.
+        preserves the cross-language fixture's flat scalar types and admits compressed
+        buffers only when their declared output fits the decoded-byte cap. Nested, dictionary
+        and view schemas require separately qualified budgets.
     """
     if not payload:
         raise ArrowTransportError(ArrowFailure.EMPTY)

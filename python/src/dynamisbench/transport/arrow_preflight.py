@@ -462,11 +462,6 @@ def _inspect_batch(
         decoded_bytes += decoded_size
         if decoded_bytes > MAX_ARROW_DECODED_BYTES:
             raise ArrowPreflightError("too_large_decoded")
-    if compression is not None:
-        # The current contract has no bounded codec implementation. Reject compression after
-        # inspecting every declared expansion size, before PyArrow can invoke a decompressor.
-        raise ArrowPreflightError("unsupported_compression")
-
     cursor = 0
     for field, null_count in zip(fields, node_null_counts, strict=True):
         if field.type_code == 1:  # Null arrays have no buffers and no non-null values.

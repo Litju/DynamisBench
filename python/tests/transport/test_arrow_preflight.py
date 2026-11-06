@@ -20,6 +20,7 @@ from tools.arrow_adversarial_fixtures import (
 from dynamisbench.transport import arrow as arrow_module
 from dynamisbench.transport import arrow_preflight
 from dynamisbench.transport.arrow import (
+    MAX_ARROW_DECODED_BYTES,
     MAX_ARROW_IPC_BYTES,
     MAX_ARROW_MESSAGE_METADATA_BYTES,
     MAX_ARROW_ROWS,
@@ -87,6 +88,35 @@ def test_compressed_buffer_over_8mib_is_refused_before_pyarrow(
     assert raised.value.reason is ArrowFailure.TOO_LARGE_DECODED
 
 
+def test_bounded_compressed_stream_remains_readable_after_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _fixture("small-compressed.arrow.b64")
+    preflights = []
+    original_preflight = arrow_module.preflight_ipc_stream
+    original_pyarrow = arrow_module._pyarrow
+
+    def record_preflight(data: bytes):
+        report = original_preflight(data)
+        preflights.append(report)
+        return report
+
+    def require_bounded_preflight():
+        assert len(preflights) == 1
+        assert preflights[0].decoded_buffer_bytes <= MAX_ARROW_DECODED_BYTES
+        return original_pyarrow()
+
+    monkeypatch.setattr(arrow_module, "preflight_ipc_stream", record_preflight)
+    monkeypatch.setattr(arrow_module, "_pyarrow", require_bounded_preflight)
+
+    table = read_ipc_stream(payload)
+
+    assert table.num_rows == 8
+    assert table.fields[0].name == "payload"
+    assert table.rows == tuple({"payload": "small"} for _ in range(8))
+    assert len(preflights) == 1
+
+
 @pytest.mark.parametrize(
     ("fixture_name", "reason"),
     [
@@ -94,7 +124,6 @@ def test_compressed_buffer_over_8mib_is_refused_before_pyarrow(
         ("columns-over-limit.arrow.b64", ArrowFailure.TOO_MANY_COLUMNS),
         ("nested-list.arrow.b64", ArrowFailure.UNSUPPORTED_SCHEMA),
         ("dictionary.arrow.b64", ArrowFailure.UNSUPPORTED_SCHEMA),
-        ("small-compressed.arrow.b64", ArrowFailure.UNSUPPORTED_COMPRESSION),
         ("malformed-string-offsets.arrow.b64", ArrowFailure.MALFORMED),
     ],
     ids=[
@@ -102,7 +131,6 @@ def test_compressed_buffer_over_8mib_is_refused_before_pyarrow(
         "columns",
         "nested",
         "dictionary",
-        "bounded-compression-profile",
         "string-offset-out-of-bounds",
     ],
 )

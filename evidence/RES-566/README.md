@@ -10,18 +10,19 @@ PR adds no route, new dependency, or scientific-data claim.
 
 The existing 1 MiB serialized-input cap, 100,000-row cap, lazy PyArrow import, frozen
 cross-language 832-byte qualification stream, and its schema/value contract remain intact.
-The original fixture is unchanged. Existing flat-scalar uncompressed streams continue to
-decode under the same public `ArrowTable` / `DecodedArrowTable` shape.
+The original fixture is unchanged. Existing flat-scalar streams continue to decode under the
+same public `ArrowTable` / `DecodedArrowTable` shape. Python continues to accept compressed
+streams when their declared decoded buffers fit the cap and PyArrow provides that codec.
 
 The preflight adds caps of 256 columns, 512 field nodes, 250,000 logical values, 8 MiB total
 decoded buffers, 256 KiB per IPC message metadata, 512 KiB total metadata, 128 messages, 64
 record batches, 16 field levels, 4,096 buffers, and bounded metadata counts/string sizes.
 Nested, dictionary, view, extension, and other unprofiled schema layouts fail closed.
-Compressed streams are parsed far enough to reject a declared expansion above 8 MiB, then
-fail closed pending a bounded codec qualification. The existing frontend reader has no
-compression codec installed (the small-compressed control fixture previously fails there
-with “codec not found”), so this preserves the cross-language accepted stream profile while
-moving refusal ahead of table materialization.
+Compressed streams are parsed far enough to reject a declared expansion above 8 MiB before
+PyArrow runs. Bounded LZ4-frame/Zstandard buffers retain Python's existing read behavior.
+The browser decoder still refuses compressed input before `tableFromIPC` because the
+existing frontend package has no compression codec; the previous frontend reader failed on
+the same small-compressed control fixture with “codec not found.”
 
 ## Adversarial controls
 
@@ -29,9 +30,11 @@ The fixtures include a 15,528-byte stream declaring 100,000 rows × 256 Null col
 (25.6 million logical values, no body buffers), and a 1,208-byte compressed stream declaring
 an 8.64 MB decoded string buffer. Other controls exceed the row and column limits, use nested
 and dictionary schemas, contain malformed string offsets, and carry a bounded compressed
-payload that remains unsupported. Python and Vitest tests assert rejection before their
-respective official table materializers are called. The Python receipt also asserts that
-PyArrow remains unloaded on both principal expansion cases.
+payload. Python tests assert rejection of the expansion before PyArrow and also verify that a
+within-budget compressed stream is preflighted before PyArrow and remains readable. Vitest
+asserts refusal before `tableFromIPC`, including compressed input because the browser codec
+is unavailable. The Python receipt also asserts that PyArrow remains unloaded on both
+principal expansion cases.
 
 `arrow-allocation-windows-local.json` and
 `arrow-allocation-frontend-windows-local.json` record local Windows measurements for the

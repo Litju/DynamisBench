@@ -67,7 +67,7 @@ def dictionary_stream() -> bytes:
 
 
 def small_compressed_stream() -> bytes:
-    """A bounded compressed stream that is still refused pending a decompressor budget."""
+    """A bounded compressed scalar stream used to preserve Python's read contract."""
     schema = pa.schema([pa.field("payload", pa.string())])
     table = pa.Table.from_arrays([pa.array(["small"] * 8)], schema=schema)
     sink = pa.BufferOutputStream()
