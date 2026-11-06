@@ -1,8 +1,8 @@
 {
   "authority": "RES-566",
   "target": "windows-x64",
-  "tested_sha": "ca79008bedd58454fb7f2ac5a2ffabfc40ba2990",
-  "head_sha": "ca79008bedd58454fb7f2ac5a2ffabfc40ba2990",
+  "tested_sha": "c3de3f3fbb785a4c963ffaf22d2205dfcdf596f3",
+  "head_sha": "c3de3f3fbb785a4c963ffaf22d2205dfcdf596f3",
   "ref": "refs/heads/fix/res-566-arrow-preflight",
   "image_os": "local-windows",
   "image_version": "local",
@@ -19,11 +19,11 @@
       "expected_refusal": "too_many_values",
       "outcome": "too_many_values",
       "iterations": 64,
-      "elapsed_ms": 18.618,
-      "cpu_us": 32000,
-      "cpu_ms": 32,
-      "heap_delta_bytes": 9900544,
-      "rss_delta_bytes": 249856
+      "elapsed_ms": 22.914,
+      "cpu_us": 48000,
+      "cpu_ms": 48,
+      "heap_delta_bytes": 9901176,
+      "rss_delta_bytes": 1232896
     },
     {
       "fixture": "compressed-buffer-expansion",
@@ -34,11 +34,11 @@
       "expected_refusal": "too_large_decoded",
       "outcome": "too_large_decoded",
       "iterations": 64,
-      "elapsed_ms": 2.134,
+      "elapsed_ms": 2.176,
       "cpu_us": 0,
       "cpu_ms": 0,
       "heap_delta_bytes": 442824,
-      "rss_delta_bytes": 49152
+      "rss_delta_bytes": -884736
     },
     {
       "fixture": "rows-over-limit",
@@ -49,11 +49,11 @@
       "expected_refusal": "too_many_rows",
       "outcome": "too_many_rows",
       "iterations": 64,
-      "elapsed_ms": 1.462,
+      "elapsed_ms": 1.45,
       "cpu_us": 0,
       "cpu_ms": 0,
-      "heap_delta_bytes": 333232,
-      "rss_delta_bytes": 86016
+      "heap_delta_bytes": 333256,
+      "rss_delta_bytes": 65536
     },
     {
       "fixture": "columns-over-limit",
@@ -64,9 +64,9 @@
       "expected_refusal": "too_many_columns",
       "outcome": "too_many_columns",
       "iterations": 64,
-      "elapsed_ms": 1.37,
-      "cpu_us": 0,
-      "cpu_ms": 0,
+      "elapsed_ms": 1.402,
+      "cpu_us": 15000,
+      "cpu_ms": 15,
       "heap_delta_bytes": 212352,
       "rss_delta_bytes": 0
     },
@@ -79,11 +79,11 @@
       "expected_refusal": "unsupported_schema",
       "outcome": "unsupported_schema",
       "iterations": 64,
-      "elapsed_ms": 1.637,
+      "elapsed_ms": 1.726,
       "cpu_us": 0,
       "cpu_ms": 0,
-      "heap_delta_bytes": 253584,
-      "rss_delta_bytes": 348160
+      "heap_delta_bytes": 631024,
+      "rss_delta_bytes": 417792
     },
     {
       "fixture": "dictionary",
@@ -94,11 +94,11 @@
       "expected_refusal": "unsupported_schema",
       "outcome": "unsupported_schema",
       "iterations": 64,
-      "elapsed_ms": 1.374,
+      "elapsed_ms": 1.429,
       "cpu_us": 0,
       "cpu_ms": 0,
-      "heap_delta_bytes": -576344,
-      "rss_delta_bytes": 45056
+      "heap_delta_bytes": 243960,
+      "rss_delta_bytes": -299008
     },
     {
       "fixture": "small-compressed",
@@ -109,11 +109,11 @@
       "expected_refusal": "unsupported_compression",
       "outcome": "unsupported_compression",
       "iterations": 64,
-      "elapsed_ms": 1.842,
+      "elapsed_ms": 1.904,
       "cpu_us": 0,
       "cpu_ms": 0,
-      "heap_delta_bytes": 444808,
-      "rss_delta_bytes": 4096
+      "heap_delta_bytes": 444768,
+      "rss_delta_bytes": 98304
     },
     {
       "fixture": "malformed-string-offsets",
@@ -124,11 +124,11 @@
       "expected_refusal": "malformed",
       "outcome": "malformed",
       "iterations": 64,
-      "elapsed_ms": 2.059,
+      "elapsed_ms": 2.224,
       "cpu_us": 0,
       "cpu_ms": 0,
-      "heap_delta_bytes": 825832,
-      "rss_delta_bytes": 4096
+      "heap_delta_bytes": 625256,
+      "rss_delta_bytes": 106496
     }
   ]
 }
