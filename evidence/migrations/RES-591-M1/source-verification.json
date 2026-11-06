@@ -1,0 +1,19 @@
+{
+  "protected_main_base": "a24152305b60b7a7a6605666b95ba56149a4bc62",
+  "archive_sha256": {
+    "turn4": "b25c64b6396ce39b9801e202d15fb36a23c06bf89affe027d541af8ec63a0a9b",
+    "turn5": "7f1f8a5433cc2249ca0dd2567c15ac8a519c6965b8e7d0d9035e33bd9529455d",
+    "candidate_zip": "8cbe5565537a9063e4c67f5f44b8388e9f4f0c3c1174ac3502f7fa6d7eccbfc8",
+    "source_manifest": "99a20394332f8c5301981b27806dac6c3b19a2dce49c90ef079ed67260d96ccd"
+  },
+  "candidate_manifest_rows": 600,
+  "candidate_files_independently_rehashed": 600,
+  "candidate_file_sha_mismatches": 0,
+  "integration_changed_paths": 135,
+  "vm_candidate_exact_file_transfers": 113,
+  "vm_candidate_compatibility_modified_files": 20,
+  "m1_additions_without_candidate_source": 2,
+  "source_manifest_sha256": "99a20394332f8c5301981b27806dac6c3b19a2dce49c90ef079ed67260d96ccd",
+  "source_map_path": "source-map.csv",
+  "compatibility_diffs_path": "compatibility-diffs.patch"
+}

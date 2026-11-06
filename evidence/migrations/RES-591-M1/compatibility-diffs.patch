@@ -1,0 +1,686 @@
+
+--- VM/README.md
++++ M1/README.md
+@@ -90 +90 @@
+-# Tauri desktop shell (thin shell that supervises the Python API sidecar; the UI is the workbench)
++# Tauri desktop shell (thin shell only; no sidecar, no product UI yet)
+@@ -97,62 +96,0 @@
+-
+-### Desktop launch and the columnar cold start
+-
+-The shell launches the sidecar as the repository's locked interpreter directly
+-(`python/.venv/{Scripts/python.exe | bin/python} -m dynamisbench api serve`, never through
+-`uv`, so the supervised child is the server itself). The sidecar imports its columnar stack
+-(NumPy, then PyArrow, `pyarrow.ipc`, `pyarrow.parquet`) **once, on the main thread, before it
+-binds or reports readiness** (`dynamisbench.transport.columnar.preload_columnar_stack`). No
+-request thread ever imports NumPy or PyArrow: every lazy site goes through the one
+-lock-guarded `columnar_stack()`, and a failed import is recorded once and reported to every
+-caller rather than retried. This is the permanent fix for the concurrent cold-import failure
+-seen on Windows, where two request threads importing PyArrow/NumPy for the first time at the
+-same moment could fail or deadlock inside the extension-module loaders. A sidecar whose stack
+-cannot be imported exits with `STARTUP_FAILED` before binding, and the shell reports a bounded
+-startup failure instead of a half-working session. The supervisor's startup deadline is 45 s
+-to cover a cold Windows DLL load and on-access antivirus scanning of the preload.
+-
+-When the desktop closes, the supervisor asks the sidecar to stop and waits for both its exit
+-and the end of its stdout. A clean exit observed a poll before the stdout reader's end-of-file
+-is an ordinary race and still a graceful stop (it used to be reported as a forced termination);
+-a line written on the way out is still refused as a protocol violation.
+-
+-The regression is `tests/transport/test_columnar.py` (fresh interpreters × 32 barrier-released
+-threads, single-attempt failure semantics, an AST scan that no other application module
+-imports the stack) and `tests/api/test_sidecar_cold_start.py` (preload ordered before bind,
+-preload failure → `STARTUP_FAILED`, repeated cold starts under concurrent laboratory and
+-sealed-run frame/recording/model/evidence requests). CI runs both as a named, required step of
+-the `python` job on `windows-2025` and `ubuntu-24.04`
+-(`tests/test_workflow_authority.py` enforces that the step exists).
+-
+-`apps/desktop/qualification/desktop_workflow.py` drives the **built desktop application**
+-through `tauri-driver` (W3C WebDriver; WebKitWebDriver on Linux, msedgedriver on Windows) over
+-the full scientific workflow — sidecar readiness, opening a squat workspace, preflight,
+-execution, cancellation, anatomical playback on one clock, analysis and comparison, evidence
+-verification, tamper rejection, and shutdown without orphaned sidecar or worker processes:
+-
+-```sh
+-# through tauri-driver (the supported route on Windows and Linux)
+-tauri-driver --port 4444 &
+-python3 apps/desktop/qualification/desktop_workflow.py \
+-  --application apps/desktop/src-tauri/target/debug/dynamisbench-desktop \
+-  --driver http://127.0.0.1:4444 --output <report-dir>
+-
+-# Linux, directly against WebKitWebDriver with the capabilities tauri-driver would send
+-TAURI_WEBVIEW_AUTOMATION=true WebKitWebDriver --port=4446 &
+-python3 apps/desktop/qualification/desktop_workflow.py \
+-  --application apps/desktop/src-tauri/target/debug/dynamisbench-desktop \
+-  --driver http://127.0.0.1:4446 --native webkitgtk --output <report-dir>
+-```
+-
+-`apps/desktop/qualification/desktop_cold_start.py` (same options plus `--starts N`) launches
+-the application repeatedly and opens the Laboratory the moment each fresh sidecar is ready, so
+-the catalogue, model, figure and three Arrow frame streams are requested concurrently from a
+-sidecar that has just started — the Windows failure's request pattern. See
+-`apps/desktop/qualification/README.md`.
+-
+-A development build loads the workbench from the Vite dev server (`pnpm --filter
+-@dynamisbench/workbench run dev`, port 5173), and the sidecar it supervises needs the locked
+-`python/.venv` plus `DYNAMISBENCH_MUJOCO_PYTHON` pointing at the worker environment to execute
+-runs. On Linux, `tauri-driver`'s pooled proxy connection to WebKitWebDriver is intermittently
+-reset under load (a driver-side failure: the application session survives it); the direct
+-route avoids that hop and is otherwise the same launch.
+@@ -168 +106 @@
+-| `python` | locked `uv sync`, isolated MuJoCo worker environment, Ruff lint + format, both Pyright configurations, the columnar cold-import / sidecar cold-start regression (required on Windows), pytest with the `ci` Hypothesis profile and the real MuJoCo adapter regressions |
++| `python` | locked `uv sync`, isolated MuJoCo worker environment, Ruff lint + format, both Pyright configurations, pytest with the `ci` Hypothesis profile and the real MuJoCo adapter regressions |
+@@ -226,6 +164 @@
+-A barbell back-squat model (a synthetic 75 kg, 1.75 m athlete with a 20 kg barbell) lives in
+-`python/src/dynamisbench/adapters/mujoco/squat`. It compiles, starts in a standing rest state
+-and runs real closed-loop forward dynamics in the isolated worker environment, including one
+-controlled back-squat repetition integrated from actuator torques; its packaged MJCF is generated
+-from declared, sourced anthropometry and checked by `tools/mujoco_squat_model.py --check`. See
+-that package's `README.md` for what it does, what it measures and its limits.
++### VM Laboratory — packaged diagnostic mode (M1)
+@@ -233,19 +166,9 @@
+-**The squat study is RunSpec-executable.** `tools/mujoco_squat_authority.py --workspace <dir>`
+-writes a workspace holding its authority (benchmark release with quantities and metric criteria,
+-realization with quantity mappings, system under test, per-platform environments, a
+-configuration study with six qualified factors, and the model asset). The researcher pipeline in
+-`python/src/dynamisbench/pipeline` then compiles a configuration with `plan_study`, materializes
+-its inputs into the content-addressed store, admits it with the fail-closed preflight, and runs
+-it in the isolated worker under the supervisor; the worker verifies the request against its
+-pinned authority and implementation identity and writes native output (Parquet samples and
+-state, run record, compiled model), which the supervisor harvests into a sealed execution
+-bundle. The pipeline then normalizes the native samples to the benchmark's canonical quantities
+-(with per-column provenance), runs an independent numerical verification suite (time grid,
+-round trip, contact closure, centre-of-pressure recomputation, forward-kinematics
+-re-derivation, joint-velocity consistency, impulse–momentum, energy ledger, extrema), assesses
+-the benchmark metrics against their predeclared criteria, and seals a derived bundle whose
+-provenance names the execution's evidence digest and every native digest. Every read of a run
+-re-verifies both seals and that chain; a damaged, truncated, incomplete or unattributable run
+-is reported as *rejected* / *incomplete* with its reasons, never shown as data. The API adapts
+-an injected run service at `/api/v1/workspaces/{id}/studies` and `…/runs` (preflight, start,
+-progress, cancel, list, evidence, recording, model, Arrow frames); without one it answers 503.
++The `/laboratory` route is the Turn 4 + Turn 5 scientific workbench UI, connected to the
++authenticated, read-only `/api/v1/laboratory` dataset routes. It includes the Study & Runs,
++Laboratory, Model Atlas, Analysis, and Evidence folios; the articulated anatomical presentation
++asset and scientific segment geometry; a synchronized timeline, inspector and signal plots;
++and comparison and provenance views for the pinned packaged recordings. Workspace-run
++comparison and sealed-evidence readback remain unavailable in M1. Packaged records are labeled
++**diagnostic recordings, not sealed DynamisBench evidence**. Their files are checked against the
++dataset manifest; this view does not rerun the historical MuJoCo worker. The underlying model is
++synthetic and has not been validated against measured human motion.
+@@ -253,8 +176,4 @@
+-The packaged **laboratory dataset** (the nominal repetition, a half-timestep companion and two
+-ablations, each with 22 evaluated acceptance checks) remains a SHA-pinned diagnostic dataset in
+-`python/src/dynamisbench/laboratory` (`tools/mujoco_squat_laboratory.py --check`), published at
+-`/api/v1/laboratory`. With it comes the **anatomical figure** (`tools/mujoco_squat_figure.py`):
+-a closed, skinned surface derived from the model's skeleton, landmarks and segment masses
+-(segment girths fitted to mass over Dempster density; the grip shaped around the bar where the
+-weld holds it; the outsole on the sole contact spheres), pinned by digest and served at
+-`/api/v1/laboratory/figure`. It is a presentation surface with no role in the mechanics.
++In this M1 integration, workspace study catalogues, preflight, execute, cancel, and workspace-run
++evidence routes are deliberately unavailable. The VM's live-workflow source is preserved for
++later authority-gated work; the UI reports the M1 read-only state and never substitutes a fake
++run or seal.
+@@ -262,17 +181,4 @@
+-The workbench's **Laboratory** route (`/laboratory`, or `/laboratory?workspace=<id>` from a
+-workspace's Simulation Laboratory mode) has five folios: *Study & Runs* (study and model, the
+-configuration in display units, preflight with every identity it admitted, execution with
+-progress and cancellation, the workspace's runs with what reading them back established),
+-*Laboratory* (the WebGL stage with the anatomical figure deformed by recorded poses by
+-dual-quaternion skinning or the model's own segment geometry, one playback clock shared by the
+-stage, plots, inspector and phase strip), *Model Atlas*, *Analysis* (summaries, the work–energy
+-ledger, run comparison) and *Evidence* (for a run: both bundles file by file, the provenance
+-chain, verification, assessment and claim). The workbench computes no physics and executes
+-nothing itself; it asks the application and renders the answers. The design language and
+-specification are in `apps/workbench/design/`.
+-
+-Explicitly not present yet: validation against measured human motion (verification and
+-assessment are internal numerical consistency and predeclared criteria, not validation),
+-uncertainty quantification campaigns, generic MuJoCo realizations beyond the reviewed squat
+-adapter, OpenSim, and packaging. The API's adaptation of an injected run service is an
+-architectural addition that needs its ADR review (CONTRIBUTING).
++Still not qualified: arbitrary model/asset materialization for a generic MuJoCo realization,
++accepted native→canonical normalization and `assessment.json`, benchmark acceptance or model
++validation, the VM live RunSpec execution API, OpenSim, packaging, native Windows Tauri/WebView2
++usability, and empirical biomechanical validation.
+
+--- VM/apps/workbench/e2e/laboratory.spec.ts
++++ M1/apps/workbench/e2e/laboratory.spec.ts
+@@ -178,0 +179,3 @@
++  await expect(
++    page.getByText(/The MuJoCo worker that generated them is not run by this read-only integration\./),
++  ).toBeVisible();
+
+--- VM/apps/workbench/e2e/production-design.spec.ts
++++ M1/apps/workbench/e2e/production-design.spec.ts
+@@ -11,0 +12,5 @@
++  const liveRunRequests: string[] = [];
++  page.on("request", (request) => {
++    const pathname = new URL(request.url()).pathname;
++    if (/(?:^|\/)(?:studies|runs)(?:\/|$)/.test(pathname)) liveRunRequests.push(pathname);
++  });
+@@ -29 +34,3 @@
+-  await expect(page.getByLabel("Scientific context", { exact: true })).toContainText("No runs yet");
++  await expect(page.getByLabel("Scientific context", { exact: true })).toContainText(
++    "Live workspace runs unavailable in M1",
++  );
+@@ -153,0 +161,13 @@
++  await page.getByRole("link", { name: "Open in the laboratory", exact: true }).click();
++  await page.waitForURL(/\/laboratory\?workspace=/);
++  await page.getByRole("navigation", { name: "Folios" }).getByRole("button", { name: /Study & Runs/ }).click();
++  await expect(
++    page.getByRole("heading", { name: "Workspace execution is not enabled in this integration phase" }),
++  ).toBeVisible();
++  expect(liveRunRequests).toEqual([]);
++  if (process.env.DYNAMISBENCH_UX_SCREENSHOTS) {
++    const directory = process.env.DYNAMISBENCH_UX_SCREENSHOTS;
++    expect(await page.content()).not.toContain(harness.sidecar.credential);
++    await mkdir(directory, { recursive: true });
++    await page.screenshot({ path: path.join(directory, "05-study-runs-m1-unavailable.png") });
++  }
+
+--- VM/apps/workbench/src/laboratory/data.tsx
++++ M1/apps/workbench/src/laboratory/data.tsx
+@@ -35,0 +36 @@
++import { LIVE_WORKSPACE_RUN_API_AVAILABLE } from "./m1-capabilities";
+@@ -79,5 +80,5 @@
+-    ...(workspaceId === null
+-      ? {
+-          queryKey: apiQueryKeys.runs("none"),
+-          queryFn: () => Promise.reject(new Error("no workspace is bound")),
+-        }
++    ...(workspaceId === null || !LIVE_WORKSPACE_RUN_API_AVAILABLE
++      ? unavailable<RunListResponse>(
++          apiQueryKeys.runs(workspaceId ?? "none"),
++          "workspace-run reads are unavailable in the M1 read-only integration",
++        )
+@@ -85 +86 @@
+-    enabled: workspaceId !== null,
++    enabled: workspaceId !== null && LIVE_WORKSPACE_RUN_API_AVAILABLE,
+@@ -87 +88,2 @@
+-  const runData: RunListResponse | undefined = workspaceId === null ? undefined : runs.data;
++  const runData: RunListResponse | undefined =
++    workspaceId === null || !LIVE_WORKSPACE_RUN_API_AVAILABLE ? undefined : runs.data;
+
+--- VM/apps/workbench/src/laboratory/folio-record.tsx
++++ M1/apps/workbench/src/laboratory/folio-record.tsx
+@@ -128 +128 @@
+-        <p className="lab-marginal">every link is content-addressed and re-checkable</p>
++        <p className="lab-marginal">packaged files are pinned; this view does not re-run the worker execution</p>
+@@ -207,6 +207,4 @@
+-        <pre className="lab-code">
+-          {`cd python
+-uv run python tools/mujoco_squat_laboratory.py --check
+-worker-mujoco/.venv/bin/python -I -m \\
+-  dynamisbench.adapters.mujoco.squat --repetition`}
+-        </pre>
++        <p className="lab-marginal">
++          The packaged recording and figure are checked against their pinned manifest. The
++          MuJoCo worker that generated them is not run by this read-only integration.
++        </p>
+
+--- VM/apps/workbench/src/laboratory/folio-study.tsx
++++ M1/apps/workbench/src/laboratory/folio-study.tsx
+@@ -54,0 +55,4 @@
++import {
++  LIVE_WORKSPACE_RUN_API_AVAILABLE,
++  LIVE_WORKSPACE_RUN_API_UNAVAILABLE_MESSAGE,
++} from "./m1-capabilities";
+@@ -78,0 +83,3 @@
++  if (!LIVE_WORKSPACE_RUN_API_AVAILABLE) {
++    return <WorkspaceStudyUnavailable />;
++  }
+@@ -79,0 +87,19 @@
++}
++
++function WorkspaceStudyUnavailable() {
++  const setFolio = useLaboratoryStore((state) => state.setFolio);
++  return (
++    <div className="lab-folio lab-study">
++      <section className="lab-card lab-study-empty" aria-labelledby="m1-study-unavailable-title">
++        <h2 id="m1-study-unavailable-title" className="lab-card-title lab-display">
++          Workspace execution is not enabled in this integration phase
++        </h2>
++        <p>{LIVE_WORKSPACE_RUN_API_UNAVAILABLE_MESSAGE}</p>
++        <p>
++          <button type="button" className="lab-link-button" onClick={() => setFolio("laboratory")}>
++            Open the packaged Laboratory recordings
++          </button>
++        </p>
++      </section>
++    </div>
++  );
+@@ -94,2 +120,2 @@
+-          The barbell back-squat study can be written into a new workspace with{" "}
+-          <code>uv run python tools/mujoco_squat_authority.py --workspace &lt;directory&gt;</code>.
++          M1 publishes the packaged diagnostic back-squat recordings only. Workspace study
++          authoring and execution remain unavailable until their production authority is accepted.
+
+--- VM/apps/workbench/src/laboratory/laboratory-page.test.tsx
++++ M1/apps/workbench/src/laboratory/laboratory-page.test.tsx
+@@ -29 +29 @@
+-async function renderLaboratory() {
++async function renderLaboratory(workspaceId?: string) {
+@@ -37 +37,2 @@
+-  const view = renderApplication("/laboratory", { source: controlled.source });
++  const location = workspaceId === undefined ? "/laboratory" : `/laboratory?workspace=${workspaceId}`;
++  const view = renderApplication(location, { source: controlled.source });
+@@ -108,0 +110,15 @@
++  it("keeps workspace live-run actions unavailable while the M1 read-only laboratory remains usable", async () => {
++    const { calls } = await renderLaboratory("opaque-workspace-id");
++    const user = userEvent.setup();
++    await user.click(screen.getByRole("button", { name: /Study & Runs/ }));
++
++    expect(
++      await screen.findByRole("heading", {
++        name: "Workspace execution is not enabled in this integration phase",
++      }),
++    ).toBeInTheDocument();
++    expect(screen.queryByRole("button", { name: /preflight|execute run|cancel/i })).toBeNull();
++    expect(calls.some((call) => /\/studies(?:\?|$)|\/runs(?:\/|\?|$)/.test(call.url))).toBe(false);
++    expect(screen.getByRole("button", { name: /Open the packaged Laboratory recordings/ })).toBeInTheDocument();
++  });
++
+@@ -188,0 +205,3 @@
++    expect(
++      screen.getByText(/The MuJoCo worker that generated them is not run by this read-only integration\./),
++    ).toBeInTheDocument();
+@@ -213,0 +233,16 @@
++
++  it("uses the packaged dataset for a workspace route without calling live run APIs in M1", async () => {
++    const { calls } = await renderLaboratory("opaque-workspace-id");
++    const user = userEvent.setup();
++    const folios = screen.getByRole("navigation", { name: "Folios" });
++
++    await user.click(within(folios).getByRole("button", { name: /Study & Runs/ }));
++    expect(
++      await screen.findByRole("heading", {
++        name: "Workspace execution is not enabled in this integration phase",
++      }),
++    ).toBeInTheDocument();
++    expect(screen.queryByRole("button", { name: /Preflight|Execute run|Cancel/i })).toBeNull();
++    expect(calls.some((call) => /\/studies(?:\?|$)|\/runs(?:\/|\?|$)/.test(call.url))).toBe(false);
++    expect(screen.getByRole("button", { name: /Open the packaged Laboratory recordings/ })).toBeInTheDocument();
++  });
+
+--- VM/apps/workbench/src/workbench/laboratory.tsx
++++ M1/apps/workbench/src/workbench/laboratory.tsx
+@@ -13,0 +14 @@
++import { LIVE_WORKSPACE_RUN_API_AVAILABLE, LIVE_WORKSPACE_RUN_API_UNAVAILABLE_MESSAGE } from "../laboratory/m1-capabilities";
+@@ -19 +20 @@
+-    ...(client === null
++    ...(client === null || !LIVE_WORKSPACE_RUN_API_AVAILABLE
+@@ -22 +23 @@
+-          queryFn: (): Promise<RunListResponse> => Promise.reject(new Error("no session")),
++          queryFn: (): Promise<RunListResponse> => Promise.reject(new Error(LIVE_WORKSPACE_RUN_API_UNAVAILABLE_MESSAGE)),
+@@ -25 +26 @@
+-    enabled: client !== null,
++    enabled: client !== null && LIVE_WORKSPACE_RUN_API_AVAILABLE,
+@@ -27,0 +29,7 @@
++  if (!LIVE_WORKSPACE_RUN_API_AVAILABLE) {
++    return {
++      execution: "Live workspace runs unavailable in M1",
++      evidence: "Packaged diagnostic recordings are available in the Laboratory",
++      available: true,
++    };
++  }
+
+--- VM/pnpm-lock.yaml
++++ M1/pnpm-lock.yaml
+@@ -286 +285,0 @@
+-    libc: [glibc]
+@@ -293 +291,0 @@
+-    libc: [musl]
+@@ -300 +297,0 @@
+-    libc: [glibc]
+@@ -307 +303,0 @@
+-    libc: [glibc]
+@@ -314 +309,0 @@
+-    libc: [glibc]
+@@ -321 +315,0 @@
+-    libc: [musl]
+@@ -382 +375,0 @@
+-    libc: [glibc]
+@@ -389 +381,0 @@
+-    libc: [musl]
+@@ -396 +387,0 @@
+-    libc: [glibc]
+@@ -403 +393,0 @@
+-    libc: [musl]
+@@ -500 +489,0 @@
+-    libc: [glibc]
+@@ -507 +495,0 @@
+-    libc: [musl]
+@@ -514 +501,0 @@
+-    libc: [glibc]
+@@ -521 +507,0 @@
+-    libc: [glibc]
+@@ -528 +513,0 @@
+-    libc: [musl]
+@@ -867 +851,0 @@
+-    libc: [glibc]
+@@ -874 +857,0 @@
+-    libc: [glibc]
+@@ -881 +863,0 @@
+-    libc: [musl]
+@@ -888 +869,0 @@
+-    libc: [musl]
+@@ -895 +875,0 @@
+-    libc: [glibc]
+@@ -902 +881,0 @@
+-    libc: [glibc]
+@@ -909 +887,0 @@
+-    libc: [musl]
+@@ -916 +893,0 @@
+-    libc: [musl]
+
+--- VM/python/pyproject.toml
++++ M1/python/pyproject.toml
+@@ -25,3 +25,3 @@
+-# pyarrow is DB-2.6's (RES-379) Arrow IPC transport primitive. It is imported lazily
+-# by dynamisbench.transport.arrow and by nothing on the scientific-core or API-startup
+-# path, so the package root and the application boundary load no columnar stack.
++# NumPy and PyArrow are the application's locked columnar runtime for the Laboratory's
++# Arrow IPC read models. The sidecar preloads both on its main thread before binding, while
++# imports from the scientific core and package root remain lazy and engine-independent.
+@@ -29,0 +30 @@
++    "numpy>=2.5.4",
+
+--- VM/python/src/dynamisbench/api/app.py
++++ M1/python/src/dynamisbench/api/app.py
+@@ -45 +44,0 @@
+-from dynamisbench.api.runs import RUN_SERVICE_ATTRIBUTE, RunService, run_router
+@@ -52,2 +51 @@
+-    "never executes a simulation itself (ADR-017): runs are delegated to the injected run "
+-    "service, which admits them by preflight and supervises the isolated worker."
++    "never executes a simulation itself (ADR-017)."
+@@ -66 +64 @@
+-def create_app(*, run_service: RunService | None = None) -> FastAPI:
++def create_app() -> FastAPI:
+@@ -87,3 +84,0 @@
+-            if run_service is not None:
+-                # Cancel and reap any worker this session started, and seal what it left.
+-                run_service.close()
+@@ -99,0 +95,2 @@
++    # Packaged diagnostic data is a read-only product surface; it adds no run command,
++    # workspace write, simulator import, or scientific authority.
+@@ -101 +97,0 @@
+-    app.include_router(run_router, prefix=API_V1_PREFIX)
+@@ -106,2 +101,0 @@
+-    # The run service is given by the composition root; without one, runs answer 503.
+-    setattr(app.state, RUN_SERVICE_ATTRIBUTE, run_service)
+
+--- VM/python/src/dynamisbench/api/server.py
++++ M1/python/src/dynamisbench/api/server.py
+@@ -32,4 +31,0 @@
+-* **The columnar stack is loaded before anything is served.** :func:`serve` imports NumPy and
+-  PyArrow on the main thread before binding (:mod:`dynamisbench.transport.columnar`), so no
+-  request thread is ever the first importer of a C-extension package; every later lazy use
+-  goes through the same lock-guarded loader.
+@@ -62 +57,0 @@
+-from dynamisbench.api.runs import RunService
+@@ -178,3 +173 @@
+-def build_sidecar(
+-    configuration: RuntimeConfiguration, *, run_service: RunService | None = None
+-) -> Sidecar:
++def build_sidecar(configuration: RuntimeConfiguration) -> Sidecar:
+@@ -187,3 +180 @@
+-    application = secured_application(
+-        configuration.credential, configuration.origins, run_service=run_service
+-    )
++    application = secured_application(configuration.credential, configuration.origins)
+@@ -401,5 +392 @@
+-def serve(
+-    environment: Mapping[str, str] | None = None,
+-    *,
+-    run_service_factory: Callable[[], RunService] | None = None,
+-) -> Exit:
++def serve(environment: Mapping[str, str] | None = None) -> Exit:
+@@ -423,4 +410,2 @@
+-    # The columnar stack (NumPy, PyArrow) is imported now, on this main thread, before the
+-    # socket exists and long before readiness: a request thread must never be the first to
+-    # import it (a concurrent cold import of these C-extension packages fails on Windows).
+-    # A stack that cannot be imported is a startup failure, not a session that fails later.
++    # Load the columnar stack once on the sidecar's main thread before binding or readiness.
++    # This avoids concurrent first-time NumPy/PyArrow extension imports on Windows requests.
+@@ -433,3 +417,0 @@
+-    # The run service is composed by the caller (``dbench api serve``), never imported here:
+-    # the API adapts it and does not depend on the layers that plan, execute and seal.
+-    run_service = run_service_factory() if run_service_factory is not None else None
+@@ -437 +419 @@
+-        sidecar = build_sidecar(configuration, run_service=run_service)
++        sidecar = build_sidecar(configuration)
+
+--- VM/python/tests/api/test_namespace.py
++++ M1/python/tests/api/test_namespace.py
+@@ -212,4 +211,0 @@
+-        f"{API_V1_PREFIX}/workspaces/open",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/artifacts",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/artifacts/{{artifact_id}}",
+-        # Read-only publication of the packaged laboratory dataset (no execution, ADR-017).
+@@ -221,10 +217,3 @@
+-        # The researcher workflow, adapted from an injected run service (never executed here).
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/studies",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs/preflight",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs/{{run_id}}/progress",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs/{{run_id}}/cancel",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs/{{run_id}}/evidence",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs/{{run_id}}/recording",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs/{{run_id}}/model",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs/{{run_id}}/frames/{{group}}",
++        f"{API_V1_PREFIX}/workspaces/open",
++        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/artifacts",
++        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/artifacts/{{artifact_id}}",
+
+--- VM/python/tests/api/test_public_boundary.py
++++ M1/python/tests/api/test_public_boundary.py
+@@ -121,16 +121,5 @@
+-"""The read-only laboratory publication: a fifth, one-module group.
+-
+-It publishes the packaged, SHA-pinned laboratory dataset (``dynamisbench.laboratory``) as JSON
+-read models and Arrow IPC frame streams. It imports no workspace, domain, identity or engine
+-layer, executes nothing (ADR-017), and adds four reviewed GET routes to the boundary.
+-"""
+-
+-RUNS_MODULE = "runs.py"
+-"""The run routes: a sixth, one-module group (reviewed change).
+-
+-They adapt a *run service* the composition root injects (``dbench api serve`` composes
+-:mod:`dynamisbench.pipeline`); the module imports no planning, execution, evidence,
+-normalization or evaluation layer and never executes anything itself (ADR-016, ADR-017). It
+-reads the workspace registry the reader modules maintain, to hand the service the workspace a
+-client named by its opaque identifier. Its POST routes are commands the service may refuse:
+-preflight (read-only admission), start (one run in the isolated worker) and cancel.
++"""The separately bounded, read-only publisher for the packaged diagnostic dataset.
++
++It imports only the API's own response/error types and the static ``laboratory`` reader. It
++does not open a workspace, run a simulation, or read arbitrary paths. Dense frame responses
++use the already declared Arrow transport.
+@@ -140,16 +129,6 @@
+-    sorted(
+-        (
+-            *BOUNDARY_MODULES,
+-            *SESSION_MODULES,
+-            *READER_MODULES,
+-            "events.py",
+-            LABORATORY_MODULE,
+-            RUNS_MODULE,
+-        )
+-    )
+-)
+-"""The union of the three groups plus DB-2.6's event transport, in filesystem order.
+-
+-``events.py`` is a fourth, one-module group rather than part of the reader modules: it owns
+-the application-instance broadcaster and the one streaming route, imports no workspace or
+-domain layer, and adds exactly one reviewed public route to the boundary.
++    sorted((*BOUNDARY_MODULES, *SESSION_MODULES, *READER_MODULES, "events.py", LABORATORY_MODULE))
++)
++"""The union of the three groups plus event transport and the static lab publisher.
++
++``events.py`` owns the application-instance broadcaster. ``laboratory.py`` is the pinned,
++read-only diagnostic dataset publisher. Both are explicit reviewed additions to the boundary.
+@@ -357,0 +337 @@
++        (LABORATORY_MODULE, ALLOWED_EXTERNAL_SURFACE),
+@@ -477 +457 @@
+-    Stated as three named groups because the modules are not equivalent: five describe the
++    Stated as named groups because the modules are not equivalent: five describe the
+@@ -479,3 +459,2 @@
+-    desktop session and are reachable only by importing them; and two read the workspace and
+-    are reachable only through ``create_app``. The groups are asserted disjoint, so a module
+-    cannot migrate into one of them by being renamed.
++    desktop session; two read workspace authority; one publishes the pinned read-only
++    diagnostic Laboratory; and one owns event transport. The groups are asserted disjoint.
+@@ -490,4 +469,4 @@
+-    for group in (BOUNDARY_MODULES, SESSION_MODULES, READER_MODULES):
+-        assert LABORATORY_MODULE not in set(group)
+-        assert RUNS_MODULE not in set(group)
+-    assert len(BOUNDARY_MODULES) + len(SESSION_MODULES) + len(READER_MODULES) + 3 == len(
++    assert LABORATORY_MODULE not in set(BOUNDARY_MODULES)
++    assert LABORATORY_MODULE not in set(SESSION_MODULES)
++    assert LABORATORY_MODULE not in set(READER_MODULES)
++    assert len(BOUNDARY_MODULES) + len(SESSION_MODULES) + len(READER_MODULES) + 2 == len(
+@@ -503 +482 @@
+-    """Six routes under one namespace, and no verb that publishes itself for free.
++    """Versioned source/workspace and read-only Laboratory routes; no new run commands.
+@@ -506,2 +485,2 @@
+-    of quietly becoming a public interface. The workspace routes read; the one non-GET verb is
+-    the root-selection operation and nothing else. DB-2.6 adds exactly one GET stream.
++    of quietly becoming a public interface. The only non-GET verb is root selection. M1 adds
++    GET-only packaged diagnostic routes; there are no workspace run or write routes.
+@@ -522,9 +500,0 @@
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs/preflight",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs/{{run_id}}/cancel",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs/{{run_id}}/evidence",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs/{{run_id}}/frames/{{group}}",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs/{{run_id}}/model",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs/{{run_id}}/progress",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs/{{run_id}}/recording",
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/studies",
+@@ -532,6 +501,0 @@
+-    commands = {
+-        f"{API_V1_PREFIX}/workspaces/open": ["post"],
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs": ["get", "post"],
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs/preflight": ["post"],
+-        f"{API_V1_PREFIX}/workspaces/{{workspace_id}}/runs/{{run_id}}/cancel": ["post"],
+-    }
+@@ -539 +503 @@
+-        expected = commands.get(path, ["get"])
++        expected = ["post"] if path.endswith("/open") else ["get"]
+@@ -562,0 +527,19 @@
++    assert response_of(f"{API_V1_PREFIX}/laboratory", "get")["content"]["application/json"][
++        "schema"
++    ]["$ref"].endswith("/LaboratoryIndexResponse")
++    assert response_of(f"{API_V1_PREFIX}/laboratory/model", "get")["content"]["application/json"][
++        "schema"
++    ]["$ref"].endswith("/LaboratoryModelResponse")
++    assert response_of(f"{API_V1_PREFIX}/laboratory/recordings/{{recording_id}}", "get")["content"][
++        "application/json"
++    ]["schema"]["$ref"].endswith("/LaboratoryRecordingResponse")
++    assert (
++        "application/vnd.apache.arrow.stream"
++        in response_of(
++            f"{API_V1_PREFIX}/laboratory/recordings/{{recording_id}}/frames/{{group}}", "get"
++        )["content"]
++    )
++    assert (
++        "application/vnd.dynamisbench.figure"
++        in response_of(f"{API_V1_PREFIX}/laboratory/figure", "get")["content"]
++    )
+@@ -578,0 +562,3 @@
++        "LaboratoryIndexResponse",
++        "LaboratoryModelResponse",
++        "LaboratoryRecordingResponse",
+
+--- VM/python/tests/api/test_sidecar_cold_start.py
++++ M1/python/tests/api/test_sidecar_cold_start.py
+@@ -27 +27 @@
+-from typing import Any
++from typing import Any, cast
+@@ -150,6 +150,16 @@
+-    from tools.mujoco_squat_authority import write_workspace
+-
+-    from dynamisbench.pipeline.coordinator import RunCoordinator
+-    from dynamisbench.pipeline.environments import WorkerEnvironments
+-    from dynamisbench.workspace import open_workspace
+-    from tests.execution.mujoco.support import worker_python
++    authority = cast(
++        Any,
++        pytest.importorskip(
++            "tools.mujoco_squat_authority",
++            reason="the squat worker and run pipeline are integrated in the M2 execution slice",
++        ),
++    )
++    coordinator_module = cast(Any, pytest.importorskip("dynamisbench.pipeline.coordinator"))
++    environments_module = cast(Any, pytest.importorskip("dynamisbench.pipeline.environments"))
++    workspace_module = cast(Any, pytest.importorskip("dynamisbench.workspace"))
++    support = cast(Any, pytest.importorskip("tests.execution.mujoco.support"))
++    write_workspace = authority.write_workspace
++    run_coordinator_type = coordinator_module.RunCoordinator
++    worker_environments_type = environments_module.WorkerEnvironments
++    open_workspace = workspace_module.open_workspace
++    worker_python = support.worker_python
+@@ -160 +170 @@
+-    coordinator = RunCoordinator(WorkerEnvironments(worker_python()))
++    coordinator = run_coordinator_type(worker_environments_type(worker_python()))
+
+--- VM/python/tests/laboratory/test_figure.py
++++ M1/python/tests/laboratory/test_figure.py
+@@ -18 +18 @@
+-from typing import Any
++from typing import Any, cast
+@@ -306,3 +306,9 @@
+-    from tools.mujoco_squat_figure import build, encode
+-
+-    assert hashlib.sha256(encode(build())).hexdigest() == FIGURE_SHA256
++    generator = cast(
++        Any,
++        pytest.importorskip(
++            "tools.mujoco_squat_figure",
++            reason="the MuJoCo figure generator is integrated in the M2 execution slice",
++        ),
++    )
++
++    assert hashlib.sha256(generator.encode(generator.build())).hexdigest() == FIGURE_SHA256
+
+--- VM/python/tests/laboratory/test_laboratory.py
++++ M1/python/tests/laboratory/test_laboratory.py
+@@ -14,0 +15 @@
++from typing import Any, cast
+@@ -19 +19,0 @@
+-from dynamisbench.adapters.mujoco.squat import anthropometry, criteria
+@@ -40,0 +41,12 @@
++def _squat_authority() -> tuple[Any, Any]:
++    """Load the M2-only execution authority when that source slice is present."""
++    authority = cast(
++        Any,
++        pytest.importorskip(
++            "dynamisbench.adapters.mujoco.squat",
++            reason="squat execution authority is integrated in M2, not the read-only M1 slice",
++        ),
++    )
++    return authority.anthropometry, authority.criteria
++
++
+@@ -94,0 +107 @@
++    _, criteria = _squat_authority()
+@@ -126,0 +140 @@
++    anthropometry, _ = _squat_authority()
+@@ -156,0 +171 @@
++    anthropometry, _ = _squat_authority()
+@@ -258,0 +274 @@
++    _, criteria = _squat_authority()
+
+--- VM/python/tests/transport/test_columnar.py
++++ M1/python/tests/transport/test_columnar.py
+@@ -162,2 +162 @@
+-        "import dynamisbench.api.server, dynamisbench.cli, dynamisbench.pipeline.service\n"
+-        "import dynamisbench.pipeline.coordinator, dynamisbench.normalization.canonical\n"
++        "import dynamisbench.api.app, dynamisbench.api.server, dynamisbench.cli\n"
+
+--- VM/python/uv.lock
++++ M1/python/uv.lock
+@@ -59,0 +60 @@
++    { name = "numpy" },
+@@ -79,0 +81 @@
++    { name = "numpy", specifier = ">=2.5.4" },
