@@ -280,6 +280,7 @@ def encode_float_columns(columns: Sequence[tuple[str, Sequence[float]]]) -> byte
         raise ArrowTransportError(ArrowFailure.TOO_LARGE)
     return payload
 
+
 __all__ = [
     "ARROW_IPC_STREAM_CONTENT_TYPE",
     "MAX_ARROW_BUFFERS",
