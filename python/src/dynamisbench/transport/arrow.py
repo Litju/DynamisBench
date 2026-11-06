@@ -21,15 +21,19 @@ publish.
 
 from __future__ import annotations
 
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Final
+
+from dynamisbench.transport.columnar import columnar_stack
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, and deliberately erased at runtime
     pass
 
 ARROW_IPC_STREAM_CONTENT_TYPE: Final = "application/vnd.apache.arrow.stream"
-"""The registered media type for an Arrow IPC stream. No endpoint publishes it in M2."""
+"""The registered media type for an Arrow IPC stream. The laboratory frame routes publish it."""
 
 MAX_ARROW_IPC_BYTES: Final = 1 * 1024 * 1024
 """The largest IPC stream this utility will read: one mebibyte.
@@ -95,13 +99,13 @@ class ArrowTable:
 
 
 def _pyarrow():
-    """Import the optional columnar stack at call time.
+    """The optional columnar stack, loaded at call time through the one thread-safe loader.
 
-    Kept as one function so the lazy boundary is visible and every entry point shares it.
+    Kept as one function so the lazy boundary is visible and every entry point shares it; the
+    import itself happens in :func:`dynamisbench.transport.columnar.columnar_stack`, once, by
+    one thread (see that module for the Windows cold-import hazard it removes).
     """
-    import pyarrow as pa
-
-    return pa
+    return columnar_stack().pyarrow
 
 
 def _schema(pa):
@@ -211,6 +215,43 @@ def decode_qualification_stream(payload: bytes) -> ArrowTable:
     return table
 
 
+def encode_float_columns(columns: Sequence[tuple[str, Sequence[float]]]) -> bytes:
+    """Encode equal-length, non-null ``float64`` columns as one Arrow IPC stream.
+
+    The general bulk-numeric transport (ADR-019): the application publishes frame data this
+    way rather than as JSON. Bounded exactly like :func:`read_ipc_stream`: an empty table, rows
+    above :data:`MAX_ARROW_ROWS`, unequal or duplicate columns, a non-finite value, or an
+    encoded stream above :data:`MAX_ARROW_IPC_BYTES` is refused with a closed reason.
+    Deterministic for equal input.
+    """
+    if not columns:
+        raise ArrowTransportError(ArrowFailure.EMPTY)
+    names = [name for name, _values in columns]
+    lengths = {len(values) for _name, values in columns}
+    if len(set(names)) != len(names) or len(lengths) != 1:
+        raise ArrowTransportError(ArrowFailure.MALFORMED)
+    (rows,) = lengths
+    if rows == 0:
+        raise ArrowTransportError(ArrowFailure.EMPTY)
+    if rows > MAX_ARROW_ROWS:
+        raise ArrowTransportError(ArrowFailure.TOO_MANY_ROWS)
+    for _name, values in columns:
+        if not all(math.isfinite(value) for value in values):
+            raise ArrowTransportError(ArrowFailure.MALFORMED)
+    pa = _pyarrow()
+    schema = pa.schema([pa.field(name, pa.float64(), nullable=False) for name in names])
+    table = pa.Table.from_arrays(
+        [pa.array(values, type=pa.float64()) for _name, values in columns], schema=schema
+    )
+    sink = pa.BufferOutputStream()
+    with pa.ipc.new_stream(sink, table.schema) as writer:
+        writer.write_table(table)
+    payload = sink.getvalue().to_pybytes()
+    if len(payload) > MAX_ARROW_IPC_BYTES:
+        raise ArrowTransportError(ArrowFailure.TOO_LARGE)
+    return payload
+
+
 __all__ = [
     "ARROW_IPC_STREAM_CONTENT_TYPE",
     "MAX_ARROW_IPC_BYTES",
@@ -223,6 +264,7 @@ __all__ = [
     "ArrowTransportError",
     "build_qualification_table",
     "decode_qualification_stream",
+    "encode_float_columns",
     "encode_qualification_stream",
     "qualification_rows",
     "qualification_schema",

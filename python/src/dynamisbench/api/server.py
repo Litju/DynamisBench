@@ -61,6 +61,7 @@ from dynamisbench.api.session import (
     runtime_configuration,
     secured_application,
 )
+from dynamisbench.transport.columnar import ColumnarStackError, preload_columnar_stack
 
 LOOPBACK_HOST = "127.0.0.1"
 """The one address this sidecar may bind.
@@ -405,6 +406,14 @@ def serve(environment: Mapping[str, str] | None = None) -> Exit:
     except SessionConfigurationError as failure:
         logger.error("%s", failure)
         return Exit.INVALID_CONFIGURATION
+
+    # Load the columnar stack once on the sidecar's main thread before binding or readiness.
+    # This avoids concurrent first-time NumPy/PyArrow extension imports on Windows requests.
+    try:
+        preload_columnar_stack()
+    except ColumnarStackError as failure:
+        logger.error("%s", failure)
+        return Exit.STARTUP_FAILED
 
     try:
         sidecar = build_sidecar(configuration)

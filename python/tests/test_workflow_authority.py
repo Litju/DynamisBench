@@ -370,3 +370,22 @@ def test_no_gate_is_marked_non_authoritative() -> None:
     ]
     marked = [name for name in names if "NON-AUTHORITATIVE" in name]
     assert not marked, f"every gate here is authoritative: {marked}"
+
+
+def test_the_windows_columnar_cold_start_regression_stays_a_required_step() -> None:
+    """The concurrent cold-import failure was found on Windows; its regression must run there.
+
+    The ``python`` job runs on both pinned images, so naming the regression suites in their
+    own step makes them required on ``windows-2025`` without a second job.
+    """
+    python_job = _qualification()["jobs"]["python"]
+    images = set(_resolved_images(python_job))
+    assert "windows-2025" in images
+    regression = [
+        str(step.get("run", ""))
+        for step in python_job["steps"]
+        if "tests/transport/test_columnar.py" in str(step.get("run", ""))
+    ]
+    assert len(regression) == 1
+    assert "tests/api/test_sidecar_cold_start.py" in regression[0]
+    assert "continue-on-error" not in str(python_job)

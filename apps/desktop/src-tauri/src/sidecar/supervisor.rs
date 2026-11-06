@@ -109,7 +109,13 @@ pub struct SupervisorConfig {
 impl Default for SupervisorConfig {
     fn default() -> Self {
         Self {
-            startup_timeout: Duration::from_secs(15),
+            // The sidecar imports its columnar stack (NumPy, PyArrow) on its main thread before
+            // it binds and announces readiness, so that no request thread is ever the first to
+            // import those C-extension packages (a concurrent cold import fails on Windows).
+            // A first launch on Windows can spend many seconds loading and scanning those
+            // libraries; the deadline covers that rather than reporting a healthy, slow start as
+            // `startup_timeout`. The desktop shows the session as starting meanwhile.
+            startup_timeout: Duration::from_secs(45),
             shutdown_timeout: Duration::from_secs(5),
         }
     }
@@ -1094,10 +1100,15 @@ fn graceful_shutdown(
                 // force-kill a child that has already gone.
                 return (ShutdownOutcome::Graceful, None);
             }
-            Some(_) => {
+            Some(status) if !status.success() => {
                 return (ShutdownOutcome::Forced, Some(FailureCode::UnexpectedExit));
             }
-            None => {}
+            // A clean exit whose stdout the reader thread has not yet reported finished: the
+            // process is gone, but a line it wrote on the way out may still be in flight.
+            // Keep watching stdout until its end-of-file (or the deadline) decides. Treating
+            // this ordinary race — exit observed a poll before the reader's `Eof` — as an
+            // unexpected exit reported a polite child as `Forced`.
+            Some(_) | None => {}
         }
 
         if Instant::now() >= deadline {
@@ -1802,5 +1813,84 @@ mod tests {
                 .expect("the conclusion publishes exactly one snapshot");
             assert_eq!(snapshot.restart_required, restart_required, "{end:?}");
         }
+    }
+
+    /// A child that has already exited 0, spawned from this very test binary (portable: no
+    /// shell, no interpreter). Its stdout is not piped; the test owns the protocol channel.
+    fn exited_child(code_zero: bool) -> std::process::Child {
+        let exe = std::env::current_exe().expect("the test binary has a path");
+        let mut command = std::process::Command::new(exe);
+        if code_zero {
+            // Runs no test and exits 0.
+            command.args(["--exact", "no-such-test-dynamisbench-shutdown-race"]);
+        } else {
+            // An unknown option: the harness refuses it with a non-zero status.
+            command.arg("--no-such-option-dynamisbench");
+        }
+        let mut child = command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("the test binary can be spawned");
+        child.wait().expect("the child is reaped");
+        child
+    }
+
+    #[test]
+    fn a_clean_exit_observed_before_the_readers_end_of_file_is_still_graceful() {
+        // The race the shutdown has to tolerate: the process table reports the exit a poll
+        // before the stdout reader reports its end-of-file. That is a polite child.
+        let mut child = exited_child(true);
+        let (events, lines_rx) = mpsc::channel();
+        let late = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            let _ = events.send(super::ProtocolEvent::Eof);
+        });
+        let (outcome, failure) =
+            super::graceful_shutdown(&mut child, None, &lines_rx, Duration::from_secs(5));
+        late.join().unwrap();
+        assert_eq!(outcome, ShutdownOutcome::Graceful);
+        assert_eq!(failure, None);
+    }
+
+    #[test]
+    fn a_line_written_on_the_way_out_is_still_refused_after_a_clean_exit() {
+        let mut child = exited_child(true);
+        let (events, lines_rx) = mpsc::channel();
+        let late = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            let _ = events.send(super::ProtocolEvent::Line("late".into()));
+        });
+        let (outcome, failure) =
+            super::graceful_shutdown(&mut child, None, &lines_rx, Duration::from_secs(5));
+        late.join().unwrap();
+        assert_eq!(outcome, ShutdownOutcome::Forced);
+        assert_eq!(failure, Some(FailureCode::ProtocolViolation));
+    }
+
+    #[test]
+    fn a_clean_exit_whose_stdout_never_ends_is_graceful_at_the_deadline() {
+        let mut child = exited_child(true);
+        let (events, lines_rx) = mpsc::channel::<super::ProtocolEvent>();
+        let started = Instant::now();
+        let (outcome, failure) =
+            super::graceful_shutdown(&mut child, None, &lines_rx, Duration::from_millis(400));
+        drop(events);
+        assert_eq!(outcome, ShutdownOutcome::Graceful);
+        assert_eq!(failure, None);
+        assert!(started.elapsed() >= Duration::from_millis(400));
+    }
+
+    #[test]
+    fn a_non_zero_exit_is_an_unexpected_exit_without_waiting_for_stdout() {
+        let mut child = exited_child(false);
+        let (_events, lines_rx) = mpsc::channel::<super::ProtocolEvent>();
+        let started = Instant::now();
+        let (outcome, failure) =
+            super::graceful_shutdown(&mut child, None, &lines_rx, Duration::from_secs(5));
+        assert_eq!(outcome, ShutdownOutcome::Forced);
+        assert_eq!(failure, Some(FailureCode::UnexpectedExit));
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 }
