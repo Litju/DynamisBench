@@ -342,7 +342,11 @@ jobs:
         shell: bash
         run: pnpm exec vitest run src/arrow/arrow-allocation.test.ts --reporter=verbose --silent=false
         env:
-          DYNAMISBENCH_ARROW_ALLOCATION_REPORT: evidence/arrow-allocation-${{ matrix.name }}.json
+          DYNAMISBENCH_ARROW_ALLOCATION_REPORT: evidence/arrow-allocation-frontend-${{ matrix.name }}.json
+          DYNAMISBENCH_ARROW_ALLOCATION_TARGET: ${{ matrix.name }}
+          DYNAMISBENCH_ARROW_ALLOCATION_TESTED_SHA: ${{ github.sha }}
+          DYNAMISBENCH_ARROW_ALLOCATION_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          DYNAMISBENCH_ARROW_ALLOCATION_REF: ${{ github.ref }}
       - uses: actions/upload-artifact@v4
         with:
           name: arrow-allocation-frontend-${{ matrix.name }}
