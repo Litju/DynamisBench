@@ -44,6 +44,14 @@ MODES = (
 )
 
 
+def _write_pid_atomically(pid_file: str, pid: int) -> None:
+    """Publish a test-only PID only after the complete ASCII value has been written."""
+    destination = Path(pid_file)
+    staged = destination.with_name(f"{destination.name}.tmp")
+    staged.write_text(str(pid), encoding="ascii")
+    staged.replace(destination)
+
+
 def _spawn_child(pid_file: str) -> None:
     """Start one descendant that would outlive this worker, and record its pid."""
     child = subprocess.Popen(
@@ -52,7 +60,7 @@ def _spawn_child(pid_file: str) -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    Path(pid_file).write_text(str(child.pid), encoding="ascii")
+    _write_pid_atomically(pid_file, child.pid)
 
 
 def _refuse(message: str) -> NoReturn:
@@ -111,7 +119,7 @@ def main() -> int:
         time.sleep(60)
         return 0
     if mode == "pid-sleep":
-        Path(sys.argv[2]).write_text(str(os.getpid()), encoding="ascii")
+        _write_pid_atomically(sys.argv[2], os.getpid())
         time.sleep(60)
         return 0
     if mode == "crash":
