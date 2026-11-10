@@ -1,0 +1,236 @@
+{
+ "A": {
+  "runs": [
+   {
+    "label": "A-r1",
+    "wall_s": 644.23,
+    "exit_code": 0,
+    "cpu_s": null,
+    "peak_rss_mb": null,
+    "peak_processes": null,
+    "host_cpu_pct": null,
+    "excluded": true,
+    "testcases": 2717,
+    "skipped": 7,
+    "failed": []
+   },
+   {
+    "label": "A-r2",
+    "wall_s": 464.41,
+    "exit_code": 0,
+    "cpu_s": 347.7,
+    "peak_rss_mb": 389.4,
+    "peak_processes": 8,
+    "host_cpu_pct": 46.5,
+    "excluded": false,
+    "testcases": 2717,
+    "skipped": 7,
+    "failed": []
+   },
+   {
+    "label": "A-r3",
+    "wall_s": 403.37,
+    "exit_code": 0,
+    "cpu_s": 284.3,
+    "peak_rss_mb": 386.5,
+    "peak_processes": 8,
+    "host_cpu_pct": 48.3,
+    "excluded": false,
+    "testcases": 2717,
+    "skipped": 7,
+    "failed": []
+   },
+   {
+    "label": "A-r4",
+    "wall_s": 525.38,
+    "exit_code": 0,
+    "cpu_s": 390.2,
+    "peak_rss_mb": 387.4,
+    "peak_processes": 8,
+    "host_cpu_pct": 58.6,
+    "excluded": false,
+    "testcases": 2717,
+    "skipped": 7,
+    "failed": []
+   }
+  ],
+  "n_used": 3,
+  "median_wall_s": 464.4,
+  "min_wall_s": 403.37,
+  "max_wall_s": 525.38,
+  "median_cpu_s": 347.7,
+  "median_peak_rss_mb": 387.4,
+  "median_change_vs_A_pct": 0.0
+ },
+ "B": {
+  "runs": [
+   {
+    "label": "B-r1",
+    "wall_s": 622.36,
+    "exit_code": 0,
+    "cpu_s": 454.1,
+    "peak_rss_mb": 443.9,
+    "peak_processes": 12,
+    "host_cpu_pct": 68.8,
+    "excluded": true,
+    "testcases": 2717,
+    "skipped": 7,
+    "failed": []
+   },
+   {
+    "label": "B-r2",
+    "wall_s": 429.08,
+    "exit_code": 0,
+    "cpu_s": 354.1,
+    "peak_rss_mb": 489.6,
+    "peak_processes": 12,
+    "host_cpu_pct": 43.1,
+    "excluded": false,
+    "testcases": 2717,
+    "skipped": 7,
+    "failed": []
+   },
+   {
+    "label": "B-r3",
+    "wall_s": 317.87,
+    "exit_code": 0,
+    "cpu_s": 238.2,
+    "peak_rss_mb": 552.1,
+    "peak_processes": 12,
+    "host_cpu_pct": 28.2,
+    "excluded": false,
+    "testcases": 2717,
+    "skipped": 7,
+    "failed": []
+   },
+   {
+    "label": "B-r4",
+    "wall_s": 519.91,
+    "exit_code": 0,
+    "cpu_s": 399.3,
+    "peak_rss_mb": 532.1,
+    "peak_processes": 12,
+    "host_cpu_pct": 63.1,
+    "excluded": false,
+    "testcases": 2717,
+    "skipped": 7,
+    "failed": []
+   }
+  ],
+  "n_used": 3,
+  "median_wall_s": 429.1,
+  "min_wall_s": 317.87,
+  "max_wall_s": 519.91,
+  "median_cpu_s": 354.1,
+  "median_peak_rss_mb": 532.1,
+  "median_change_vs_A_pct": -7.6
+ },
+ "C": {
+  "runs": [
+   {
+    "label": "C-r1",
+    "wall_s": 44.49,
+    "exit_code": 1,
+    "cpu_s": 76.5,
+    "peak_rss_mb": 798.4,
+    "peak_processes": 12,
+    "host_cpu_pct": 68.1,
+    "excluded": true,
+    "testcases": 3,
+    "skipped": 0,
+    "failed": [
+     "::gw0",
+     "::gw3",
+     "::gw2"
+    ]
+   },
+   {
+    "label": "C-r2",
+    "wall_s": 171.04,
+    "exit_code": 0,
+    "cpu_s": 532.1,
+    "peak_rss_mb": 1238.8,
+    "peak_processes": 25,
+    "host_cpu_pct": 69.5,
+    "excluded": false,
+    "testcases": 2717,
+    "skipped": 7,
+    "failed": []
+   },
+   {
+    "label": "C-r3",
+    "wall_s": 251.38,
+    "exit_code": 0,
+    "cpu_s": 645.5,
+    "peak_rss_mb": 991.1,
+    "peak_processes": 24,
+    "host_cpu_pct": 81.3,
+    "excluded": false,
+    "testcases": 2717,
+    "skipped": 7,
+    "failed": []
+   },
+   {
+    "label": "C-r4",
+    "wall_s": 296.19,
+    "exit_code": 1,
+    "cpu_s": 709.8,
+    "peak_rss_mb": 1008.2,
+    "peak_processes": 25,
+    "host_cpu_pct": 87.2,
+    "excluded": true,
+    "testcases": 2717,
+    "skipped": 7,
+    "failed": [
+     "tests.execution.mujoco.test_adversarial_authority::test_a_direct_protocol_request_with_a_substituted_semantic_digest_is_refused[system_under_test-system under test semantic digest]"
+    ]
+   }
+  ],
+  "n_used": 2,
+  "median_wall_s": 211.2,
+  "min_wall_s": 171.04,
+  "max_wall_s": 251.38,
+  "median_cpu_s": 588.8,
+  "median_peak_rss_mb": 1115.0,
+  "median_change_vs_A_pct": -54.5
+ },
+ "D": {
+  "runs": [
+   {
+    "label": "D-r1",
+    "wall_s": 206.07,
+    "exit_code": 1,
+    "cpu_s": 719.9,
+    "peak_rss_mb": 1424.0,
+    "peak_processes": 32,
+    "host_cpu_pct": 79.3,
+    "excluded": true,
+    "testcases": 2717,
+    "skipped": 7,
+    "failed": [
+     "tests.materialization.test_store::test_concurrent_materializations_converge_on_one_manifest_and_object"
+    ]
+   },
+   {
+    "label": "D-r2",
+    "wall_s": 309.0,
+    "exit_code": 0,
+    "cpu_s": 733.0,
+    "peak_rss_mb": 1238.0,
+    "peak_processes": 33,
+    "host_cpu_pct": 98.4,
+    "excluded": false,
+    "testcases": 2717,
+    "skipped": 7,
+    "failed": []
+   }
+  ],
+  "n_used": 1,
+  "median_wall_s": 309.0,
+  "min_wall_s": 309.0,
+  "max_wall_s": 309.0,
+  "median_cpu_s": 733.0,
+  "median_peak_rss_mb": 1238.0,
+  "median_change_vs_A_pct": -33.5
+ }
+}

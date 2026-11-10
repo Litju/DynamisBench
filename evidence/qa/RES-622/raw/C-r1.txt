@@ -1,0 +1,115 @@
+warning: `VIRTUAL_ENV=<HOME>\AppData\Local\uv\cache\builds-v0\.tmpsnMx0J` does not match the project environment path `.venv` and will be ignored; use `--active` to target the active environment instead
+Installed 8 packages in 850ms
+bringing up nodes...
+bringing up nodes...
+
+
+=================================== ERRORS ====================================
+____________________________ ERROR collecting gw0 _____________________________
+Different tests were collected between gw1 and gw0. The difference is:
+--- gw1
+
++++ gw0
+
+@@ -249,9 +249,9 @@
+
+ tests/api/test_session.py::test_a_credential_of_the_wrong_length_is_refused[42]
+ tests/api/test_session.py::test_a_credential_of_the_wrong_length_is_refused[44]
+ tests/api/test_session.py::test_a_credential_of_the_wrong_length_is_refused[64]
+-tests/api/test_session.py::test_a_malformed_credential_is_refused[nUvFxYURtz6k55dl_0nqI1h17C5hUpdm_eINxk2e3PU=]
+-tests/api/test_session.py::test_a_malformed_credential_is_refused[+1VDOPUrMWYNbyyImd527Yt5i7Oms4fFRVfLZ0KFC4-]
+-tests/api/test_session.py::test_a_malformed_credential_is_refused[/4lqp34snsHbYutxFzyaPmHmuv7T6nesjX5PGWr1IOW]
++tests/api/test_session.py::test_a_malformed_credential_is_refused[aM0EovcwJlTERkMRsOZQyl8EewMtPsyShwC9uSK8_gg=]
++tests/api/test_session.py::test_a_malformed_credential_is_refused[+YyjEFNYj1N-vPLt5d2bL83EO-0tthug8lUxUaiONgE]
++tests/api/test_session.py::test_a_malformed_credential_is_refused[/3UMQSF6V2aS5QBJbe0X1oIAKbzKsdPMNk5AHFw_2a2]
+ tests/api/test_session.py::test_a_malformed_credential_is_refused[AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!]
+ tests/api/test_session.py::test_a_malformed_credential_is_refused[h\xe9lloAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA]
+ tests/api/test_session.py::test_a_refusal_names_the_variable_and_never_the_value
+@@ -331,9 +331,9 @@
+
+ tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer ]
+ tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8x]
+ tests/api/test_session.py::test_every_refusal_is_the_same_refusal[bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHhA]
+-tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer 0DE34kUIcOlYmEsJy9e8nCN6CWF7F32zM4EfJpWSOQk]
++tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer 20kkpvQRgjD1w4FMT3wL5w_z3wGt1ZZFIuHmTouzRJg]
+ tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Basic AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8]
+-tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer Pu06dS7UcnyUinDpcws1Ay4QCOhHi2ZRkPh35xazzC]
++tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer NcSviT534d6raZ5eGxPykTxeOM8_xzAl0rgOI7Cm3H]
+ tests/api/test_session.py::test_the_refusal_uses_the_applications_error_vocabulary
+ tests/api/test_session.py::test_the_credential_admits_the_versioned_routes[/api/v1/health]
+ tests/api/test_session.py::test_the_credential_admits_the_versioned_routes[/api/v1/info]
+To see why this happens see 'Known limitations' in documentation for pytest-xdist
+____________________________ ERROR collecting gw3 _____________________________
+Different tests were collected between gw1 and gw3. The difference is:
+--- gw1
+
++++ gw3
+
+@@ -249,9 +249,9 @@
+
+ tests/api/test_session.py::test_a_credential_of_the_wrong_length_is_refused[42]
+ tests/api/test_session.py::test_a_credential_of_the_wrong_length_is_refused[44]
+ tests/api/test_session.py::test_a_credential_of_the_wrong_length_is_refused[64]
+-tests/api/test_session.py::test_a_malformed_credential_is_refused[nUvFxYURtz6k55dl_0nqI1h17C5hUpdm_eINxk2e3PU=]
+-tests/api/test_session.py::test_a_malformed_credential_is_refused[+1VDOPUrMWYNbyyImd527Yt5i7Oms4fFRVfLZ0KFC4-]
+-tests/api/test_session.py::test_a_malformed_credential_is_refused[/4lqp34snsHbYutxFzyaPmHmuv7T6nesjX5PGWr1IOW]
++tests/api/test_session.py::test_a_malformed_credential_is_refused[TYQihiksKuIV4gLPNrkVqgbBXFqLK5j6pubAWIJ6EAw=]
++tests/api/test_session.py::test_a_malformed_credential_is_refused[+i3_IpXxT2N7UEoqosGuuX2Joj1nNW-wE9tg7PeuyMZ]
++tests/api/test_session.py::test_a_malformed_credential_is_refused[/OPFfJL43XLNo7xljzGbkJOPsfJh5qu350DVph6S_x3]
+ tests/api/test_session.py::test_a_malformed_credential_is_refused[AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!]
+ tests/api/test_session.py::test_a_malformed_credential_is_refused[h\xe9lloAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA]
+ tests/api/test_session.py::test_a_refusal_names_the_variable_and_never_the_value
+@@ -331,9 +331,9 @@
+
+ tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer ]
+ tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8x]
+ tests/api/test_session.py::test_every_refusal_is_the_same_refusal[bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHhA]
+-tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer 0DE34kUIcOlYmEsJy9e8nCN6CWF7F32zM4EfJpWSOQk]
++tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer w6yjR3a7QvQBQn0_iyJif3NXMFQ9y2_YibV-DNHN7Is]
+ tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Basic AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8]
+-tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer Pu06dS7UcnyUinDpcws1Ay4QCOhHi2ZRkPh35xazzC]
++tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer emb1ClPesdzTc18ne8MP2G5xV-gotzCvN53dTm-0uD]
+ tests/api/test_session.py::test_the_refusal_uses_the_applications_error_vocabulary
+ tests/api/test_session.py::test_the_credential_admits_the_versioned_routes[/api/v1/health]
+ tests/api/test_session.py::test_the_credential_admits_the_versioned_routes[/api/v1/info]
+To see why this happens see 'Known limitations' in documentation for pytest-xdist
+____________________________ ERROR collecting gw2 _____________________________
+Different tests were collected between gw1 and gw2. The difference is:
+--- gw1
+
++++ gw2
+
+@@ -249,9 +249,9 @@
+
+ tests/api/test_session.py::test_a_credential_of_the_wrong_length_is_refused[42]
+ tests/api/test_session.py::test_a_credential_of_the_wrong_length_is_refused[44]
+ tests/api/test_session.py::test_a_credential_of_the_wrong_length_is_refused[64]
+-tests/api/test_session.py::test_a_malformed_credential_is_refused[nUvFxYURtz6k55dl_0nqI1h17C5hUpdm_eINxk2e3PU=]
+-tests/api/test_session.py::test_a_malformed_credential_is_refused[+1VDOPUrMWYNbyyImd527Yt5i7Oms4fFRVfLZ0KFC4-]
+-tests/api/test_session.py::test_a_malformed_credential_is_refused[/4lqp34snsHbYutxFzyaPmHmuv7T6nesjX5PGWr1IOW]
++tests/api/test_session.py::test_a_malformed_credential_is_refused[J5ADAm-Usnn7RivlNtAVyJsikvEW_DKrJ2XB5nLDNyA=]
++tests/api/test_session.py::test_a_malformed_credential_is_refused[+09M5KmJalRPe_PEUe5cbb26dHCyJ2zw8Xx_vyGuu6X]
++tests/api/test_session.py::test_a_malformed_credential_is_refused[/oPxSEVGW_jdsSq0EnddXkOy7JzqoIZtr7f2VMxjaA1]
+ tests/api/test_session.py::test_a_malformed_credential_is_refused[AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!]
+ tests/api/test_session.py::test_a_malformed_credential_is_refused[h\xe9lloAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA]
+ tests/api/test_session.py::test_a_refusal_names_the_variable_and_never_the_value
+@@ -331,9 +331,9 @@
+
+ tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer ]
+ tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8x]
+ tests/api/test_session.py::test_every_refusal_is_the_same_refusal[bearer AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHhA]
+-tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer 0DE34kUIcOlYmEsJy9e8nCN6CWF7F32zM4EfJpWSOQk]
++tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer Bz5fEkQdYQLioDljCLv22thgXjpfmw31LU9PS4fAlv8]
+ tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Basic AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8]
+-tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer Pu06dS7UcnyUinDpcws1Ay4QCOhHi2ZRkPh35xazzC]
++tests/api/test_session.py::test_every_refusal_is_the_same_refusal[Bearer J6eKdtCsbxPCLwZlNDIIbXjwwGAECXLeUCWdc9kyAO]
+ tests/api/test_session.py::test_the_refusal_uses_the_applications_error_vocabulary
+ tests/api/test_session.py::test_the_credential_admits_the_versioned_routes[/api/v1/health]
+ tests/api/test_session.py::test_the_credential_admits_the_versioned_routes[/api/v1/info]
+To see why this happens see 'Known limitations' in documentation for pytest-xdist
+=========================== short test summary info ===========================
+ERROR gw0 - Different tests were collected between gw1 and gw0. The differenc...
+ERROR gw3 - Different tests were collected between gw1 and gw3. The differenc...
+ERROR gw2 - Different tests were collected between gw1 and gw2. The differenc...
+3 errors in 38.10s
+{"label": "C-r1", "command": ["uv", "run", "--frozen", "--with", "pytest-xdist", "pytest", "-p", "no:cacheprovider", "-q", "--durations=0", "-n", "4", "--dist", "loadfile", "--junitxml=../evidence/qa/RES-622/raw/C-r1.xml"], "started_utc": "2026-11-10T08:27:50.590523+00:00", "exit_code": 1, "wall_s": 44.49, "cpu_s_lower_bound": 76.5, "peak_tree_rss_mb": 798.4, "peak_processes": 12, "mean_host_cpu_percent": 68.1, "host": {"os": "Windows-11-10.0.26300-SP0", "cpu": "Intel64 Family 6 Model 140 Stepping 1, GenuineIntel", "logical_cpus": 8, "ram_gb": 7.4, "python": "3.12.13"}}
