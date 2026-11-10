@@ -1,0 +1,15 @@
+# This file is machine-generated - editing it directly is not advised
+
+julia_version = "1.13.3"
+manifest_format = "2.1"
+project_hash = "acb4facadb4d1a4b7cd345fede9d7ccd642ba7bd"
+
+[[deps.ImpulseOracle]]
+deps = ["SHA"]
+path = "."
+uuid = "5d2f3f0a-6b7e-4c0e-9a51-0f6b7a622001"
+version = "0.1.0"
+
+[[deps.SHA]]
+uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
+version = "1.0.0"

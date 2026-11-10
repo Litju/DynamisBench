@@ -1,0 +1,6 @@
+Test Summary:          | Pass  Total  Time
+closed-form references |   12     12  
+Test Summary:                   | Pass  Total  Time
+adversarial and perturbed cases |    9      9  
+Test Summary:   | Pass  Total  Time
+input rejection |   13     13  
