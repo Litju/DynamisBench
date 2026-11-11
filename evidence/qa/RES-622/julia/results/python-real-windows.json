@@ -1,0 +1,92 @@
+{
+ "schema": "dynamisbench.qa.impulse-oracle/1",
+ "implementation": "python-reference",
+ "input_sha256": "57bbbd95b89300d06d98e7d4412f4973a22ba8ab7572eead31eba40d4ebaac1c",
+ "all_pass": true,
+ "windows": [
+  {
+   "label": "whole-record",
+   "t_start_s": 0.0,
+   "t_end_s": 5.5,
+   "samples": 551,
+   "delta_momentum_n_s": 0.003493399439446699,
+   "net_impulse_n_s": 0.008432145426687044,
+   "residual_n_s": -0.004938745987240345,
+   "u_quad_n_s": 0.0036501781616101424,
+   "tolerance_n_s": 5.12762480416161,
+   "ratio": 0.0009631644622734545,
+   "pass": true,
+   "quadrature_limited": false
+  },
+  {
+   "label": "phase:standing@1",
+   "t_start_s": 0.0,
+   "t_end_s": 0.99,
+   "samples": 100,
+   "delta_momentum_n_s": -1.042280918720108e-05,
+   "net_impulse_n_s": -4.340287919546881e-05,
+   "residual_n_s": 3.298007000826773e-05,
+   "u_quad_n_s": 4.2747221347586415e-05,
+   "tolerance_n_s": 0.9223581807213475,
+   "ratio": 3.575625033484828e-05,
+   "pass": true,
+   "quadrature_limited": false
+  },
+  {
+   "label": "phase:descent@101",
+   "t_start_s": 1.0,
+   "t_end_s": 2.49,
+   "samples": 150,
+   "delta_momentum_n_s": 0.4819079541725403,
+   "net_impulse_n_s": 0.47027236066202305,
+   "residual_n_s": 0.01163559351051724,
+   "u_quad_n_s": 0.025746250066491238,
+   "tolerance_n_s": 1.4138775585664916,
+   "ratio": 0.0082295623408256,
+   "pass": true,
+   "quadrature_limited": false
+  },
+  {
+   "label": "phase:bottom@251",
+   "t_start_s": 2.5,
+   "t_end_s": 2.79,
+   "samples": 30,
+   "delta_momentum_n_s": -0.061476430932753734,
+   "net_impulse_n_s": -0.055648909413505976,
+   "residual_n_s": -0.005827521519247758,
+   "u_quad_n_s": 0.025816428753926948,
+   "tolerance_n_s": 0.29598963725392696,
+   "ratio": 0.01968826197198376,
+   "pass": true,
+   "quadrature_limited": false
+  },
+  {
+   "label": "phase:ascent@281",
+   "t_start_s": 2.8,
+   "t_end_s": 3.99,
+   "samples": 120,
+   "delta_momentum_n_s": -0.472960834394672,
+   "net_impulse_n_s": -0.45453654520097986,
+   "residual_n_s": -0.018424289193692156,
+   "u_quad_n_s": 0.0026214922154231806,
+   "tolerance_n_s": 1.1112632757154235,
+   "ratio": 0.01657958973028307,
+   "pass": true,
+   "quadrature_limited": false
+  },
+  {
+   "label": "phase:return@401",
+   "t_start_s": 4.0,
+   "t_end_s": 5.5,
+   "samples": 151,
+   "delta_momentum_n_s": 0.019067329762952407,
+   "net_impulse_n_s": 0.017846994855952404,
+   "residual_n_s": 0.0012203349070000029,
+   "u_quad_n_s": 0.004400828947233891,
+   "tolerance_n_s": 1.4018484549472339,
+   "ratio": 0.0008705184235095774,
+   "pass": true,
+   "quadrature_limited": false
+  }
+ ]
+}

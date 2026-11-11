@@ -198,6 +198,9 @@ def test_a_credential_of_the_wrong_length_is_refused(length: int) -> None:
         "A" * 42 + "!",
         "héllo" + "A" * 38,
     ],
+    # Stable ids: the values are random per process, and pytest-xdist requires every worker to
+    # collect identical node ids (RES-622).
+    ids=["padded", "standard-plus", "standard-slash", "non-alphabet", "non-ascii"],
 )
 def test_a_malformed_credential_is_refused(value: str | None) -> None:
     """Padded, standard-alphabet, non-alphabet and non-ASCII values are all refused."""
@@ -494,6 +497,17 @@ def test_no_route_is_reachable_without_a_credential(client: TestClient, path: st
         f"Bearer {_valid(43)}",
         f"Basic {CREDENTIAL}",
         f"Bearer {_valid(42)}",
+    ],
+    ids=[
+        "absent",
+        "empty",
+        "scheme-only",
+        "scheme-and-space",
+        "credential-plus-suffix",
+        "credential-one-char-changed",
+        "random-43",
+        "wrong-scheme",
+        "random-42",
     ],
 )
 def test_every_refusal_is_the_same_refusal(client: TestClient, authorization: str | None) -> None:

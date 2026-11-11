@@ -1,0 +1,28 @@
+{
+ "label": "B-r4",
+ "command": [
+  "uv",
+  "run",
+  "--frozen",
+  "pytest",
+  "-p",
+  "no:cacheprovider",
+  "-q",
+  "--durations=0",
+  "--junitxml=../evidence/qa/RES-622/raw/B-r4.xml"
+ ],
+ "started_utc": "2026-11-10T09:15:23.609838+00:00",
+ "exit_code": 0,
+ "wall_s": 519.91,
+ "cpu_s_lower_bound": 399.3,
+ "peak_tree_rss_mb": 532.1,
+ "peak_processes": 12,
+ "mean_host_cpu_percent": 63.1,
+ "host": {
+  "os": "Windows-11-10.0.26300-SP0",
+  "cpu": "Intel64 Family 6 Model 140 Stepping 1, GenuineIntel",
+  "logical_cpus": 8,
+  "ram_gb": 7.4,
+  "python": "3.12.13"
+ }
+}

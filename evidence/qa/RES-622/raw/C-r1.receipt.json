@@ -1,0 +1,34 @@
+{
+ "label": "C-r1",
+ "command": [
+  "uv",
+  "run",
+  "--frozen",
+  "--with",
+  "pytest-xdist",
+  "pytest",
+  "-p",
+  "no:cacheprovider",
+  "-q",
+  "--durations=0",
+  "-n",
+  "4",
+  "--dist",
+  "loadfile",
+  "--junitxml=../evidence/qa/RES-622/raw/C-r1.xml"
+ ],
+ "started_utc": "2026-11-10T08:27:50.590523+00:00",
+ "exit_code": 1,
+ "wall_s": 44.49,
+ "cpu_s_lower_bound": 76.5,
+ "peak_tree_rss_mb": 798.4,
+ "peak_processes": 12,
+ "mean_host_cpu_percent": 68.1,
+ "host": {
+  "os": "Windows-11-10.0.26300-SP0",
+  "cpu": "Intel64 Family 6 Model 140 Stepping 1, GenuineIntel",
+  "logical_cpus": 8,
+  "ram_gb": 7.4,
+  "python": "3.12.13"
+ }
+}

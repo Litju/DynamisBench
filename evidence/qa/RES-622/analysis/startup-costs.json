@@ -1,0 +1,80 @@
+{
+ "worker: interpreter only": {
+  "cmd": [
+   "<python>",
+   "-I",
+   "-c",
+   "pass"
+  ],
+  "min": 0.076,
+  "median": 0.081,
+  "max": 0.218
+ },
+ "worker: import numpy": {
+  "cmd": [
+   "<python>",
+   "-I",
+   "-c",
+   "import numpy"
+  ],
+  "min": 0.401,
+  "median": 0.429,
+  "max": 0.791
+ },
+ "worker: import mujoco": {
+  "cmd": [
+   "<python>",
+   "-I",
+   "-c",
+   "import mujoco"
+  ],
+  "min": 0.457,
+  "median": 0.476,
+  "max": 0.753
+ },
+ "worker: squat --stand": {
+  "cmd": [
+   "<python>",
+   "-I",
+   "-m",
+   "dynamisbench.adapters.mujoco.squat",
+   "--stand"
+  ],
+  "min": 4.63,
+  "median": 5.785,
+  "max": 6.114
+ },
+ "app: interpreter only": {
+  "cmd": [
+   "<python>",
+   "-I",
+   "-c",
+   "pass"
+  ],
+  "min": 0.066,
+  "median": 0.076,
+  "max": 0.098
+ },
+ "app: import numpy, pyarrow": {
+  "cmd": [
+   "<python>",
+   "-I",
+   "-c",
+   "import numpy, pyarrow"
+  ],
+  "min": 0.334,
+  "median": 0.42,
+  "max": 0.564
+ },
+ "app: import fastapi, pydantic, numpy, pyarrow": {
+  "cmd": [
+   "<python>",
+   "-I",
+   "-c",
+   "import fastapi, pydantic, numpy, pyarrow"
+  ],
+  "min": 0.816,
+  "median": 0.886,
+  "max": 0.953
+ }
+}

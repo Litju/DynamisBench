@@ -1,0 +1,28 @@
+{
+ "label": "A-r2",
+ "command": [
+  "uv",
+  "run",
+  "--frozen",
+  "pytest",
+  "-p",
+  "no:cacheprovider",
+  "-q",
+  "--durations=0",
+  "--junitxml=../evidence/qa/RES-622/raw/A-r2.xml"
+ ],
+ "started_utc": "2026-11-10T08:28:36.903006+00:00",
+ "exit_code": 0,
+ "wall_s": 464.41,
+ "cpu_s_lower_bound": 347.7,
+ "peak_tree_rss_mb": 389.4,
+ "peak_processes": 8,
+ "mean_host_cpu_percent": 46.5,
+ "host": {
+  "os": "Windows-11-10.0.26300-SP0",
+  "cpu": "Intel64 Family 6 Model 140 Stepping 1, GenuineIntel",
+  "logical_cpus": 8,
+  "ram_gb": 7.4,
+  "python": "3.12.13"
+ }
+}

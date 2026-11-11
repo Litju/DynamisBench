@@ -1,0 +1,242 @@
+{
+  "claim": "Mechanical consistency and closed-loop forward-dynamics behaviour of a synthetic, population-scaled athlete-barbell model in MuJoCo. Not validated against measured human motion, not subject-specific, not native/canonical/assessment evidence, and not a DynamisBench benchmark execution.",
+  "engine": "mujoco",
+  "engine_version": "3.17.0",
+  "mode": "repetition",
+  "model_sha256": "c91b2fa2ca1e04f920f4685bc23be2a99a64ad697dcd6a40cf5699dc5761a947",
+  "plan": {
+    "ascent_s": 1.2,
+    "blend_width_deg": 40,
+    "bottom_knee_flexion_deg": 120,
+    "bottom_pause_s": 0.3,
+    "descent_s": 1.5,
+    "return_s": 1.5,
+    "standing_s": 1
+  },
+  "python_version": "3.12.13",
+  "repetition": {
+    "command_events": [
+      {
+        "phase": "standing",
+        "t": 0
+      },
+      {
+        "phase": "descent",
+        "t": 1.0000000000000007
+      },
+      {
+        "phase": "bottom",
+        "t": 2.4999999999998357
+      },
+      {
+        "phase": "ascent",
+        "t": 2.7999999999998026
+      },
+      {
+        "phase": "return",
+        "t": 3.9999999999996705
+      }
+    ],
+    "completed": true,
+    "duration_s": 5.500000000000171,
+    "extrema": {
+      "max_abs_activation": 0.4440830107748294,
+      "max_bar_tilt_deg": 0.00020617086044845615,
+      "max_contact_load_sum_error_n": 4.547473508864641e-13,
+      "max_feedforward_residual": 1.0231637759261503e-09,
+      "max_foot_slip_m": 0.0006576778913226616,
+      "max_friction_utilization": 0.3129067065904406,
+      "max_grip_error_m": 5.697393405533791e-05,
+      "max_knee_tracking_error_deg": 0.3296048228810371,
+      "max_momentum_residual_n_s": 0.02933363733073302,
+      "max_other_floor_load_n": 0,
+      "max_penetration_m": 0.0010034281643735397,
+      "max_range_violation_deg": 0,
+      "max_sagittal_tracking_error_deg": 0.3296048228810371,
+      "max_sole_point_slip_m": 0.0006432669641833707,
+      "max_weld_angle_error_deg": 0.0016016376825228947,
+      "max_weld_position_error_m": 7.636131659806512e-05,
+      "min_contact_point_load_n": 31.013555719662097,
+      "min_forefoot_load_fraction_per_foot": 0.3771259067051899,
+      "min_geometric_sole_contacts": 10,
+      "min_heel_load_fraction_per_foot": 0.3839721831351439,
+      "min_joint_limit_margin_deg": 4.065856062465485,
+      "min_loaded_sole_contacts": 10,
+      "saturated_fraction": 0
+    },
+    "failure": "",
+    "steps": 5500,
+    "summary": {
+      "balance": {
+        "com_x_range_m": [
+          0.04706352759378321,
+          0.0527503611112863
+        ],
+        "cop_x_range_m": [
+          0.02240691137115251,
+          0.0664070950187705
+        ],
+        "min_cop_margin_m": 0.06434640531114981,
+        "min_xcom_margin_m": 0.0841042924024922
+      },
+      "barbell": {
+        "horizontal_range_m": 0.0737823978412725,
+        "max_lateral_m": 2.009760368504546e-06,
+        "max_shelf_force_n": 315.89308103037183,
+        "max_tilt_deg": 0.00020616936768632854,
+        "min_shelf_force_n": 161.50567883020847,
+        "peak_down_speed_m_s": 0.8531238631685327,
+        "peak_up_speed_m_s": 1.0685101085531186,
+        "vertical_travel_m": 0.539767184625185,
+        "x_range_m": [
+          0.041687841531133495,
+          0.115470239372406
+        ]
+      },
+      "bottom": {
+        "ankle_dorsiflexion_deg": 33.45090750272077,
+        "bar_height_m": 0.929806509535451,
+        "hip_flexion_deg": 120.08752578775996,
+        "knee_flexion_deg": 120.08665118712814,
+        "lumbar_flexion_deg": -0.001463064385453552,
+        "pelvis_height_m": 0.45495944190605864,
+        "t_s": 2.7,
+        "trunk_inclination_deg": 33.608702549631055
+      },
+      "energy": {
+        "com_drop_m": 0.43300245883497446,
+        "min_actuator_power_w": -566.7001422799942,
+        "peak_actuator_power_w": 999.8777610900386,
+        "potential_energy_change_j": 403.39883847873017
+      },
+      "ground_reaction": {
+        "max_left_share": 0.500014282998424,
+        "max_shear_over_vertical": 0.029004479476399798,
+        "max_vertical_over_weight": 1.3096482036892672,
+        "mean_vertical_over_weight": 1.0000016280025141,
+        "min_left_share": 0.4999920734945721,
+        "min_vertical_over_weight": 0.7578499063888673,
+        "planned_minus_measured_rms_over_weight": 0.009686851241070785
+      },
+      "measured_phases": [
+        {
+          "end_s": 1.32,
+          "phase": "standing",
+          "start_s": 0
+        },
+        {
+          "end_s": 2.41,
+          "phase": "descent",
+          "start_s": 1.32
+        },
+        {
+          "end_s": 2.88,
+          "phase": "bottom",
+          "start_s": 2.41
+        },
+        {
+          "end_s": 3.76,
+          "phase": "ascent",
+          "start_s": 2.88
+        },
+        {
+          "end_s": 5.5,
+          "phase": "standing",
+          "start_s": 3.76
+        }
+      ],
+      "ranges": {
+        "max_abs_lumbar_flexion_deg": 0.3219867597793508,
+        "max_abs_thoracic_flexion_deg": 0.21687053444815643,
+        "max_ankle_dorsiflexion_deg": 33.49524964716125,
+        "max_hip_abduction_deg": 20.407935198022603,
+        "max_hip_flexion_deg": 120.08872935834658,
+        "max_knee_flexion_deg": 120.08665118712814,
+        "max_trunk_inclination_deg": 33.818767603720175,
+        "peak_knee_speed_ascent_deg_s": 178.52736777486317,
+        "peak_knee_speed_descent_deg_s": 144.2961659408012
+      },
+      "return": {
+        "final_com_offset_m": 0.00037302733797669476,
+        "final_max_joint_deviation_deg": 0.048537342251037785,
+        "final_max_joint_speed_deg_s": 0.03298143297498179
+      },
+      "smoothness": {
+        "knee_speed_reversals_in_ascent": 0,
+        "knee_speed_reversals_in_descent": 0
+      },
+      "symmetry": {
+        "max_angle_difference_deg": 0.0004504403235952026,
+        "max_torque_difference_nm": 0.007936615824860382
+      },
+      "torques": {
+        "ankle_dorsiflexion_l": {
+          "peak_extensor_nm": 38.190752119987906,
+          "peak_extensor_nm_per_kg": 0.5092100282665054,
+          "time_of_peak_s": 3.16
+        },
+        "hip_flexion_l": {
+          "peak_extensor_nm": 103.96161116732293,
+          "peak_extensor_nm_per_kg": 1.3861548155643058,
+          "time_of_peak_s": 3.04
+        },
+        "knee_flexion_l": {
+          "peak_extensor_nm": 118.29244284628567,
+          "peak_extensor_nm_per_kg": 1.577232571283809,
+          "time_of_peak_s": 2.99
+        },
+        "lumbar_flexion": {
+          "peak_extensor_nm": 133.2086011191866,
+          "peak_extensor_nm_per_kg": 1.7761146815891546,
+          "time_of_peak_s": 3.01
+        }
+      },
+      "tracking": {
+        "max_knee_error_deg": 0.3295405162686791,
+        "rms_knee_error_deg": 0.10421501985130886
+      }
+    },
+    "synergy_knots": 60,
+    "synergy_off_axis_rotation_rad": 8.497903338009414e-07,
+    "timestep_s": 0.001,
+    "trajectory_sha256": "6724404701cd6675a5d6b5daf7f7fa0bed000581d0d1d3dfe9f8a07efb3a1273",
+    "work": {
+      "ascent": {
+        "damping_dissipation_j": 102.29830889013338,
+        "duration_s": 1.1999999999998678,
+        "mechanical_energy_change_j": 403.1145543317858,
+        "negative_j": -0.0023271234515487033,
+        "positive_j": 505.9420420999768
+      },
+      "bottom": {
+        "damping_dissipation_j": 0.0018507878766272636,
+        "duration_s": 0.29999999999996696,
+        "mechanical_energy_change_j": -0.5911383705871458,
+        "negative_j": -1.0744600642011246,
+        "positive_j": 0.47856618110508453
+      },
+      "descent": {
+        "damping_dissipation_j": 81.71085803341893,
+        "duration_s": 1.499999999999835,
+        "mechanical_energy_change_j": -402.4460173861787,
+        "negative_j": -320.38180890112017,
+        "positive_j": 0.09670546502712975
+      },
+      "return": {
+        "damping_dissipation_j": 0.0006546943672486283,
+        "duration_s": 1.500000000000501,
+        "mechanical_energy_change_j": -0.0828251815553358,
+        "negative_j": -0.10357969673365475,
+        "positive_j": 0.020910920614926224
+      },
+      "standing": {
+        "damping_dissipation_j": 1.808569963993939e-10,
+        "duration_s": 1.0000000000000007,
+        "mechanical_energy_change_j": -0.00012514041418398847,
+        "negative_j": -9.492894220013576e-06,
+        "positive_j": 2.462878465755088e-06
+      }
+    }
+  },
+  "schema": "dynamisbench.mujoco.squat.observation/1"
+}
