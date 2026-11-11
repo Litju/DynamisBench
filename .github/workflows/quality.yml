@@ -191,6 +191,12 @@ jobs:
         run: uv run pytest --junitxml=evidence/pytest.xml
         env:
           HYPOTHESIS_PROFILE: ci
+      # Temporary RES-640 branch-only reproduction: read-only, no acceptance promotion.
+      # This runs even when pytest fails, so the actual failed Windows host can be sampled.
+      # Results appear in the job log; it publishes no additional qualification artifact.
+      - name: RES-640 keyframe reproducibility probe (diagnostic only)
+        if: ${{ always() && github.event_name == 'pull_request' && github.head_ref == 'codex/res-640-keyframe-diagnostics' }}
+        run: uv run python tools/mujoco_squat_keyframe_probe.py --runs 3
       # The columnar cold-import regression was found on Windows: concurrent first requests
       # imported NumPy/PyArrow in several request threads and the import failed. It is named
       # here so it runs as its own step on both images (and cannot be lost to a skip or a
