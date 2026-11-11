@@ -1,0 +1,23 @@
+Third-party reference geometry used by the DynamisBench workbench design prototype (display only).
+
+MyoSim (MyoLegs, MyoTorso) — https://github.com/MyoHub/myo_sim
+  commit 93b0ca8f4ec90c9899ee7f05fee561e9911da91b (2026-09-16)
+  Copyright 2020 Vikash Kumar, Vittorio Caggiano, Huawei Wang and contributors
+  Licensed under the Apache License, Version 2.0 (see LICENSE in this directory).
+  Files: xml/myolegs_chain.xml, xml/myolegs_assets.xml, xml/myotorso_chain.xml,
+         xml/myotorso_assets.xml, meshes/*.stl (unmodified copies).
+
+Upstream model: Rajagopal A, Dembia CL, DeMers MS, Delp DD, Hicks JL, Delp SL (2016).
+  Full-Body Musculoskeletal Model for Muscle-Driven Simulation of Human Gait.
+  IEEE Trans Biomed Eng. doi:10.1109/TBME.2016.2586891 — https://simtk.org/projects/full_body
+  Copyright (c) 2015, Stanford University. MIT License:
+  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+  associated documentation files (the "Software"), to deal in the Software without restriction,
+  including without limitation the rights to use, copy, modify, merge, publish, distribute,
+  sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions: The above copyright notice and this
+  permission notice shall be included in all copies or substantial portions of the Software.
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
+Not a DynamisBench realization, not qualified, not evidence. No muscle, contact or equality
+constraint is evaluated by the prototype.

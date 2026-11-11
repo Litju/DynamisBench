@@ -1,0 +1,2 @@
+# Third-party binary meshes must be stored byte-exact (see evidence/FREEZE-MANIFEST.sha256).
+*.stl binary
