@@ -1,14 +1,15 @@
 # RES-622 — Scientific QA performance and Julia numerical-oracle pilot: report and decision
 
-Baseline: protected `main` `3eda5c60717af360566fa3f5792eb5bc8e38670e`. Experimental, nonblocking; no production,
+Unchanged-main code reference: protected `main` `3eda5c60717af360566fa3f5792eb5bc8e38670e`. Experimental, nonblocking; no production,
 physics, scientific-contract, VM Workbench or required-CI change. Details: [`PROFILE.md`](PROFILE.md) (Gate A),
 [`julia/`](julia/) (Gate B). All measurements are from one Windows 11 laptop (4C/8T, 7.4 GB) plus a WSL2 Ubuntu
 guest on the same machine; **no hosted-runner data**, so absolute times do not transfer to `windows-2025` / `ubuntu-24.04`.
 
 ## DECISION
 
-**1. KEEP PYTHON with optimized QA execution.** Julia is **not promoted**: `NO_MEASURED_BENEFIT` for speed, and
-the scientific-verification gain comes from the *invariant*, not from the language.
+**Decision: keep Python, do not promote Julia or xdist, and leave prewarming opt-in.** Julia is not promoted
+for speed (`NO_MEASURED_BENEFIT`); scientific verification comes from the invariant, not the language.
+Prewarming remains opt-in because the experiment does not establish a reliable benefit over unchanged main.
 
 * Optionally keep the Julia oracle under `evidence/qa/RES-622/julia/` as a nonblocking cross-check; do not add it
   to required CI, the installer or `uv`/`pnpm` lockfiles without a separate ADR.
@@ -16,27 +17,32 @@ the scientific-verification gain comes from the *invariant*, not from the langua
   frozen spec (`julia/compare_python.py`, 0.24 s, 31 MB, bitwise-identical output) delivers it without a
   second runtime. Its independence rests on the spec and its closed-form qualification, which are language-neutral.
 
-## Gate A — measured bottlenecks and what was achieved
+## Gate A — measured bottlenecks and scheduling experiments
 
-Clean serial suite (A-r3, 401 s): `tests/api` 34 % (real sidecar subprocesses), `tests/execution/mujoco_squat`
+Clean A suite (A-r3; pytest serial with a one-worker eager-prewarm pool, 401 s): `tests/api` 34 %
+(real sidecar subprocesses), `tests/execution/mujoco_squat`
 15 % (MuJoCo mode runs + negative controls), Hypothesis properties 12–16 %, MuJoCo worker adversarial tests 10 %.
 Phase split: call 86 %, fixture setup 11 %, teardown ≈ 0. Interpreter/import start-up is small (0.08 s bare, ≤ 0.9 s
 with the app imports); **Python numerical computation is not a bottleneck**, the engine's simulation and process
 creation are.
 
-| Condition (full suite, assertions unchanged) | Median wall | vs serial | Outcome |
+| Condition (full suite, assertions unchanged) | Median wall | vs A | Outcome |
 | --- | ---: | ---: | --- |
-| A serial (pre-change behaviour) | 464 s (403–525, n=3) | — | 3/3 pass |
-| B squat modes prewarmed concurrently (**committed**) | 429 s (318–520, n=3) | −7.6 % | 3/3 pass; inside ±13 % host noise |
+| A pytest serial; one-worker eager prewarm (matrix comparison baseline, not unchanged main) | 464 s (403–525, n=3) | — | 3/3 pass |
+| B pytest serial; four-worker squat prewarm (**opt-in only**) | 429 s (318–520, n=3) | −7.6 % vs A | 3/3 pass; inside ±13 % host noise |
 | C xdist `-n 4 --dist loadfile` | 211 s (171–251, n=2 passing) | −54 % | 2 of 4 attempts passed (1 collection error, fixed; 1 intermittent failure) |
 | D xdist `-n 4` + prewarm | 309 s (passing run) | −33 % | 1 of 2 passed (intermittent failure) |
 
-* Achieved and kept: the bounded squat-mode prewarm (tests-only, serial behaviour restorable with
-  `DYNAMISBENCH_QA_SQUAT_PARALLEL=1`) and stable node ids that make xdist collection possible. The prewarm's
-  suite-level gain is **not statistically separable from noise** here; the isolated squat directory went 155 s → 54 s.
-* **Not adopted: xdist.** The ≈ 2× speed-up is real, but it exposed two intermittent failures that never occurred in
-  serial runs: the worker reporting `machine=''` on Windows (admission refused for the wrong reason) and a Windows
-  `PermissionError` in the concurrent-materialization test. Those need root-cause issues first; they are findings,
+* Matrix A is the historical one-worker eager-prewarm condition, not unchanged-main behavior. The original
+  main fixtures ran modes synchronously on demand. No matched unchanged-main timing is in these receipts.
+* Stable parametrized node ids are kept. Bounded concurrent prewarming is available only by explicitly setting
+  `DYNAMISBENCH_QA_SQUAT_PARALLEL`; unset preserves the original synchronous on-demand behavior. The A/B median
+  difference (−7.6 %) is inside host noise and is not evidence of a speed improvement over unchanged main.
+* **Not adopted: xdist.** Passing xdist runs had lower observed wall times, but the small, uneven sample and
+  intermittent failures do not qualify a reliable speed improvement. It exposed two failures, neither observed
+  under the non-xdist A/B conditions: the worker reported `machine=''` on Windows (admission refused for the
+  wrong reason), and Windows raised `PermissionError` in the concurrent-materialization test. Those need
+  root-cause issues first; they are findings,
   not something to hide with retries or timeouts.
 * Earlier runs overlapping my own setup (A-r1, B-r1) are retained and excluded from medians.
 

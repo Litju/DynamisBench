@@ -1,6 +1,12 @@
 # RES-622 Gate A — Python QA test-suite profile
 
-Baseline commit: `3eda5c60717af360566fa3f5792eb5bc8e38670e` (protected `main`, PR #27 merge).
+Unchanged-main code reference: `3eda5c60717af360566fa3f5792eb5bc8e38670e` (protected `main`, PR #27 merge).
+
+The recorded matrix A runs did not execute unchanged main. A is the experiment's comparison baseline: the
+PR fixture code eagerly submits every selected squat mode to a one-worker pool when the first squat fixture
+is requested. Unchanged main instead ran each mode synchronously when its own fixture was first requested.
+The A/B figures compare one-worker eager prewarming with bounded concurrent eager prewarming; they do not
+estimate a change versus unchanged main.
 Reference CI figure from the issue: pytest/Hypothesis step 206 s (Windows) / 197 s (Linux), run 107.
 
 ## Environment (every row below ran on this one host; Linux was not measured here)
@@ -20,7 +26,7 @@ runs (laptop power/thermal state; mean host CPU 28–48 % during serial runs, i.
 Two early runs (`A-r1`, `B-r1`) overlapped with my own setup work (dependency installs, a collection probe,
 a 300 MB download) and are kept in `raw/` but excluded from medians.
 
-## Where the time goes (clean serial run `A-r3`, 401 s wall; `analysis/pareto-A-r3.json`)
+## Where the time goes (clean A run `A-r3`: pytest serial, one-worker eager prewarm; 401 s wall; `analysis/pareto-A-r3.json`)
 
 `pytest --durations=0` attributes 94 % of the wall time to tests (phase split below); pytest hides durations
 under 5 ms (6 800 items, ≤ 34 s combined). Collection is ~10–15 s (probe: `--collect-only` 29 s including `uv run`
@@ -47,32 +53,34 @@ and are not candidates for reuse).
 
 ## Remediations evaluated (matrix in `raw/`, summary `analysis/matrix-summary.json`)
 
-All conditions ran the full unmodified-assertion suite on this host (median of passing runs, wall seconds; A and B exclude the contaminated r1):
+All conditions ran the full unmodified-assertion suite on this host (median of passing runs, wall seconds; A and B exclude the contaminated r1). A is not an unchanged-main run.
 
-| Cond | Change | Valid runs | Median | Range | vs A | Peak RSS (tree) | Passed |
+| Cond | Change | Valid runs | Median | Range | Median delta vs A | Peak RSS (tree) | Passed |
 | --- | --- | ---: | ---: | --- | ---: | ---: | --- |
-| A | serial; squat modes serial (= pre-change behaviour, `DYNAMISBENCH_QA_SQUAT_PARALLEL=1`) | 3 | 464 | 403–525 | — | 0.39 GB | 3/3 |
-| B | serial; squat modes prewarmed concurrently in a bounded pool (≤ 4) | 3 | 429 | 318–520 | −7.6 % | 0.53 GB | 3/3 |
+| A | pytest serial; selected squat modes eagerly queued on a one-worker pool (`DYNAMISBENCH_QA_SQUAT_PARALLEL=1`; not unchanged-main scheduling) | 3 | 464 | 403–525 | — | 0.39 GB | 3/3 |
+| B | pytest serial; selected squat modes prewarmed concurrently in a bounded pool (opt-in, `DYNAMISBENCH_QA_SQUAT_PARALLEL=4`) | 3 | 429 | 318–520 | −7.6 % | 0.53 GB | 3/3 |
 | C | pytest-xdist `-n 4 --dist loadfile`, squat modes serial per worker | 2 passing (+1 failing 296 s, +1 collection error) | 211 | 171–251 | −54 % | 1.1 GB | **2/4 attempts** |
 | D | xdist `-n 4` + prewarm pool (up to 32 processes) | 1 passing (309 s) + 1 failing (206 s) | 309 | — | −33 % | 1.2 GB | **1/2** |
 
 Reading the table:
 
-* **B (kept, committed).** The squat-mode prewarm removes a measured ≈ 45–100 s of *serial* fixture setup
-  from the critical path (the 8 independent mode runs now overlap, longest-first). Its whole-suite benefit
-  (−7.6 % median) is **inside the ±13 % run-to-run noise** of this host; the isolated squat directory improved
-  155 s → 54 s in a head-to-head (`tests/execution/mujoco_squat`, one run each). It is safe: same processes,
-  same assertions, a failing mode fails only the tests that use it, `DYNAMISBENCH_QA_SQUAT_PARALLEL=1` restores
-  serial behaviour. It is the part of the saving that also helps *without* xdist.
-* **C/D (xdist) are not adopted.** xdist roughly halves the wall time, but: (1) it **could not run at all**
+* **B (opt-in experiment only).** B changes fixture scheduling by eagerly submitting selected modes to a
+  bounded pool. Its median was 7.6% lower than A, but this descriptive difference is within the reported
+  ±13% run-to-run noise. It is not a controlled estimate against unchanged main, and no hosted Windows/Linux
+  A/B qualification exists. The isolated-directory timings were 155 s for A and 54 s for B in one head-to-head;
+  this descriptive observation does not establish a reliable speed benefit. Unset
+  `DYNAMISBENCH_QA_SQUAT_PARALLEL` retains synchronous on-demand fixtures; setting it opts into eager
+  prewarming.
+* **C/D (xdist) are not adopted.** Passing C runs had shorter observed wall times, but the uneven samples and
+  failures do not support a reliable speed claim: (1) xdist **could not run at all**
   until two parametrized tests stopped embedding per-process random values in their node ids
   (`tests/api/test_session.py`; fixed with explicit `ids=`, values and assertions unchanged — run C-r1 shows the
   collection failure); (2) under load it exposed **two intermittent failures**, both in tests that touch real
   processes/files: `test_a_direct_protocol_request_with_a_substituted_semantic_digest_is_refused[system_under_test…]`
   (C-r4: the worker reported `machine=''` from `platform.machine()` on Windows, so admission refused for the
   wrong reason) and `tests/materialization/test_store.py::test_concurrent_materializations_converge_on_one_manifest_and_object`
-  (D-r1: Windows `PermissionError` during concurrent replace). Neither failure occurred in 4 serial runs.
-  A QA speed-up that makes a required gate flaky is a loss; these need root-cause issues (the first is plausibly
+  (D-r1: Windows `PermissionError` during concurrent replace). Neither failure occurred in the four non-xdist A/B runs cited above.
+  A shorter required gate that is flaky is a loss; these need root-cause issues (the first is plausibly
   a latent platform-detection fragility in the isolated worker's sanitized environment; the second a Windows
   atomic-replace race under CPU pressure) before xdist could be proposed for the required matrix.
 * Oversubscription (D, 32 processes on 8 logical CPUs, 1.2 GB) is strictly worse than C.
@@ -87,8 +95,9 @@ Reading the table:
 
 ## What changed in this commit (tests-only; no production code, assertion, timeout or reference touched)
 
-1. `python/tests/execution/mujoco_squat/conftest.py` — bounded concurrent prewarm of exactly the squat modes the
-   selected tests use (`DYNAMISBENCH_QA_SQUAT_PARALLEL`, default `min(4, CPUs)`).
+1. `python/tests/execution/mujoco_squat/conftest.py` — synchronous on-demand fixtures by default. Setting
+   `DYNAMISBENCH_QA_SQUAT_PARALLEL` opts into eager prewarming, capped at `min(4, CPUs)`; value `1`
+   reproduces matrix A's one-worker eager condition, not unchanged-main scheduling.
 2. `python/tests/api/test_session.py` — stable `ids=` for two randomly-valued parametrizations.
 3. `evidence/qa/RES-622/{raw,analysis}` — raw logs/receipts (home paths scrubbed), measurement and analysis
    scripts, reproduction:

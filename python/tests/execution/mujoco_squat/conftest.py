@@ -1,13 +1,9 @@
-"""Session fixtures: each fixed squat-model mode runs once in the isolated worker.
+"""Session fixtures for the fixed squat-model modes.
 
-RES-622: the eight modes are independent, single-threaded, deterministic processes with no
-shared state (each owns a private scratch directory and interpreter). Run one after another
-they put about two minutes of wall time on the critical path of the suite. They are therefore
-launched together, in a bounded pool, the first time any of them is requested, and only the
-modes the *selected* tests actually use are launched. Each mode is still run exactly once,
-in its own isolated process, through the same ``run_mode`` and the same assertions; a failure
-of one mode fails only the tests that use it. ``DYNAMISBENCH_QA_SQUAT_PARALLEL=1`` restores the
-strictly serial behaviour; the default is ``min(4, CPU count)``.
+With no opt-in setting, each mode runs synchronously when its fixture is first requested,
+matching the original on-demand behavior. Set DYNAMISBENCH_QA_SQUAT_PARALLEL to an integer
+to opt into eager prewarming of selected modes in a bounded pool. A value of 1 reproduces
+the historical one-worker matrix condition; it is not equivalent to the original scheduling.
 """
 
 from __future__ import annotations
@@ -31,73 +27,107 @@ _MODES: Final = {
     "squat_report": "--report",
     "squat_flight": "--flight",
 }
+_MAX_PREWARM_WORKERS: Final = 4
 
 
-def _parallelism() -> int:
+def _parallelism() -> int | None:
     configured = os.environ.get("DYNAMISBENCH_QA_SQUAT_PARALLEL")
-    if configured is not None:
-        return max(1, int(configured))
-    return max(1, min(4, os.cpu_count() or 1))
+    if configured is None:
+        return None
+
+    requested = max(1, int(configured))
+    available = max(1, min(_MAX_PREWARM_WORKERS, os.cpu_count() or 1))
+    return min(requested, available)
 
 
 @pytest.fixture(scope="session")
-def _squat_runs(request: pytest.FixtureRequest) -> dict[str, Future[dict[str, Any]]]:
+def _squat_runs(
+    request: pytest.FixtureRequest,
+) -> dict[str, Future[dict[str, Any]]] | None:
+    workers = _parallelism()
+    if workers is None:
+        return None
+
     needed = [
         name
         for name in _MODES
         if any(name in getattr(item, "fixturenames", ()) for item in request.session.items)
     ]
-    workers = _parallelism()
+    if not needed:
+        return {}
+
     pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="squat-mode")
-    # A pool of one runs the modes strictly in submission order, which is the serial behaviour.
     runs = {name: pool.submit(run_mode, _MODES[name]) for name in needed}
     request.addfinalizer(lambda: pool.shutdown(wait=True))
     return runs
 
 
 def _observation(name: str, runs: dict[str, Future[dict[str, Any]]]) -> dict[str, Any]:
-    # ``Future.result`` re-raises the mode's own failure (including ``pytest.fail``) here, in
-    # the test that needs it.
+    # Future.result re-raises the mode's own failure in the test that needs it.
     return runs[name].result()
 
 
-@pytest.fixture(scope="session")
-def squat_report(_squat_runs: dict[str, Future[dict[str, Any]]]) -> dict[str, Any]:
-    return _observation("squat_report", _squat_runs)
+def _mode_result(
+    name: str,
+    mode: str,
+    runs: dict[str, Future[dict[str, Any]]] | None,
+) -> dict[str, Any]:
+    if runs is None:
+        return run_mode(mode)
+    return _observation(name, runs)
 
 
 @pytest.fixture(scope="session")
-def squat_stand(_squat_runs: dict[str, Future[dict[str, Any]]]) -> dict[str, Any]:
-    return _observation("squat_stand", _squat_runs)
+def squat_report(
+    _squat_runs: dict[str, Future[dict[str, Any]]] | None,
+) -> dict[str, Any]:
+    return _mode_result("squat_report", "--report", _squat_runs)
 
 
 @pytest.fixture(scope="session")
-def squat_perturb(_squat_runs: dict[str, Future[dict[str, Any]]]) -> dict[str, Any]:
-    return _observation("squat_perturb", _squat_runs)
+def squat_stand(
+    _squat_runs: dict[str, Future[dict[str, Any]]] | None,
+) -> dict[str, Any]:
+    return _mode_result("squat_stand", "--stand", _squat_runs)
 
 
 @pytest.fixture(scope="session")
-def squat_passive(_squat_runs: dict[str, Future[dict[str, Any]]]) -> dict[str, Any]:
-    return _observation("squat_passive", _squat_runs)
+def squat_perturb(
+    _squat_runs: dict[str, Future[dict[str, Any]]] | None,
+) -> dict[str, Any]:
+    return _mode_result("squat_perturb", "--perturb", _squat_runs)
 
 
 @pytest.fixture(scope="session")
-def squat_flight(_squat_runs: dict[str, Future[dict[str, Any]]]) -> dict[str, Any]:
-    return _observation("squat_flight", _squat_runs)
+def squat_passive(
+    _squat_runs: dict[str, Future[dict[str, Any]]] | None,
+) -> dict[str, Any]:
+    return _mode_result("squat_passive", "--passive", _squat_runs)
 
 
 @pytest.fixture(scope="session")
-def squat_statics(_squat_runs: dict[str, Future[dict[str, Any]]]) -> dict[str, Any]:
-    return _observation("squat_statics", _squat_runs)
+def squat_flight(
+    _squat_runs: dict[str, Future[dict[str, Any]]] | None,
+) -> dict[str, Any]:
+    return _mode_result("squat_flight", "--flight", _squat_runs)
 
 
 @pytest.fixture(scope="session")
-def squat_repetition(_squat_runs: dict[str, Future[dict[str, Any]]]) -> dict[str, Any]:
-    return _observation("squat_repetition", _squat_runs)
+def squat_statics(
+    _squat_runs: dict[str, Future[dict[str, Any]]] | None,
+) -> dict[str, Any]:
+    return _mode_result("squat_statics", "--squat", _squat_runs)
+
+
+@pytest.fixture(scope="session")
+def squat_repetition(
+    _squat_runs: dict[str, Future[dict[str, Any]]] | None,
+) -> dict[str, Any]:
+    return _mode_result("squat_repetition", "--repetition", _squat_runs)
 
 
 @pytest.fixture(scope="session")
 def squat_repetition_timestep(
-    _squat_runs: dict[str, Future[dict[str, Any]]],
+    _squat_runs: dict[str, Future[dict[str, Any]]] | None,
 ) -> dict[str, Any]:
-    return _observation("squat_repetition_timestep", _squat_runs)
+    return _mode_result("squat_repetition_timestep", "--repetition-timestep", _squat_runs)
