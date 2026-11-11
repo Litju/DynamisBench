@@ -2,7 +2,7 @@
 
 From python/ with the isolated worker already installed:
 
-    uv run python tools/mujoco_squat_keyframe_probe.py --runs 3 --output keyframe-probe.json
+    uv run python -m tools.mujoco_squat_keyframe_probe --runs 3 --output keyframe-probe.json
 
 The probe never regenerates, overwrites, or repins the canonical MJCF. Its output is
 DIAGNOSTIC ONLY: a successful probe process does not qualify numerical reproducibility.

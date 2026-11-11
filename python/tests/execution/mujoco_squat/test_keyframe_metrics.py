@@ -18,8 +18,10 @@ class KeyframeMetricsTests(unittest.TestCase):
 
     def test_ranked_coordinates_and_failure_are_not_masked(self) -> None:
         actual = vector_diagnostics(
-            [0.0, 0.0, 0.0, 0.0], [0.0, 2e-6, -3.829e-6, 1e-7],
-            tolerance=1e-6, top_n=3,
+            [0.0, 0.0, 0.0, 0.0],
+            [0.0, 2e-6, -3.829e-6, 1e-7],
+            tolerance=1e-6,
+            top_n=3,
         )
         self.assertFalse(actual["within_tolerance"])
         self.assertEqual(actual["exceeding_count"], 2)

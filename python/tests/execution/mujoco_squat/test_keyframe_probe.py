@@ -37,9 +37,11 @@ class KeyframeProbeTests(unittest.TestCase):
 
     def test_detects_between_run_drift_separately(self) -> None:
         results = summarize_observations(
-            [0.0], [0.0],
+            [0.0],
+            [0.0],
             [self._obs([0.0], [0.0]), self._obs([0.000002], [0.0])],
-            tolerance=0.000001, model_sha256="a" * 64,
+            tolerance=0.000001,
+            model_sha256="a" * 64,
         )
         self.assertFalse(results["all_within_current_tolerance"])
         self.assertFalse(results["runs"][1]["versus_first_run"]["qpos"]["within_tolerance"])
@@ -50,13 +52,19 @@ class KeyframeProbeTests(unittest.TestCase):
             summarize_observations([0.0], [0.0], [], tolerance=1e-6, model_sha256="a")
         with self.assertRaises(ValueError):
             summarize_observations(
-                [0.0], [0.0], [self._obs([0.0], [0.0], float("nan"))],
-                tolerance=1e-6, model_sha256="a",
+                [0.0],
+                [0.0],
+                [self._obs([0.0], [0.0], float("nan"))],
+                tolerance=1e-6,
+                model_sha256="a",
             )
         with self.assertRaises(ValueError):
             summarize_observations(
-                [0.0], [0.0], [self._obs([0.0], [0.0])] * (MAX_RUNS + 1),
-                tolerance=1e-6, model_sha256="a",
+                [0.0],
+                [0.0],
+                [self._obs([0.0], [0.0])] * (MAX_RUNS + 1),
+                tolerance=1e-6,
+                model_sha256="a",
             )
 
 
