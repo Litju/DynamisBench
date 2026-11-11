@@ -48,6 +48,41 @@ No trajectory, keyframe animation or kinematic playback is used anywhere.
    excitations: tonic torque plus joint stiffness and damping feedback (the decentralised
    joint-impedance model of posture). MuJoCo integrates everything else.
 
+### The world frame of the standing reference
+
+The model is exactly invariant under a rigid rotation of the whole system (athlete and barbell)
+about the world vertical axis: the floor is an infinite plane, gravity is vertical, every
+actuator is an internal joint torque, and the sole contacts resist yaw *rate* but hold no
+positional reference. The athlete's **heading** is therefore a gauge coordinate, not a physical
+quantity: a state and its rotation by any angle are the same squat, with identical energy,
+joint angles, contact loads and trajectory.
+
+The contact settle cannot determine it. Its inverse-dynamics Jacobian is numerically singular
+along the three rigid placements in the floor plane — measured condition number ~5e17, with the
+three smallest singular values at 1e-7 and below against 1e7 for the vertical and sagittal
+directions — so its least-squares step injects an arbitrary placement. The two translations it
+injects follow the deterministic structure of the solve and are reproduced across
+floating-point environments; the heading does not, because a whole-body rotation produces no
+generalised force at all. It is sampled from last-bit rounding at the 1e-6 rad level, which is
+why a pinned heading is not reproducible across hosts.
+
+The generator therefore writes the **declared representative** of that equivalence class: the
+relaxed state is rotated rigidly about the vertical axis through the pelvis until the pelvis
+heading is exactly zero ([`reference.py`](reference.py)). `tools/mujoco_squat_model.py
+--check` applies the same projection to the packaged keyframe before the elementwise
+comparison, so the check compares physical content and nothing else, at the unchanged 1e-6
+tolerance. The projection changes no physical quantity: the whole-system potential energy is
+identical to the last bit, and a 1 s closed-loop standing run started from the state rotated by
+1e-2 rad reproduces the unrotated run's physical state to 1e-15 once un-rotated
+(`tests/execution/mujoco_squat/test_squat_reference_frame.py`). That suite also proves that a
+*physical* change of the same size is still rejected.
+
+[`tools/mujoco_squat_reference_stability.py`](tools/mujoco_squat_reference_stability.py)
+regenerates the reference under different BLAS/LAPACK dispatches on one host and reports raw,
+declared-representative and gauge-invariant agreement. It is a diagnostic receipt, not a
+qualification. The packaged asset itself keeps the heading it was generated with; the check
+projects it, and a future reviewed `--write` will store the canonical representative.
+
 Squat postures use the same pipeline with one extra hard constraint (knee flexion) and one
 coordination preference: the trunk stays parallel to the shank, as in a well-executed high-bar
 squat. They are static equilibria, not frames of an animation.

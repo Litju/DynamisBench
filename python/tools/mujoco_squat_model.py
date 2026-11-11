@@ -28,10 +28,11 @@ import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ElementTree
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Final
 
-from dynamisbench.adapters.mujoco.squat import contract, mjcf
+from dynamisbench.adapters.mujoco.squat import contract, mjcf, reference
 
 __all__ = ["keyframe_of", "main"]
 
@@ -49,6 +50,11 @@ KEYFRAME_TOLERANCE: Final = 1e-6
 """Absolute tolerance between a packaged and a regenerated keyframe value (m, rad or unitless
 activation). The keyframe is the end state of a 30 s relaxation, so last-bit floating-point
 differences between platforms are admitted; anything physical is not."""
+
+CANONICAL_HEADING_TOLERANCE: Final = 1e-12
+"""Structural bound on a regenerated reference's pelvis heading, radians. The generator
+projects the relaxed state onto the declared representative, so its heading is zero to
+machine precision on every platform; this only refuses a generator that stopped projecting."""
 
 
 class SquatModelToolError(RuntimeError):
@@ -73,21 +79,33 @@ def worker_python() -> Path:
     return candidate
 
 
-def _worker_environment(scratch: Path) -> dict[str, str]:
+def worker_environment(scratch: Path, extra: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The minimal worker environment, plus explicit diagnostic overrides.
+
+    The whitelist is the production set. ``extra`` exists for the RES-640 stability receipt,
+    which replays the generator under a different numeric-library dispatch; production
+    callers pass nothing and the worker sees only the whitelisted variables.
+    """
     environment = {"PYTHONHASHSEED": "0", "TMP": str(scratch), "TEMP": str(scratch)}
     for name in ("SYSTEMROOT", "WINDIR", "PATH", "HOME", "USERPROFILE", "LANG"):
         if name in os.environ:
             environment[name] = os.environ[name]
+    if extra:
+        environment.update({str(name): str(value) for name, value in extra.items()})
     return environment
 
 
-def generate_keyframe() -> dict[str, Any]:
-    """Run the worker's ``--keyframe`` mode and return its observation."""
+def generate_keyframe(*, environment_extra: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Run the worker's ``--keyframe`` mode and return its observation.
+
+    ``environment_extra`` is diagnostic only (see :func:`worker_environment`); the packaged
+    reference is generated with the default environment.
+    """
     with tempfile.TemporaryDirectory(prefix="dynamisbench-squat-keyframe-") as scratch:
         completed = subprocess.run(
             [str(worker_python()), "-I", "-m", "dynamisbench.adapters.mujoco.squat", "--keyframe"],
             cwd=scratch,
-            env=_worker_environment(Path(scratch)),
+            env=worker_environment(Path(scratch), environment_extra),
             capture_output=True,
             text=True,
             timeout=600,
@@ -117,7 +135,17 @@ def keyframe_of(content: bytes) -> tuple[list[float], list[float]]:
 
 
 def check() -> list[str]:
-    """Return every way the packaged asset differs from its authority (empty when it agrees)."""
+    """Return every way the packaged asset differs from its authority (empty when it agrees).
+
+    The keyframe is compared as the *physical* standing state: both the packaged and the
+    regenerated ``qpos`` are projected onto the declared representative of the model's exact
+    world-frame gauge before the elementwise comparison. A whole-system heading is not a
+    physical quantity of a model whose floor is an infinite plane (see
+    :mod:`dynamisbench.adapters.mujoco.squat.reference`), and the generator's contact settle
+    cannot determine it: it samples it from last-bit rounding at the 1e-6 rad level, which is
+    the drift RES-640 diagnosed. Every other coordinate is compared exactly as before, with
+    the same tolerance; nothing physical is excused.
+    """
     problems: list[str] = []
     content = ASSET.read_bytes()
     qpos, act = keyframe_of(content)
@@ -127,7 +155,24 @@ def check() -> list[str]:
     if digest != contract.MODEL_SHA256:
         problems.append(f"the asset digest {digest} is not the pinned {contract.MODEL_SHA256}")
     fresh = generate_keyframe()
-    for label, packaged, generated in (("qpos", qpos, fresh["qpos"]), ("act", act, fresh["act"])):
+    expected = reference.BAR_QPOS + 7
+    if len(qpos) != expected or len(fresh["qpos"]) != expected:
+        problems.append(f"the keyframe qpos length changed (expected {expected})")
+        packaged_qpos = qpos
+        regenerated_qpos = fresh["qpos"]
+    else:
+        heading = reference.pelvis_heading_rad(fresh["qpos"])
+        if not abs(heading) <= CANONICAL_HEADING_TOLERANCE:
+            problems.append(
+                f"the regenerated keyframe is not in the declared world frame "
+                f"(pelvis heading {heading:.3e} rad)"
+            )
+        packaged_qpos = reference.canonical_world_frame(qpos)
+        regenerated_qpos = reference.canonical_world_frame(fresh["qpos"])
+    for label, packaged, generated in (
+        ("qpos", packaged_qpos, regenerated_qpos),
+        ("act", act, fresh["act"]),
+    ):
         if len(packaged) != len(generated):
             problems.append(f"the keyframe {label} length changed")
             continue
@@ -138,7 +183,11 @@ def check() -> list[str]:
 
 
 def write() -> str:
-    """Regenerate the asset and return its digest."""
+    """Regenerate the asset and return its digest.
+
+    The written keyframe is the generator's declared representative of the standing state
+    (pelvis heading zero), not the raw relaxation end state.
+    """
     fresh = generate_keyframe()
     content = mjcf.render_model_xml(fresh["qpos"], fresh["act"]).encode("utf-8")
     ASSET.parent.mkdir(parents=True, exist_ok=True)
