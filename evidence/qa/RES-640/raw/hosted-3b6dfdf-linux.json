@@ -1,0 +1,52 @@
+{
+  "all_canonical_within_tolerance": true,
+  "all_pre_projection_within_tolerance": true,
+  "all_raw_within_tolerance": true,
+  "claim": "diagnostic_only_not_a_scientific_or_release_qualification",
+  "distinct_raw_relaxation_headings": 1,
+  "host": {
+    "machine": "x86_64",
+    "processor": "x86_64",
+    "python_version": "3.12.13",
+    "release": "7.0.0-1017-azure",
+    "system": "Linux"
+  },
+  "kernels": [
+    "default"
+  ],
+  "packaged_model_sha256": "c91b2fa2ca1e04f920f4685bc23be2a99a64ad697dcd6a40cf5699dc5761a947",
+  "packaged_reference_heading_rad": 6.383545323015871e-07,
+  "raw_heading_spread_rad": 0.0,
+  "rows": [
+    {
+      "act_max_abs_difference": 1.8814894087171297e-11,
+      "canonical_qpos_max_abs_difference": 4.867830583066279e-10,
+      "canonical_within_tolerance": true,
+      "kernel": "default",
+      "physical_max_abs_difference": {
+        "barbell_position_in_pelvis_m": 4.212579174378561e-10,
+        "barbell_rotation_in_pelvis": 2.190603601293084e-12,
+        "joint_angles_rad": 4.867830583066279e-10,
+        "overall": 4.867830583066279e-10,
+        "pelvis_height_m": 1.3344436666784532e-11,
+        "pelvis_roll_pitch_rad": 2.53166931862836e-12
+      },
+      "pre_projection_max_abs_difference": 4.867830583066279e-10,
+      "pre_projection_within_tolerance": true,
+      "raw_qpos_max_abs_difference": 3.189582323923049e-07,
+      "raw_relaxation_heading_rad": 6.383545055115242e-07,
+      "raw_within_tolerance": true,
+      "reference_heading_rad": 3.960655612057203e-23,
+      "repeat": 1,
+      "worker_engine_version": "3.17.0",
+      "worker_python_version": "3.12.13"
+    }
+  ],
+  "runs_per_kernel": 1,
+  "schema": "dynamisbench.qa.squat-reference-stability/1",
+  "tolerance_unchanged": 1e-06,
+  "worst_canonical_qpos_difference": 4.867830583066279e-10,
+  "worst_physical_difference": 4.867830583066279e-10,
+  "worst_pre_projection_difference": 4.867830583066279e-10,
+  "worst_raw_qpos_difference": 3.189582323923049e-07
+}

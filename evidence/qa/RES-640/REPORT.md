@@ -128,24 +128,34 @@ scale is set by floating-point arithmetic, not by the model.
 
 ### 3.1 The observed values
 
+`qpos[6]` is the pelvis quaternion's `z` component; for this near-identity pelvis, the heading is
+`≈ 2·qpos[6]`.
+
 | generation | `qpos[6]` | heading (rad) |
 | --- | --- | --- |
-| packaged asset (Linux, RES-595) | `3.193249316e-07` | `6.3835e-07` |
-| hosted Windows, run 43035751307 | `3.481756154e-07` | `6.9610e-07` |
-| hosted Linux, run 43035751307 | `-9.985680354e-08` | `-1.9971e-07` |
-| local Windows, default dispatch | `3.481756154e-07` | `6.9610e-07` |
-| local Windows, `OPENBLAS_CORETYPE=Haswell` | `-3.509896681e-06` | `-7.0253e-06` |
-| local Windows, `OPENBLAS_CORETYPE=Nehalem` | `1.443262052e-06` | `2.8878e-06` |
+| packaged asset (Linux, RES-595) | `3.193249316e-07` | `6.383545323e-07` |
+| hosted Linux, 43035751307 (pre-repair) | `-9.985680354e-08` | `-1.997e-07` |
+| hosted Windows, 43035751307 (pre-repair) | `3.481756154e-07` | `6.961e-07` |
+| local Windows, default dispatch | `3.481756154e-07` | `6.960955244e-07` |
+| hosted Windows, 43049377562 (AMD Zen 5) | — | `6.960955244e-07` |
+| hosted Linux, 43049377562 | — | `6.383545055e-07` |
+| local Windows, `OPENBLAS_CORETYPE=Haswell` | `-3.509896681e-06` | `-7.025347869e-06` |
+| local Windows, `OPENBLAS_CORETYPE=Nehalem` | `1.443262052e-06` | `2.887772426e-06` |
 | local Windows, `OPENBLAS_CORETYPE=Sandybridge` | `1.192858e-08` | `2.3140e-08` |
 
-The hosted Windows value is reproduced **bitwise** by the local Windows host
-(`3.481756154217413e-07` in both), which is why the receipts below can be compared.
-Windows-minus-Linux is `4.480e-07` in the quaternion component, i.e. `8.96e-07` rad — the
-`~8.9668e-7 rad`, almost entirely yaw, that the earlier RES-640 evidence reported.
+Two facts matter here.
 
-Note what this table already says: the packaged reference and a *later Linux* generation differ
-by `4.19e-07` in `qpos[6]` — 42 % of the tolerance — with no Windows involved. The instability
-is not a platform property.
+* The three independent Windows hosts — an Intel Tiger Lake laptop, an earlier hosted runner of
+  unknown CPU, and a hosted **AMD Zen 5** runner — land on the same pre-projection heading
+  (`6.96095524e-07`) to better than 1e-9. Within a compatible arithmetic path the sample is
+  reproducible; the platform label is a proxy, not a cause.
+* The hosted Linux runners are not mutually reproducible either: one lands at `-1.997e-07`, the
+  other at `6.383545055e-07` — and the second differs from the *packaged* heading by only
+  `2.7e-14` rad. The packaged reference and a later Linux generation differ by `4.19e-07` in
+  `qpos[6]` (42 % of the tolerance) with no Windows involved.
+
+Windows-minus-Linux for the pre-repair pair was `4.480e-07` in `qpos[6]`, i.e. `8.96e-07` rad —
+the `~8.9668e-7 rad`, almost entirely yaw, that the earlier RES-640 evidence reported.
 
 ### 3.2 The controlled counterexample
 
@@ -243,16 +253,56 @@ and the new `test_squat_reference_frame.py`.
 
 ### 5.3 Hosted Windows/Linux
 
-Filled in by the exact-head qualification run; see the PR body for the run links and the
-receipts committed at `raw/`.
+Exact code `3b6dfdfe4e1cb9990ed36840191091746a8344ae`, run
+[43049377562](https://github.com/Litju/DynamisBench/actions/runs/43049377562):
+
+| gate | windows-2025 | ubuntu-24.04 |
+| --- | --- | --- |
+| platform-identity | pass | pass |
+| python (full suite) | **2740 passed, 5 skipped** (265 s) | **2740 passed, 5 skipped** (152 s) |
+| frontend | pass | infrastructure failure (see below), re-run |
+| desktop | pass | infrastructure failure (same outage), re-run |
+| mujoco-receipt-comparison | pass (both platforms) | |
+
+The hosted `python` jobs run the repaired `test_the_packaged_asset_is_the_regenerated_one` and
+all of `test_squat_reference_frame.py`. They also print the standing-reference stability
+receipt (`raw/hosted-3b6dfdf-{windows,linux}.json`, extracted verbatim from the job logs):
+
+| host | pre-projection heading | declared representative | canonical `Δqpos` vs packaged | physical difference |
+| --- | --- | --- | --- | --- |
+| windows-2025, AMD Family 25 Model 17 | `6.960955244e-07` | `-6.87e-23` | `1.968e-09` | `4.868e-10` |
+| ubuntu-24.04, `7.0.0-1017-azure` | `6.383545055e-07` | `3.96e-23` | `4.868e-10` | `4.868e-10` |
+
+So the two hosted platforms' *headings* differ by `5.77e-08` rad on this pair — a pure gauge
+difference — while their gauge-invariant physical states (joint angles, pelvis height and tilt,
+barbell pose in the pelvis frame) agree to `4.868e-10`, which is **2054 times inside** the
+unchanged `1e-6` tolerance. The canonical `qpos` difference is dominated by the same physical
+term, not by a heading.
+
+The `frontend (linux-x64)` job failed before running any test: `pnpm exec playwright install
+--with-deps chromium` could not resolve `azure.archive.ubuntu.com`
+(`E: Failed to fetch ... Temporary failure resolving 'azure.archive.ubuntu.com'`). No frontend
+file is touched by this branch; the job was re-run and its result is recorded below.
 
 ## 6. Exact-head qualification
 
-Pending at the time this report was first written; the PR body carries the exact HEAD, the
-eight required Windows/Linux gates, the MuJoCo receipt comparison, and the hosted repeats of
-`mujoco_squat_reference_stability` (the `OPENBLAS_CORETYPE` lever is honoured by the packaged
-`scipy-openblas` wheels on both platforms; a platform that ignores it simply reports identical
-rows, which the receipt records rather than fails).
+Exact code `3b6dfdfe4e1cb9990ed36840191091746a8344ae`, run
+[43049377562](https://github.com/Litju/DynamisBench/actions/runs/43049377562): **all eight
+required ADR-025 gates and the MuJoCo receipt comparison passed** — `platform-identity`,
+`python`, `frontend` and `desktop` on both `windows-2025` and `ubuntu-24.04`, and
+`mujoco-receipt-comparison` consuming both platform receipts.
+
+The first attempt failed only the two Linux jobs, both in their *dependency-installation* step,
+both with the same hosted-runner network outage —
+`E: Failed to fetch ... Temporary failure resolving 'azure.archive.ubuntu.com'`, exit code 100 —
+before any repository test or build ran. They were re-run on the same SHA and passed. That is an
+infrastructure incident, recorded here rather than treated as a code result: no scientific
+step, threshold or test was skipped, relaxed, or retried around a numerical failure. (The
+protected-main failure this issue diagnoses was a numerical failure and is *not* treated this
+way.)
+
+Later commits on this branch touch only `evidence/qa/RES-640/`; the code they qualify is
+identical to `3b6dfdf`, and the final PR HEAD carries its own full run.
 
 ## 7. Residual uncertainty
 
@@ -325,5 +375,6 @@ uv run pytest tests/execution/mujoco_squat/test_squat_reference_frame.py \
 | `raw/keyframe-probe-windows-local.json` | one regeneration, probe schema `dynamisbench.qa.squat-keyframe-probe/2` | same host |
 | `raw/canonical-asset-impact-windows-local.json` | packaged vs canonicalised asset: 57 diagnostics, trajectory hash, digests | same host |
 | `raw/hosted-run-43035751307-windows.json`, `raw/hosted-run-43035751307-linux.json` | the pre-repair hosted probe receipts extracted verbatim from the job logs | `windows-2025`, `ubuntu-24.04` |
+| `raw/hosted-3b6dfdf-windows.json`, `raw/hosted-3b6dfdf-linux.json` | the repaired standing-reference stability receipt on the exact code, extracted verbatim from run 43049377562 | `windows-2025` (AMD Family 25 Model 17), `ubuntu-24.04` |
 
 Digests of every file are in `SHA256SUMS`.
