@@ -180,13 +180,19 @@ by rotating the canonical state back by the heading the generator reports
 (`_pre_projection_difference`). Its Haswell value is `3.8292216124696e-06` — the protected-main
 failure string, digit for digit.
 
+This counterexample is not synthetic. On a later hosted run (§5.3) a **windows-2025 runner with
+an AMD Family 25 CPU** produced pre-projection heading `-7.025347868663774e-06` and
+pre-projection difference `3.8292216124695965e-06`: the Haswell arithmetic path, live, on a
+genuine hosted runner, with the repaired comparison passing at `1.7299170830795712e-08`.
+
 So the answer to "why could `3.829e-06` occur" is: the heading is a ~1e-5 rad range random
 sample of an exactly free direction; the quaternion component is half the heading; the 1e-6
 absolute tolerance is a ~2e-6 rad window; and two of the four arithmetic paths tested here
 land outside it. The exact kernel of the failed runner was never recorded (the diagnostic
 probe did not exist in the required workflow then), so that *sample* is not attributable to a
-named kernel. The *mechanism*, the *magnitude* and the *variability* are established, and the
-repair does not depend on which kernel it was.
+named kernel. The *mechanism*, the *magnitude* and the *variability* are established, one
+occurrence of the exact failure magnitude has since been observed live on a hosted runner, and
+the repair does not depend on which kernel it was.
 
 ## 4. The correction
 
@@ -241,6 +247,7 @@ The projection is the smallest change that removes the mechanism rather than its
 | 40 one-ulp trials: heading spread vs physical spread | `1.41e-06` rad vs `1.44e-15` | same |
 | packaged vs regenerated, repaired comparison | raw `3.19e-07`, canonical `1.97e-09`, physical `4.87e-10` | `raw/keyframe-probe-windows-local.json` |
 | four arithmetic paths, repaired comparison | worst canonical `1.73e-08`, worst physical `4.87e-10`, all pass | `raw/reference-stability-windows-local.json` |
+| live hosted run of the pre-repair failure condition | Windows: pre-repair `3.829e-06` **FAIL**, repaired `1.73e-08` pass, physical `4.87e-10` | `raw/hosted-b20687e-windows.json` |
 | negative control: four `2e-6` physical perturbations | all rejected at `1e-6` | `test_squat_reference_frame.py` |
 | packaged asset re-expressed in the canonical frame (impact study) | 22/57 diagnostics bitwise unchanged; largest change in the rest is `6.4e-06` deg on the foot-vs-world toe-out check, then GRF `3.4e-11` N; trajectory hash changes | `raw/canonical-asset-impact-windows-local.json` |
 
@@ -253,56 +260,70 @@ and the new `test_squat_reference_frame.py`.
 
 ### 5.3 Hosted Windows/Linux
 
-Exact code `3b6dfdfe4e1cb9990ed36840191091746a8344ae`, run
-[43049377562](https://github.com/Litju/DynamisBench/actions/runs/43049377562):
+The repaired code passed the full required workflow twice, on two independent hosted runner
+pairs:
 
-| gate | windows-2025 | ubuntu-24.04 |
+| run | code | result |
 | --- | --- | --- |
-| platform-identity | pass | pass |
-| python (full suite) | **2740 passed, 5 skipped** (265 s) | **2740 passed, 5 skipped** (152 s) |
-| frontend | pass | infrastructure failure (see below), re-run |
-| desktop | pass | infrastructure failure (same outage), re-run |
-| mujoco-receipt-comparison | pass (both platforms) | |
+| [43049377562](https://github.com/Litju/DynamisBench/actions/runs/43049377562) | `3b6dfdf` | all eight gates pass on `windows-2025` and `ubuntu-24.04`; `mujoco-receipt-comparison` pass (after one infrastructure re-run, §6) |
+| [43064795808](https://github.com/Litju/DynamisBench/actions/runs/43064795808) | `b20687e` | all eight gates pass, first attempt, no re-run; `mujoco-receipt-comparison` pass |
 
-The hosted `python` jobs run the repaired `test_the_packaged_asset_is_the_regenerated_one` and
-all of `test_squat_reference_frame.py`. They also print the standing-reference stability
-receipt (`raw/hosted-3b6dfdf-{windows,linux}.json`, extracted verbatim from the job logs):
+Both hosted `python` jobs report **2740 passed, 5 skipped** on each platform and run the
+repaired `test_the_packaged_asset_is_the_regenerated_one` together with all of
+`test_squat_reference_frame.py`. They also print the standing-reference stability receipt
+(`raw/hosted-{3b6dfdf,b20687e}-{windows,linux}.json`, extracted verbatim from the job logs):
 
-| host | pre-projection heading | declared representative | canonical `Δqpos` vs packaged | physical difference |
-| --- | --- | --- | --- | --- |
-| windows-2025, AMD Family 25 Model 17 | `6.960955244e-07` | `-6.87e-23` | `1.968e-09` | `4.868e-10` |
-| ubuntu-24.04, `7.0.0-1017-azure` | `6.383545055e-07` | `3.96e-23` | `4.868e-10` | `4.868e-10` |
+| run | host | pre-projection heading | pre-projection `Δqpos` | pre-RES-640 criterion | canonical `Δqpos` | physical difference |
+| --- | --- | --- | --- | --- | --- | --- |
+| 43049377562 | windows-2025, AMD Family 25 Model 17 | `6.960955244e-07` | `2.885e-08` | pass | `1.968e-09` | `4.868e-10` |
+| 43049377562 | ubuntu-24.04, azure `7.0.0-1017` | `6.383545055e-07` | `4.868e-10` | pass | `4.868e-10` | `4.868e-10` |
+| 43064795808 | windows-2025, **AMD Family 25 Model 1** | **`-7.025347869e-06`** | **`3.829221612e-06`** | **FAIL** | `1.730e-08` | `4.868e-10` |
+| 43064795808 | ubuntu-24.04, azure `7.0.0-1017` | `6.383545055e-07` | `4.868e-10` | pass | `4.868e-10` | `4.868e-10` |
 
-So the two hosted platforms' *headings* differ by `5.77e-08` rad on this pair — a pure gauge
-difference — while their gauge-invariant physical states (joint angles, pelvis height and tilt,
-barbell pose in the pelvis frame) agree to `4.868e-10`, which is **2054 times inside** the
-unchanged `1e-6` tolerance. The canonical `qpos` difference is dominated by the same physical
-term, not by a heading.
+The third row is the whole issue in one line: a genuine hosted Windows runner regenerated the
+standing reference at the same heading that broke protected main, the **pre-repair criterion
+would have failed it with `3.829e-06`**, and the repaired criterion passed it at `1.73e-08`
+while the gauge-invariant physical state was identical to every other host at `4.87e-10`. The
+same run's Linux job passed by both criteria. The value matches the local `Haswell` replay to
+every recorded digit, which is what makes that replay a faithful model of the mechanism rather
+than a synthetic construction.
 
-The `frontend (linux-x64)` job failed before running any test: `pnpm exec playwright install
---with-deps chromium` could not resolve `azure.archive.ubuntu.com`
-(`E: Failed to fetch ... Temporary failure resolving 'azure.archive.ubuntu.com'`). No frontend
-file is touched by this branch; the job was re-run and its result is recorded below.
+Across the two hosted platforms the headings differ by `5.77e-08` rad on one pair and by
+`7.66e-06` rad on the other — the gauge — while the physical states agree to `4.868e-10`,
+**2054 times inside** the unchanged `1e-6` tolerance, in every pair.
+
+The `frontend (linux-x64)` and `desktop (linux-x64)` jobs failed on the first run only, before
+running any test: `pnpm exec playwright install --with-deps chromium` and the Tauri
+`apt-get install` could not resolve `azure.archive.ubuntu.com`
+(`E: Failed to fetch ... Temporary failure resolving 'azure.archive.ubuntu.com'`, exit code
+100). No frontend, desktop or Tauri file is touched by this branch. They were re-run on the
+same SHA and passed; the second run needed no re-run at all.
 
 ## 6. Exact-head qualification
 
-Exact code `3b6dfdfe4e1cb9990ed36840191091746a8344ae`, run
-[43049377562](https://github.com/Litju/DynamisBench/actions/runs/43049377562): **all eight
-required ADR-025 gates and the MuJoCo receipt comparison passed** — `platform-identity`,
-`python`, `frontend` and `desktop` on both `windows-2025` and `ubuntu-24.04`, and
-`mujoco-receipt-comparison` consuming both platform receipts.
+Two independent full runs of the repaired code:
 
-The first attempt failed only the two Linux jobs, both in their *dependency-installation* step,
-both with the same hosted-runner network outage —
+* `3b6dfdfe4e1cb9990ed36840191091746a8344ae`, run
+  [43049377562](https://github.com/Litju/DynamisBench/actions/runs/43049377562): all eight
+  required ADR-025 gates plus `mujoco-receipt-comparison` pass on `windows-2025` and
+  `ubuntu-24.04`.
+* `b20687e2292b0ffff5d9c308bb6934647832bd31`, run
+  [43064795808](https://github.com/Litju/DynamisBench/actions/runs/43064795808): the same nine
+  jobs pass on the first attempt, and its Windows `python` job is the run in which the
+  pre-repair criterion's `3.829e-06` failure condition occurred live (§5.3).
+
+The first attempt at `3b6dfdf` failed only the two Linux jobs, both in their
+*dependency-installation* step, both with the same hosted-runner network outage —
 `E: Failed to fetch ... Temporary failure resolving 'azure.archive.ubuntu.com'`, exit code 100 —
 before any repository test or build ran. They were re-run on the same SHA and passed. That is an
 infrastructure incident, recorded here rather than treated as a code result: no scientific
 step, threshold or test was skipped, relaxed, or retried around a numerical failure. (The
 protected-main failure this issue diagnoses was a numerical failure and is *not* treated this
-way.)
+way; it is repaired, not retried.)
 
-Later commits on this branch touch only `evidence/qa/RES-640/`; the code they qualify is
-identical to `3b6dfdf`, and the final PR HEAD carries its own full run.
+The last two commits on this branch (`b20687e` and its successor) touch only
+`evidence/qa/RES-640/`; every file that participates in the model, the generator, the check,
+the tests or the workflow is byte-identical to `3b6dfdf`, which is qualified above.
 
 ## 7. Residual uncertainty
 
@@ -375,6 +396,7 @@ uv run pytest tests/execution/mujoco_squat/test_squat_reference_frame.py \
 | `raw/keyframe-probe-windows-local.json` | one regeneration, probe schema `dynamisbench.qa.squat-keyframe-probe/2` | same host |
 | `raw/canonical-asset-impact-windows-local.json` | packaged vs canonicalised asset: 57 diagnostics, trajectory hash, digests | same host |
 | `raw/hosted-run-43035751307-windows.json`, `raw/hosted-run-43035751307-linux.json` | the pre-repair hosted probe receipts extracted verbatim from the job logs | `windows-2025`, `ubuntu-24.04` |
-| `raw/hosted-3b6dfdf-windows.json`, `raw/hosted-3b6dfdf-linux.json` | the repaired standing-reference stability receipt on the exact code, extracted verbatim from run 43049377562 | `windows-2025` (AMD Family 25 Model 17), `ubuntu-24.04` |
+| `raw/hosted-3b6dfdf-windows.json`, `raw/hosted-3b6dfdf-linux.json` | the repaired standing-reference stability receipt on the first qualified code, extracted verbatim from run 43049377562 | `windows-2025` (AMD Family 25 Model 17), `ubuntu-24.04` |
+| `raw/hosted-b20687e-windows.json`, `raw/hosted-b20687e-linux.json` | the same receipt on the second qualified code, extracted verbatim from run 43064795808; the Windows row is the live `3.829221612e-06` pre-repair failure | `windows-2025` (AMD Family 25 Model 1), `ubuntu-24.04` |
 
 Digests of every file are in `SHA256SUMS`.
