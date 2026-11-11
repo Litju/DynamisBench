@@ -14,6 +14,8 @@ class KeyframeProbeTests(unittest.TestCase):
             "qpos": qpos,
             "act": act,
             "relaxation_final_max_speed": speed,
+            "static_solution_qpos": list(qpos),
+            "static_solution_act": list(act),
             "engine_version": "3.17.0",
             "python_version": "3.12.13",
         }
@@ -46,6 +48,26 @@ class KeyframeProbeTests(unittest.TestCase):
         self.assertFalse(results["all_within_current_tolerance"])
         self.assertFalse(results["runs"][1]["versus_first_run"]["qpos"]["within_tolerance"])
         self.assertTrue(results["runs"][1]["versus_packaged"]["act"]["within_tolerance"])
+
+    def test_initial_static_drift_is_separate_from_relaxation_drift(self) -> None:
+        first = self._obs([1.0], [0.25])
+        next_run = self._obs([1.0], [0.25])
+        next_run["static_solution_qpos"] = [1.000004]
+        result = summarize_observations(
+            [1.0],
+            [0.25],
+            [first, next_run],
+            tolerance=1e-6,
+            model_sha256="f" * 64,
+        )
+        self.assertTrue(result["all_within_current_tolerance"])
+        self.assertEqual(
+            result["runs"][1]["versus_first_run"]["qpos"]["max_abs_difference"], 0.0
+        )
+        self.assertFalse(
+            result["runs"][1]["static_solution_versus_first"]["qpos"]["within_tolerance"]
+        )
+        self.assertEqual(result["first_run_static_solution"]["qpos"], [1.0])
 
     def test_rejects_missing_or_nonfinite_observations(self) -> None:
         with self.assertRaises(ValueError):

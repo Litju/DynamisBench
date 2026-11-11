@@ -41,6 +41,8 @@ def summarize_observations(
     report: list[dict[str, Any]] = []
     first_qpos = observations[0]["qpos"]
     first_act = observations[0]["act"]
+    first_static_qpos = observations[0]["static_solution_qpos"]
+    first_static_act = observations[0]["static_solution_act"]
     for index, observation in enumerate(observations):
         qpos = observation["qpos"]
         act = observation["act"]
@@ -48,6 +50,13 @@ def summarize_observations(
         act_comparison = vector_diagnostics(packaged_act, act, tolerance=tolerance)
         pair_qpos = vector_diagnostics(first_qpos, qpos, tolerance=tolerance)
         pair_act = vector_diagnostics(first_act, act, tolerance=tolerance)
+        # Zero means bitwise-identical inputs, not an adopted scientific tolerance.
+        static_qpos = vector_diagnostics(
+            first_static_qpos, observation["static_solution_qpos"], tolerance=0.0
+        )
+        static_act = vector_diagnostics(
+            first_static_act, observation["static_solution_act"], tolerance=0.0
+        )
         speed = float(observation["relaxation_final_max_speed"])
         if not (0 <= speed < float("inf")):
             raise ValueError("generated relaxation speed must be finite and nonnegative")
@@ -59,6 +68,10 @@ def summarize_observations(
                 "relaxation_final_max_speed": speed,
                 "versus_packaged": {"qpos": qpos_comparison, "act": act_comparison},
                 "versus_first_run": {"qpos": pair_qpos, "act": pair_act},
+                "static_solution_versus_first": {
+                    "qpos": static_qpos,
+                    "act": static_act,
+                },
             }
         )
     return {
@@ -71,9 +84,17 @@ def summarize_observations(
             "system": platform.system(),
             "release": platform.release(),
             "machine": platform.machine(),
+            "processor": platform.processor(),
             "python_version": platform.python_version(),
             "logical_cpus": os.cpu_count(),
         },
+        # The initial static solve is distinct from the final forward-dynamics relaxation.
+        # Retain raw first-run vectors to enable direct cross-platform comparison.
+        "first_run_static_solution": {
+            "qpos": list(first_static_qpos),
+            "act": list(first_static_act),
+        },
+        "first_run_relaxed_state": {"qpos": list(first_qpos), "act": list(first_act)},
         "all_within_current_tolerance": all(
             row["versus_packaged"][kind]["within_tolerance"]
             for row in report
