@@ -1,0 +1,70 @@
+{
+  "claim": "diagnostic_only_not_a_scientific_or_release_qualification",
+  "closed_loop_invariance": {
+    "heading_shift_minus_injected_rad": -2.6020852139652106e-17,
+    "mechanical_energy_difference_j": 0.0,
+    "physical_state_max_difference": 1.887379141862766e-15
+  },
+  "last_bit_sensitivity": {
+    "canonical_qpos_max_rad": 5.777503253590055e-09,
+    "heading_max_rad": 1.3553217739933808e-06,
+    "heading_min_rad": -5.610803063798542e-08,
+    "heading_spread_rad": 1.4114298046313664e-06,
+    "physical_max_rad": 1.4413899323524283e-15,
+    "trials": 40
+  },
+  "potential_energy_delta_j": {
+    "1": 0.0,
+    "1e-1": 0.0,
+    "1e-3": 0.0
+  },
+  "schema": "dynamisbench.qa.squat-world-frame-mechanism/1",
+  "settle": {
+    "condition_number": 4.642163954092313e+17,
+    "gap_above_the_third_smallest": 1.3218606825972015e-10,
+    "residual_at_settled_state_n": [
+      6.844837380102e-11,
+      2.551007142354419e-11,
+      1.5202203940134495e-09,
+      -1.3921532698381148e-11,
+      2.241229424271296e-11,
+      -2.0056059819400074e-11,
+      -6.844837380102e-11,
+      -2.551007142354419e-11,
+      -1.2128111848141998e-09,
+      8.624390090972156e-11,
+      -6.7045448234673196e-15,
+      2.5880741993944412e-11
+    ],
+    "rigid_mode_stiffness_n_per_unit": {
+      "pitch": 150494.87165015307,
+      "roll": 94004.72692541414,
+      "translation_x": 0.003421802590354534,
+      "translation_y": 0.002282022173461791,
+      "translation_z": 2382862.4337738804,
+      "yaw": 0.0784893927630037
+    },
+    "rotation_dofs_are_world_frame": false,
+    "singular_values": [
+      11382900.160319857,
+      11355648.23688242,
+      11225426.14548358,
+      1050825.6369607903,
+      399605.91600524593,
+      381672.00819679187,
+      39110.4015446502,
+      16577.097229001,
+      1296.1342526083208,
+      1.7133089078904485e-07,
+      2.577838432216141e-10,
+      2.4520676720789297e-11
+    ]
+  },
+  "stages": {
+    "after_contact_settle_rad": 1.021604570092659e-06,
+    "after_posture_solve_rad": 4.964252542708282e-18,
+    "after_relaxation_rad": 6.96095524381816e-07,
+    "declared_representative_rad": -6.874122174853135e-23,
+    "relaxation_final_max_speed": 9.85472033382919e-06
+  }
+}
