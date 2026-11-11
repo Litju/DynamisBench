@@ -61,9 +61,7 @@ class KeyframeProbeTests(unittest.TestCase):
             model_sha256="f" * 64,
         )
         self.assertTrue(result["all_within_current_tolerance"])
-        self.assertEqual(
-            result["runs"][1]["versus_first_run"]["qpos"]["max_abs_difference"], 0.0
-        )
+        self.assertEqual(result["runs"][1]["versus_first_run"]["qpos"]["max_abs_difference"], 0.0)
         self.assertFalse(
             result["runs"][1]["static_solution_versus_first"]["qpos"]["within_tolerance"]
         )
