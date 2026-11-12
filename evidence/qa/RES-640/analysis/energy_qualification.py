@@ -33,7 +33,7 @@ def main() -> None:
     bit = int(mujoco.mjtEnableBit.mjENBL_ENERGY)
     assert original_flags & bit == 0
     assert np.array_equal(model.opt.gravity, [0.0, 0.0, -9.80665])
-    assert math.isclose(math.fsum(model.body_mass), 95.0, abs_tol=1e-12)
+    assert math.isclose(math.fsum(model.body_mass), 95.0, rel_tol=0.0, abs_tol=1e-12)
     assert not np.any(model.jnt_stiffness)
     assert not np.any(model.jnt_stiffnesspoly)
     assert not np.any(model.tendon_stiffness)
@@ -112,9 +112,13 @@ def main() -> None:
         repository / "python/worker-mujoco/uv.lock",
         Path(sys.executable),
     ]
-    package = Path(mujoco.__file__).parent
-    sources.extend(sorted(package.rglob("*.dll")))
-    sources.extend(sorted(package.rglob("*.pyd")))
+    packages = (Path(mujoco.__file__).parent, Path(np.__file__).parent)
+    for package in packages:
+        # Wheel-bundled BLAS/native dependencies can be adjacent to the package.
+        for directory in (package, package.parent / (package.name + ".libs")):
+            for pattern in ("*.dll", "*.pyd", "*.so", "*.so.*", "*.dylib"):
+                sources.extend(sorted(directory.rglob(pattern)))
+    sources = sorted(set(sources))
     print(
         json.dumps(
             {
