@@ -1,0 +1,17 @@
+"""Independent energy oracle and nonzero positive control for RES-640."""
+
+from pathlib import Path
+
+from tests.execution.mujoco_squat.support import run_worker_code
+
+
+def test_energy_symmetry_uses_a_measurement_that_detects_vertical_lift() -> None:
+    script = (
+        Path(__file__).resolve().parents[4] / "evidence/qa/RES-640/analysis/energy_qualification.py"
+    )
+    receipt = run_worker_code(f"import runpy; runpy.run_path({str(script)!r}, run_name='__main__')")
+    assert receipt["environment"]["mujoco"] == "3.17.0"
+    assert receipt["disabled_energy_sample"]["mujoco_potential_j"] == 0.0
+    assert receipt["baseline"]["mujoco_potential_j"] > 100.0
+    assert receipt["expected_lift_energy_j"] > 100.0
+    assert len(receipt["yaw_controls"]) == 8
