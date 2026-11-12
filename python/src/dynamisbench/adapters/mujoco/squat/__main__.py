@@ -43,6 +43,7 @@ from dynamisbench.adapters.mujoco.squat import (
     engine,
     mjcf,
     movement,
+    reference,
     stance,
 )
 from dynamisbench.adapters.mujoco.squat import anthropometry as anth
@@ -104,16 +105,22 @@ def _run(summary: engine.RunSummary) -> dict[str, Any]:
 
 def _keyframe() -> dict[str, Any]:
     model = engine.generator_model()
-    qpos = engine.settle(model, engine.solve_posture(model))
-    activation = engine.static_equilibrium(model, qpos).activation
-    relaxed_qpos, relaxed_activation, speed = engine.relax_to_rest(model, qpos, activation)
+    generation = engine.standing_reference(model)
     return {
-        "qpos": relaxed_qpos,
-        "act": relaxed_activation,
+        "qpos": generation.qpos,
+        "act": generation.activation,
         "relaxation_duration_s": engine.RELAXATION_DURATION_S,
-        "relaxation_final_max_speed": speed,
-        "static_solution_qpos": qpos,
-        "static_solution_act": activation,
+        "relaxation_final_max_speed": generation.relaxation_final_max_speed,
+        # Diagnostic only: the world heading the relaxation landed on before the reference was
+        # projected onto the declared frame. It is the gauge that RES-640 showed is not
+        # reproducible; it is reported, never used as a reference.
+        "relaxation_heading_before_projection_rad": reference.pelvis_heading_rad(
+            [float(value) for value in generation.unprojected_qpos]
+        ),
+        # The static state is reported as the settle produced it, so the diagnostic can show
+        # the world heading that the relaxation received. It is not the reference either.
+        "static_solution_qpos": generation.static_qpos,
+        "static_solution_act": generation.static_activation,
     }
 
 

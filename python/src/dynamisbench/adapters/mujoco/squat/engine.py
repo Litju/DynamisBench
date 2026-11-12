@@ -17,6 +17,10 @@ What it does, and what it never does
 * It **integrates forward dynamics** with ``mj_step``: the controller only chooses neural
   excitations from the measured state. No joint position, velocity or acceleration is ever
   written during a run, and no trajectory is prescribed.
+* It **writes one representative** of the reference state's exact world-frame gauge: the
+  standing keyframe is rotated about the vertical axis to zero pelvis heading
+  (:mod:`.reference`), because the model's heading is not a physical quantity and the contact
+  settle cannot determine it.
 
 Every number a run reports is measured from the MuJoCo state.
 """
@@ -33,7 +37,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dynamisbench.adapters.mujoco.squat import anthropometry as anth
-from dynamisbench.adapters.mujoco.squat import contract, mjcf, movement, stance
+from dynamisbench.adapters.mujoco.squat import contract, mjcf, movement, reference, stance
 from dynamisbench.adapters.mujoco.squat.control import PosturalController, joint_family
 
 __all__ = [
@@ -44,6 +48,7 @@ __all__ = [
     "EngineError",
     "Layout",
     "RunSummary",
+    "StandingReference",
     "StaticEquilibrium",
     "controller_for",
     "describe_model",
@@ -63,6 +68,7 @@ __all__ = [
     "simulate",
     "simulate_repetition",
     "solve_posture",
+    "standing_reference",
     "standing_state",
     "static_equilibrium",
     "verify_model",
@@ -745,16 +751,64 @@ def relax_to_rest(
     )
 
 
-def standing_state(model: mujoco.MjModel) -> tuple[FloatArray, FloatArray]:
-    """Generate the standing equilibrium ``(qpos, activation)`` from the declarations.
+@dataclass(frozen=True, slots=True)
+class StandingReference:
+    """Both states of one standing-reference generation, and their provenance.
+
+    ``static_qpos`` is the settled static equilibrium the relaxation starts from, exactly as
+    the contact settle produced it. ``unprojected_qpos`` is the relaxation's raw end state:
+    its world heading is whatever the settle's singular solve sampled, so it is diagnostic
+    only and never a reference. ``qpos`` is that state rotated to the declared representative
+    of the model's world-frame gauge, with heading exactly zero; it is the standing reference
+    the packaged keyframe denotes.
+    :mod:`~dynamisbench.adapters.mujoco.squat.reference` states why the projection is
+    physically neutral.
+    """
+
+    static_qpos: FloatArray
+    static_activation: FloatArray
+    unprojected_qpos: FloatArray
+    qpos: FloatArray
+    activation: FloatArray
+    relaxation_final_max_speed: float
+
+
+def standing_reference(model: mujoco.MjModel) -> StandingReference:
+    """Generate the standing reference from the declarations.
 
     Posture solve, inverse-dynamics contact settle, minimum-effort tonic torques, then
-    forward-dynamics relaxation to rest. The returned state is the packaged keyframe.
+    forward-dynamics relaxation to rest. The relaxed state is finally rotated rigidly about the
+    world vertical axis to the declared representative
+    (:func:`~dynamisbench.adapters.mujoco.squat.reference.canonical_world_frame`). The model is
+    exactly symmetric under that rotation, so the projection changes no physical quantity; it
+    fixes the heading, which the settle's numerically singular solve cannot determine and which
+    is therefore not reproducible across floating-point environments.
     """
-    qpos = settle(model, solve_posture(model))
-    activation = static_equilibrium(model, qpos).activation
-    relaxed_qpos, relaxed_activation, _speed = relax_to_rest(model, qpos, activation)
-    return relaxed_qpos, relaxed_activation
+    static_qpos = settle(model, solve_posture(model))
+    static_activation = static_equilibrium(model, static_qpos).activation
+    relaxed_qpos, relaxed_activation, speed = relax_to_rest(model, static_qpos, static_activation)
+    return StandingReference(
+        static_qpos=static_qpos,
+        static_activation=np.array(static_activation, dtype=np.float64),
+        unprojected_qpos=np.array(relaxed_qpos, dtype=np.float64),
+        qpos=np.asarray(
+            reference.canonical_world_frame([float(value) for value in relaxed_qpos]),
+            dtype=np.float64,
+        ),
+        activation=np.array(relaxed_activation, dtype=np.float64),
+        relaxation_final_max_speed=speed,
+    )
+
+
+def standing_state(model: mujoco.MjModel) -> tuple[FloatArray, FloatArray]:
+    """The canonical standing equilibrium ``(qpos, activation)`` from the declarations.
+
+    Posture solve, inverse-dynamics contact settle, minimum-effort tonic torques, then
+    forward-dynamics relaxation to rest, projected onto the declared world frame. The returned
+    state is the standing reference the packaged keyframe denotes.
+    """
+    generation = standing_reference(model)
+    return generation.qpos, generation.activation
 
 
 def keyframe_state(model: mujoco.MjModel) -> tuple[FloatArray, FloatArray]:
