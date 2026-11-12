@@ -1,4 +1,4 @@
-# RES-640 â€” Windows squat keyframe regeneration drift: root cause, repair and receipts
+# RES-640 — Windows squat keyframe regeneration drift: root cause, repair and receipts
 
 Issue: [RES-640](https://linear.app/alignerr-cmj/issue/RES-640/db-qa-03-root-cause-windows-squat-keyframe-regeneration-drift-on).
 Branch and draft PR: `codex/res-640-keyframe-diagnostics`, [PR #29](https://github.com/Litju/DynamisBench/pull/29).
@@ -10,21 +10,30 @@ Protected-main baseline: `707f0dd45bccf71b1f07eafb61d7fc7eaf328f66` (postmerge r
 
 **RES640_REVIEW_FINDINGS_OPEN - MERGE_BLOCKED.**
 
-[Review repairs and owner decision](REVIEW-REPAIRS.md) supersede the historical
-qualification below. Energy computation was disabled in the old mechanism receipt;
-its zero values were uncomputed defaults. Corrected diagnostic energy qualification:
-baseline 1030.3403578290963 J; +0.125 m complete-system lift expected 116.45396875 J,
-residual 7.11e-14 J. Eight yaw angles have maximum MuJoCo residual 2.28e-13 J within
-predeclared conditional binary64 arithmetic budget 8.05e-9 J. See
-[method](analysis/ENERGY_METHOD.md) and [receipt](raw/energy-windows-local.json).
-This is gravitational potential energy; constraint energy is excluded. No exact
-floating-point-zero claim is made. Owner adoption changes acceptance equivalence
-(modulo heading), although KEYFRAME_TOLERANCE remains 1e-6. New exact-head hosted
-qualification remains required; old green runs do not qualify the revised changes.
+[Review repairs and owner decision](REVIEW-REPAIRS.md) supersede historical
+qualification below. Energy calculation was disabled; prior zeros were defaults.
+Corrected baseline is 1030.3403578290963 J. A 0.125 m complete-system lift detects
+116.45396875 J with residual 7.11e-14 J; eight yaw controls have maximum MuJoCo
+residual 2.28e-13 J within predeclared conditional roundoff budget 8.05e-9 J.
+See [method](analysis/ENERGY_METHOD.md) and [receipt](raw/energy-windows-local.json).
+No exact floating-point-zero or empirical biomechanical validity is claimed.
+Static gravitational energy excludes constraint energy and shares MuJoCo kinematics.
+
+Acceptance equivalence changes to comparison modulo common heading, retaining
+horizontal pelvis coordinates and scalar tolerance 1e-6. Explicit owner scientific
+adoption is required. The permanent diagnostic CI step is removed; eight required
+ADR-025 jobs and MuJoCo receipt comparison remain. Source inventory is a future
+M2B contract requiring reference.py before activation; no identities are repinned.
+
+Revised local full pytest/Hypothesis: 2761 passed, 7 skipped in 516.63 s.
+Eight refusal cases added after collection and final JUnit receipt recording passed
+focused checks separately (54 total). Ruff, format and both Pyright configs passed.
+Independent read-only review found no blocking math/code findings in repair scope.
+New exact-head hosted qualification remains pending; see PR #29 and Linear RES-640.
 
 
 The failing comparison was not comparing the model. The standing reference contains one
-coordinate that the model cannot determine â€” the athlete's heading about the world vertical â€”
+coordinate that the model cannot determine — the athlete's heading about the world vertical —
 and the contact settle sampled it from last-bit rounding. A controlled change of the
 BLAS/LAPACK kernel dispatch on one Windows host reproduces the protected-main failure exactly
 (`3.829e-06`), and the repaired comparison passes on every dispatch with a 58x margin while
@@ -40,10 +49,10 @@ merged and RES-640 is not Done.
 
 `tools/mujoco_squat_model.py --check` regenerates the standing keyframe in the isolated worker
 and compares it elementwise with the packaged `stand` keyframe at `1e-6`. The keyframe is the
-end state of: posture solve â†’ inverse-dynamics contact settle â†’ minimum-effort tonic torques â†’
+end state of: posture solve → inverse-dynamics contact settle → minimum-effort tonic torques →
 30 s forward-dynamics relaxation.
 
-The failure was in `qpos` entries 6 and 42 â€” the `z` quaternion components of the pelvis and
+The failure was in `qpos` entries 6 and 42 — the `z` quaternion components of the pelvis and
 barbell free joints. Those two are not independent: the bar is welded to the shelf, so it
 carries the pelvis's heading.
 
@@ -55,8 +64,8 @@ The floor is an infinite plane, gravity is vertical, every actuator is an intern
 torque, and the sole contacts are friction contacts on that plane. Rotating the **entire**
 system (athlete and barbell) about the world vertical axis is therefore a symmetry: it changes
 no potential energy, no joint angle, no contact load, no trajectory. Translation in the floor
-plane is the same kind of symmetry. The model's placement in the plane â€” two translations and
-a heading â€” is a *gauge*, not physical content.
+plane is the same kind of symmetry. The model's placement in the plane — two translations and
+a heading — is a *gauge*, not physical content.
 
 Measured on the packaged model (`raw/mechanism-windows-local.json`):
 
@@ -90,7 +99,7 @@ condition number: 4.64e17          gap above the third smallest: 1.32e-10
 The three smallest directions are exactly the rigid placements. Their stiffness, measured as
 the change of the inverse-dynamics residual per unit whole-system twist:
 
-| rigid placement | stiffness (N or NÂ·m per unit) |
+| rigid placement | stiffness (N or N·m per unit) |
 | --- | --- |
 | translation x | 0.0034 |
 | translation y | 0.0023 |
@@ -117,7 +126,7 @@ three and nothing else).
 The posture solve is exactly symmetric (the hard foot-orientation rows and the symmetric
 right-hand side give a zero heading to rounding). The settle injects ~1e-6 rad. The relaxation
 does not amplify or remove it: the heading is neutral, so it is carried through the 30 s. This
-is why the discrepancy "appears before forward-dynamics relaxation" â€” the existing RES-640
+is why the discrepancy "appears before forward-dynamics relaxation" — the existing RES-640
 evidence was right about the stage, and the settle is the stage.
 
 ### 2.4 It is a rounding sample, not a model property
@@ -142,7 +151,7 @@ scale is set by floating-point arithmetic, not by the model.
 ### 3.1 The observed values
 
 `qpos[6]` is the pelvis quaternion's `z` component; for this near-identity pelvis, the heading is
-`â‰ˆ 2Â·qpos[6]`.
+`≈ 2·qpos[6]`.
 
 | generation | `qpos[6]` | heading (rad) |
 | --- | --- | --- |
@@ -150,24 +159,24 @@ scale is set by floating-point arithmetic, not by the model.
 | hosted Linux, 43035751307 (pre-repair) | `-9.985680354e-08` | `-1.997e-07` |
 | hosted Windows, 43035751307 (pre-repair) | `3.481756154e-07` | `6.961e-07` |
 | local Windows, default dispatch | `3.481756154e-07` | `6.960955244e-07` |
-| hosted Windows, 43049377562 (AMD Zen 5) | â€” | `6.960955244e-07` |
-| hosted Linux, 43049377562 | â€” | `6.383545055e-07` |
+| hosted Windows, 43049377562 (AMD Zen 5) | — | `6.960955244e-07` |
+| hosted Linux, 43049377562 | — | `6.383545055e-07` |
 | local Windows, `OPENBLAS_CORETYPE=Haswell` | `-3.509896681e-06` | `-7.025347869e-06` |
 | local Windows, `OPENBLAS_CORETYPE=Nehalem` | `1.443262052e-06` | `2.887772426e-06` |
 | local Windows, `OPENBLAS_CORETYPE=Sandybridge` | `1.192858e-08` | `2.3140e-08` |
 
 Two facts matter here.
 
-* The three independent Windows hosts â€” an Intel Tiger Lake laptop, an earlier hosted runner of
-  unknown CPU, and a hosted **AMD Zen 5** runner â€” land on the same pre-projection heading
+* The three independent Windows hosts — an Intel Tiger Lake laptop, an earlier hosted runner of
+  unknown CPU, and a hosted **AMD Zen 5** runner — land on the same pre-projection heading
   (`6.96095524e-07`) to better than 1e-9. Within a compatible arithmetic path the sample is
   reproducible; the platform label is a proxy, not a cause.
 * The hosted Linux runners are not mutually reproducible either: one lands at `-1.997e-07`, the
-  other at `6.383545055e-07` â€” and the second differs from the *packaged* heading by only
+  other at `6.383545055e-07` — and the second differs from the *packaged* heading by only
   `2.7e-14` rad. The packaged reference and a later Linux generation differ by `4.19e-07` in
   `qpos[6]` (42 % of the tolerance) with no Windows involved.
 
-Windows-minus-Linux for the pre-repair pair was `4.480e-07` in `qpos[6]`, i.e. `8.96e-07` rad â€”
+Windows-minus-Linux for the pre-repair pair was `4.480e-07` in `qpos[6]`, i.e. `8.96e-07` rad —
 the `~8.9668e-7 rad`, almost entirely yaw, that the earlier RES-640 evidence reported.
 
 ### 3.2 The controlled counterexample
@@ -175,13 +184,13 @@ the `~8.9668e-7 rad`, almost entirely yaw, that the earlier RES-640 evidence rep
 `tools/mujoco_squat_reference_stability.py` regenerates the reference under several
 `OPENBLAS_CORETYPE` values. Same machine, same CPython 3.12.13, same NumPy 2.5.4
 (scipy-openblas 0.3.34 with `DYNAMIC_ARCH`), same MuJoCo 3.17.0, same model bytes, same code.
-Only the BLAS/LAPACK kernel an `DYNAMIC_ARCH` OpenBLAS selects changes â€” which is exactly what
+Only the BLAS/LAPACK kernel an `DYNAMIC_ARCH` OpenBLAS selects changes — which is exactly what
 differs between two hosted runners of the same image on different physical CPUs.
 
 Receipt: `raw/reference-stability-windows-local.json` (4 dispatches x 2 runs; the two runs of
 every dispatch are identical, so within-host repeatability is bitwise).
 
-| dispatch | pre-projection heading | pre-projection max `Î”qpos` vs packaged | pre-RES-640 criterion | repaired criterion | physical state |
+| dispatch | pre-projection heading | pre-projection max `Δqpos` vs packaged | pre-RES-640 criterion | repaired criterion | physical state |
 | --- | --- | --- | --- | --- | --- |
 | default (Skylake-X) | `6.961e-07` | `2.885e-08` | pass | `1.97e-09` pass | `4.87e-10` |
 | `Haswell` | `-7.025e-06` | **`3.829222e-06`** | **FAIL** | `1.73e-08` pass | `4.87e-10` |
@@ -190,10 +199,10 @@ every dispatch are identical, so within-host repeatability is bitwise).
 
 The pre-projection comparison is the state the old generator would have written, reconstructed
 by rotating the canonical state back by the heading the generator reports
-(`_pre_projection_difference`). Its Haswell value is `3.8292216124696e-06` â€” the protected-main
+(`_pre_projection_difference`). Its Haswell value is `3.8292216124696e-06` — the protected-main
 failure string, digit for digit.
 
-This counterexample is not synthetic. On a later hosted run (Â§5.3) a **windows-2025 runner with
+This counterexample is not synthetic. On a later hosted run (§5.3) a **windows-2025 runner with
 an AMD Family 25 CPU** produced pre-projection heading `-7.025347868663774e-06` and
 pre-projection difference `3.8292216124695965e-06`: the Haswell arithmetic path, live, on a
 genuine hosted runner, with the repaired comparison passing at `1.7299170830795712e-08`.
@@ -217,9 +226,9 @@ the packaged and the regenerated `qpos` before the elementwise comparison.
   pelvis until the pelvis heading is exactly zero. This is the same heading anchor the posture
   solver already declares (its pelvis-yaw soft row targets zero), so the reference is now
   consistent with its own declared stance instead of contradicting it by 1e-6 rad.
-* **Why it is not a model change.** The rotation is an exact symmetry (Â§2.1). It changes no
+* **Why it is not a model change.** The rotation is an exact symmetry (§2.1). It changes no
   joint angle, energy, contact load, activation or trajectory; it changes only the world
-  placement, and by â‰¤3.2e-7 in the quaternion components and â‰¤2e-8 m in positions.
+  placement, and by ≤3.2e-7 in the quaternion components and ≤2e-8 m in positions.
 * **Scalar tolerance unchanged; acceptance equivalence changes.** `KEYFRAME_TOLERANCE` remains `1e-6`, still applied
   elementwise to all 43 `qpos` entries and all 29 `act` entries. The repaired comparison is
   strictly *more* meaningful, not weaker: every physical coordinate is compared exactly as
@@ -253,7 +262,7 @@ The projection is the smallest change that removes the mechanism rather than its
 
 | check | result | receipt |
 | --- | --- | --- |
-| potential energy invariant under 1 rad whole-body rotation | withdrawn: energy disabled; see new energy controls | `raw/energy-windows-local.json` |
+| potential energy invariant under 1 rad whole-body rotation | withdrawn: energy disabled; see new controls | `raw/energy-windows-local.json` |
 | 1 s closed loop invariant under 1e-2 rad rotation | `1.89e-15` physical | same |
 | rigid-mode stiffness: x / y / yaw vs roll / pitch / z | `0.003 / 0.002 / 0.079` vs `9.4e4 / 1.5e5 / 2.4e6` | same |
 | settle Jacobian condition number | `4.64e17`, 10-order gap above the 3 null directions | same |
@@ -266,7 +275,7 @@ The projection is the smallest change that removes the mechanism rather than its
 
 ### 5.2 Local suite
 
-`python -m pytest` on Windows 11, CPython 3.12.13, MuJoCo 3.17.0: see Â§6 for the exact-head
+`python -m pytest` on Windows 11, CPython 3.12.13, MuJoCo 3.17.0: see §6 for the exact-head
 result. The 93 tests of `tests/execution/mujoco_squat` pass, including the existing
 `test_the_packaged_asset_is_the_regenerated_one` (which now exercises the repaired comparison)
 and the new `test_squat_reference_frame.py`.
@@ -278,7 +287,7 @@ pairs:
 
 | run | code | result |
 | --- | --- | --- |
-| [43049377562](https://github.com/Litju/DynamisBench/actions/runs/43049377562) | `3b6dfdf` | all eight gates pass on `windows-2025` and `ubuntu-24.04`; `mujoco-receipt-comparison` pass (after one infrastructure re-run, Â§6) |
+| [43049377562](https://github.com/Litju/DynamisBench/actions/runs/43049377562) | `3b6dfdf` | all eight gates pass on `windows-2025` and `ubuntu-24.04`; `mujoco-receipt-comparison` pass (after one infrastructure re-run, §6) |
 | [43064795808](https://github.com/Litju/DynamisBench/actions/runs/43064795808) | `b20687e` | all eight gates pass, first attempt, no re-run; `mujoco-receipt-comparison` pass |
 
 Both hosted `python` jobs report **2740 passed, 5 skipped** on each platform and run the
@@ -286,7 +295,7 @@ repaired `test_the_packaged_asset_is_the_regenerated_one` together with all of
 `test_squat_reference_frame.py`. They also print the standing-reference stability receipt
 (`raw/hosted-{3b6dfdf,b20687e}-{windows,linux}.json`, extracted verbatim from the job logs):
 
-| run | host | pre-projection heading | pre-projection `Î”qpos` | pre-RES-640 criterion | canonical `Î”qpos` | physical difference |
+| run | host | pre-projection heading | pre-projection `Δqpos` | pre-RES-640 criterion | canonical `Δqpos` | physical difference |
 | --- | --- | --- | --- | --- | --- | --- |
 | 43049377562 | windows-2025, AMD Family 25 Model 17 | `6.960955244e-07` | `2.885e-08` | pass | `1.968e-09` | `4.868e-10` |
 | 43049377562 | ubuntu-24.04, azure `7.0.0-1017` | `6.383545055e-07` | `4.868e-10` | pass | `4.868e-10` | `4.868e-10` |
@@ -302,7 +311,7 @@ every recorded digit, which is what makes that replay a faithful model of the me
 than a synthetic construction.
 
 Across the two hosted platforms the headings differ by `5.77e-08` rad on one pair and by
-`7.66e-06` rad on the other â€” the gauge â€” while the physical states agree to `4.868e-10`,
+`7.66e-06` rad on the other — the gauge — while the physical states agree to `4.868e-10`,
 **2054 times inside** the unchanged `1e-6` tolerance, in every pair.
 
 The `frontend (linux-x64)` and `desktop (linux-x64)` jobs failed on the first run only, before
@@ -323,11 +332,11 @@ Two independent full runs of the repaired code:
 * `b20687e2292b0ffff5d9c308bb6934647832bd31`, run
   [43064795808](https://github.com/Litju/DynamisBench/actions/runs/43064795808): the same nine
   jobs pass on the first attempt, and its Windows `python` job is the run in which the
-  pre-repair criterion's `3.829e-06` failure condition occurred live (Â§5.3).
+  pre-repair criterion's `3.829e-06` failure condition occurred live (§5.3).
 
 The first attempt at `3b6dfdf` failed only the two Linux jobs, both in their
-*dependency-installation* step, both with the same hosted-runner network outage â€”
-`E: Failed to fetch ... Temporary failure resolving 'azure.archive.ubuntu.com'`, exit code 100 â€”
+*dependency-installation* step, both with the same hosted-runner network outage —
+`E: Failed to fetch ... Temporary failure resolving 'azure.archive.ubuntu.com'`, exit code 100 —
 before any repository test or build ran. They were re-run on the same SHA and passed. That is an
 infrastructure incident, recorded here rather than treated as a code result: no scientific
 step, threshold or test was skipped, relaxed, or retried around a numerical failure. (The
@@ -349,7 +358,7 @@ the tests or the workflow is byte-identical to `3b6dfdf`, which is qualified abo
    perturbation; `1.9e-08` across kernels), and the declared stance anchors it explicitly in
    the posture solve, so it is not an ambiguity in practice. Removing it too would require a
    stance-anchored projection that moves every world-frame coordinate of the packaged
-   reference by ~1.6 mm and changes the pinned laboratory dataset â€” an owner decision, and not
+   reference by ~1.6 mm and changes the pinned laboratory dataset — an owner decision, and not
    needed for `3.829e-06`.
 3. **The packaged asset still carries a `6.38e-07` rad heading.** It is physically irrelevant
    and the check projects it; the byte identity, `MODEL_SHA256`, implementation digest and
@@ -363,17 +372,17 @@ the tests or the workflow is byte-identical to `3b6dfdf`, which is qualified abo
 1. **Reference-definition clarification.** Record in the authority that the standing
    reference's heading is a gauge of the model's exact SO(2) symmetry, that the declared
    representative is zero pelvis heading, and that the keyframe comparison is made in that
-   representative. This changes acceptance equivalence and requires explicit owner adoption.
+   representative. Acceptance equivalence changes and requires explicit owner adoption.
 2. **Asset re-expression (separate change).** `--write` now emits the canonical representative,
    so the next reviewed regeneration would store a heading-free keyframe. That changes
    `MODEL_SHA256`, the worker implementation digest, the authority pins, the laboratory
-   dataset's trajectory hash and its world-frame columns. Â§5.1 quantifies the physical impact
+   dataset's trajectory hash and its world-frame columns. §5.1 quantifies the physical impact
    (none beyond world-frame coordinates); the dataset regeneration is the real cost and needs
    its own review.
 3. **Temporary CI probe removed.** The branch-only `RES-640` step is deleted from
    `quality.yml`. The permanent mechanism is `tools/mujoco_squat_reference_stability.py`
    (on demand, read-only) plus projection tests in the required suite. Both temporary and
-   permanent additional diagnostic CI steps are removed; the eight
+   permanent additional diagnostic steps are removed; the eight
    ADR-025 gates are unchanged.
 
 ## 9. Reproduce
