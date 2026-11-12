@@ -124,6 +124,16 @@ def rotate_world_frame(qpos: Sequence[float], angle: float) -> list[float]:
     values = [float(value) for value in qpos]
     if len(values) != BAR_QPOS + 7:
         raise ValueError(f"a standing qpos has {BAR_QPOS + 7} entries, not {len(values)}")
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("a standing qpos must be finite")
+    for address in (ROOT_QPOS, BAR_QPOS):
+        norm = math.hypot(*values[address + 3 : address + 7])
+        # Packaged quaternions are serialized to ten significant digits.
+        # Four component errors of at most 5e-11 give a norm error <= 1e-10.
+        if abs(norm - 1.0) > 1e-10:
+            raise ValueError(
+                "a free-body quaternion must have unit norm within serialization error 1e-10"
+            )
     if not math.isfinite(angle):
         raise ValueError("a world-frame rotation must be finite")
     if angle == 0.0:
@@ -151,7 +161,8 @@ def canonical_world_frame(qpos: Sequence[float]) -> list[float]:
     :func:`pelvis_heading_rad` is zero to rounding error, which is the declared representative
     of the reference state.
     """
-    return rotate_world_frame(qpos, -pelvis_heading_rad(qpos))
+    values = rotate_world_frame(qpos, 0.0)
+    return rotate_world_frame(values, -pelvis_heading_rad(values))
 
 
 def physical_state(qpos: Sequence[float]) -> dict[str, Any]:

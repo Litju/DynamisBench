@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import subprocess
 import sys
@@ -175,6 +176,9 @@ def check() -> list[str]:
     ):
         if len(packaged) != len(generated):
             problems.append(f"the keyframe {label} length changed")
+            continue
+        if not all(math.isfinite(value) for value in (*packaged, *generated)):
+            problems.append(f"the keyframe {label} contains non-finite values")
             continue
         worst = max(abs(a - b) for a, b in zip(packaged, generated, strict=True))
         if worst > KEYFRAME_TOLERANCE:
