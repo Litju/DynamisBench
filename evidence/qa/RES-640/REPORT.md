@@ -423,3 +423,13 @@ uv run pytest tests/execution/mujoco_squat/test_squat_reference_frame.py \
 | `raw/hosted-b20687e-windows.json`, `raw/hosted-b20687e-linux.json` | the same receipt on the second qualified code, extracted verbatim from run 43064795808; the Windows row is the live `3.829221612e-06` pre-repair failure | `windows-2025` (AMD Family 25 Model 1), `ubuntu-24.04` |
 
 Digests of every file are in `SHA256SUMS`.
+
+
+## Hosted review follow-up
+
+Run [43193480918](https://github.com/Litju/DynamisBench/actions/runs/43193480918)
+passed all eight required jobs and MuJoCo comparison on 5fe8492, first attempt.
+The JUnit energy property was not archived because pytest.xml is consumed but not
+uploaded. The existing mandatory regression now emits complete energy JSON into
+the retained job log. This corrects receipt retention with no additional diagnostic
+CI step or artifact. A new exact-head run is required and will be linked on PR #29.

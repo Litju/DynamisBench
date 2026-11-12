@@ -71,8 +71,9 @@ conditional engineering arithmetic allowance rather than formal libm proof.
 
 Local revised checks: 54 focused tests (reference, energy, workflow authority),
 Ruff and formatting passed; both application and worker Pyright configurations
-reported zero errors/warnings. Added JUnit suite property preserves each platform's
-complete energy receipt in the existing pytest artifact without a new CI step.
+reported zero errors/warnings. JUnit suite properties are consumed locally but not uploaded. The energy test now
+emits its complete receipt directly into the retained job log, with no new CI step
+or artifact. The earlier artifact-retention claim is withdrawn.
 Fresh Windows default/Haswell regeneration reproduces the historical mechanism:
 Haswell pre-projection delta 3.8292216124695965e-06; canonical delta
 1.7299170830795712e-08 (default 1.968016969139139e-09). No retry was used.
@@ -86,3 +87,12 @@ energy and workflow). No failed test was retried to claim numerical repair.
 Skips are existing optional/platform cases (symlink/FIFO, optional pipeline module,
 optional figure regeneration), not RES-640 energy/refusal checks. New hosted
 exact-head qualification remains pending and is linked on PR #29/Linear RES-640.
+
+
+Hosted qualification at 5fe849220784d5630402fc45cb638d02ae8bd6e4 passed all eight
+required Windows/Linux checks plus MuJoCo receipt comparison in first-attempt run
+43193480918. Artifact inspection exposed that pytest.xml is consumed but not
+uploaded; its energy suite property was not retained. Corrected the existing
+energy regression to emit the complete receipt into the job log through disabled
+pytest capture. Focused test passes and output retention was checked. This is a
+retention repair, not a numerical repair; new exact-head qualification is required.
