@@ -347,3 +347,12 @@ def test_checker_refuses_malformed_qpos(monkeypatch: pytest.MonkeyPatch) -> None
     qpos, act = _packaged()
     monkeypatch.setattr(tool, "generate_keyframe", lambda: {"qpos": qpos[:-1], "act": act})
     assert any("length" in problem for problem in tool.check())
+
+
+def test_checker_refuses_noncanonical_generated_heading(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tools import mujoco_squat_model as tool
+
+    qpos, act = _packaged()
+    fresh = reference.rotate_world_frame(qpos, 0.5)
+    monkeypatch.setattr(tool, "generate_keyframe", lambda: {"qpos": fresh, "act": act})
+    assert any("not in the declared world frame" in problem for problem in tool.check())

@@ -233,6 +233,7 @@ def main() -> None:
             {
                 "schema": "dynamisbench.qa.squat-world-frame-mechanism/1",
                 "claim": "diagnostic_only_not_a_scientific_or_release_qualification",
+                "energy_evidence_status": "INVALID: energy disabled; use energy_qualification.py",
                 "stages": stages,
                 "settle": settle,
                 "potential_energy_delta_j": energy_delta,

@@ -58,3 +58,22 @@ are separate owner-gated work: their hashes/trajectories would change. No claim 
 complete accepted future squat source closure is made. Owner must explicitly adopt
 this statement before it becomes accepted scientific authority. Keep PR draft;
 RES-640 and RES-622 cannot be Done until authorized merge and protected-main gates.
+
+## Independent verification record
+
+A separate read-only review agent independently reproduced the disabled-energy
+behavior, checked declared symmetry conditions, audited the revised diff, verified
+all 49 recorded source/native hashes, and ran the 42 focused reference/energy tests.
+Final verdict: no remaining blocking mathematical/code findings in repair scope.
+This review is independent of the implementing agents; it is not owner acceptance.
+Remaining limits: shared MuJoCo kinematics, static gravitational potential only,
+conditional engineering arithmetic allowance rather than formal libm proof.
+
+Local revised checks: 54 focused tests (reference, energy, workflow authority),
+Ruff and formatting passed; both application and worker Pyright configurations
+reported zero errors/warnings. Added JUnit suite property preserves each platform's
+complete energy receipt in the existing pytest artifact without a new CI step.
+Fresh Windows default/Haswell regeneration reproduces the historical mechanism:
+Haswell pre-projection delta 3.8292216124695965e-06; canonical delta
+1.7299170830795712e-08 (default 1.968016969139139e-09). No retry was used.
+Full local suite and exact-head hosted qualification remain separate gates.
