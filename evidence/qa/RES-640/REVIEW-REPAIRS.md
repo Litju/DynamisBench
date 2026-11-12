@@ -77,3 +77,12 @@ Fresh Windows default/Haswell regeneration reproduces the historical mechanism:
 Haswell pre-projection delta 3.8292216124695965e-06; canonical delta
 1.7299170830795712e-08 (default 1.968016969139139e-09). No retry was used.
 Full local suite and exact-head hosted qualification remain separate gates.
+
+Final local full-suite observation: Windows CPython 3.12.13, pytest 9.1.1 /
+Hypothesis 6.168.3: 2761 passed, 7 skipped in 516.63s. This invocation collected before
+the eight final refusal cases were added; those cases and final JUnit receipt
+recording were subsequently verified in focused checks (54 total across reference,
+energy and workflow). No failed test was retried to claim numerical repair.
+Skips are existing optional/platform cases (symlink/FIFO, optional pipeline module,
+optional figure regeneration), not RES-640 energy/refusal checks. New hosted
+exact-head qualification remains pending and is linked on PR #29/Linear RES-640.
