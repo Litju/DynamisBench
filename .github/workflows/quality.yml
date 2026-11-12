@@ -191,23 +191,6 @@ jobs:
         run: uv run pytest --junitxml=evidence/pytest.xml
         env:
           HYPOTHESIS_PROFILE: ci
-      # Permanent replacement for the temporary RES-640 branch-only probe. Read-only and
-      # bounded: it regenerates the standing reference once and reports raw,
-      # declared-representative and gauge-invariant agreement with the packaged keyframe,
-      # with the resolved runtime identity. It enforces no tolerance and is not a gate; the
-      # keyframe acceptance test in the suite above is. It publishes no qualification
-      # artifact - the receipt is this job's log - and it runs even after a failure so a
-      # failing host is sampled in its own log.
-      - name: Publish the standing-reference stability receipt (diagnostic only)
-        if: ${{ always() }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          uv run python -m tools.mujoco_squat_reference_stability \
-            --kernels default \
-            --runs 1 \
-            --output "$RUNNER_TEMP/reference-stability-${{ matrix.name }}.json"
-          cat "$RUNNER_TEMP/reference-stability-${{ matrix.name }}.json"
       # The columnar cold-import regression was found on Windows: concurrent first requests
       # imported NumPy/PyArrow in several request threads and the import failed. It is named
       # here so it runs as its own step on both images (and cannot be lost to a skip or a
